@@ -22,6 +22,11 @@ struct GlobalShortcut {
         keyCode: kVK_ANSI_V, carbonModifiers: cmdKey | shiftKey | controlKey,
         keyEquivalent: "v", modifierMask: [.command, .shift, .control], symbol: "⌃⇧⌘V"
     )
+    /// 开启或退出 Paste Stack。
+    static let pasteStack = GlobalShortcut(
+        keyCode: kVK_ANSI_C, carbonModifiers: cmdKey | shiftKey | controlKey,
+        keyEquivalent: "c", modifierMask: [.command, .shift, .control], symbol: "⌃⇧⌘C"
+    )
 }
 
 extension NSMenuItem {

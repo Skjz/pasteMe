@@ -47,6 +47,17 @@ import Testing
         #expect(keystroke.sentTo == [target])
     }
 
+    @Test func copyToPasteboardWritesAndMovesToTopWithoutSendingCommandV() throws {
+        let old = try store.insert(ClipContent(kind: .text, text: "old"), source: nil, at: Date(timeIntervalSince1970: 1))
+        try store.insert(ClipContent(kind: .text, text: "new"), source: nil, at: Date(timeIntervalSince1970: 2))
+
+        try paster.copyToPasteboard(old)
+
+        #expect(pasteboard.written == [ClipContent(kind: .text, text: "old")])
+        #expect(try store.items().map(\.preview) == ["old", "new"])
+        #expect(keystroke.sentTo.isEmpty)
+    }
+
     @Test func withoutAccessibilityPermissionOnlyCopies() throws {
         keystroke.isTrusted = false
         let id = try store.insert(ClipContent(kind: .text, text: "x"), source: nil)

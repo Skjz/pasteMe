@@ -18,11 +18,14 @@ public struct ClipQuery: Sendable, Equatable {
     public var createdFrom: Date?
     /// 只返回这个时间以前复制的条目（不含这个时间）。
     public var createdBefore: Date?
+    /// 只返回这些 id 的条目，例如 Paste Stack 里的条目。
+    public var ids: [Int64]?
     /// 最多返回多少条。
     public var limit: Int
 
     public init(
         text: String = "",
+        ids: [Int64]? = nil,
         kinds: Set<ClipKind>? = nil,
         sourceBundleID: String? = nil,
         sourceName: String? = nil,
@@ -31,6 +34,7 @@ public struct ClipQuery: Sendable, Equatable {
         limit: Int = 200
     ) {
         self.text = text
+        self.ids = ids
         self.kinds = kinds
         self.sourceBundleID = sourceBundleID
         self.sourceName = sourceName
@@ -140,6 +144,10 @@ extension ClipQuery {
             let pattern = SQLValue.text("%" + Self.escapeLike(trimmed) + "%")
             clauses.append("(text LIKE ? ESCAPE '\\' OR ocr_text LIKE ? ESCAPE '\\' OR source_name LIKE ? ESCAPE '\\')")
             values += [pattern, pattern, pattern]
+        }
+        if let ids {
+            clauses.append("(id IN (\(ids.map { _ in "?" }.joined(separator: ", "))))")
+            values += ids.map(SQLValue.int)
         }
         if let kinds {
             if kinds.isEmpty {

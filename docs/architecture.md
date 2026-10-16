@@ -6,25 +6,31 @@
 
 ```text
 PasteMe        可执行文件，只有 main.swift
-└─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、快捷键、发送 ⌘V、面板、视图
-   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、Paster、Settings、PasteboardCodec、Thumbnailer
+└─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、全局快捷键、监听 ⌘V、发送 ⌘V、面板、浮窗、视图
+   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、Recorder、EnrichmentQueue、PasteStack、Paster、Settings、PasteboardCodec、Thumbnailer
 ```
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
 - `PasteMeApp` 里只有 `AppDelegate` 是 `public`（`main.swift` 要用），其余保持 internal，测试用 `@testable import PasteMeApp`。
 
-ADR 0002 规划的模块里，有几个要等第一个用到它的工单才建。在此之前，它们的职责由下面这些现有代码承担。做对应工单时，先把这些代码移进新模块：
-
-| 规划中的模块 | 现在由谁承担 | 建立时机 |
-| --- | --- | --- |
-| Paste Stack | 无 | #6 |
-| `MCPServer`（`PasteMeMCP` target） | 无 | #8 |
+ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没建，等 #8 再建。
 
 ## 记录和全局快捷键
 
 - `ClipboardMonitor` 只轮询剪贴板：发现变化后跳过 PasteMe 自己写入的内容和敏感内容，读出内容和来源应用，交给 `Recorder.record(_:from:)`。暂停时它连剪贴板都不读。
 - `Recorder` 决定记不记录（暂停），入库后调用 `onRecord`。暂停只在内存里：`pausedUntil` 为 `.distantFuture` 表示直到手动恢复，定时暂停由 `Recorder` 自己的定时器到时恢复，`onPauseChange` 通知应用换菜单栏图标、显示提示。测试用注入的时钟（`RecorderTests`）。
+- 菜单栏图标由 `AppDelegate.updateStatusIcon()` 决定：暂停记录优先，其次 Paste Stack。屏幕上的短暂提示用 `Toast`。
 - 全局快捷键都通过 `HotKeyCenter.register(_:action:)` 注册，按键组合定义在 `GlobalShortcut`。Carbon 会把每个快捷键事件发给所有已安装的处理器，所以只装一个处理器，读出事件里的快捷键 id 再分发；`HotKeyCenterTests` 直接调用 `dispatch` 模拟按键。
+
+## Paste Stack
+
+- `PasteStack`（Core）只管开关和顺序：`Recorder` 记下条目后调用 `push`，没开启时什么都不做；`takeNext` 取出最前面的一条，取完最后一条随之结束。
+- `PasteStackController`（App）开启时创建 `KeyEventTap`（会话级 `CGEventTap`，只观察 keyDown，不拦截），按 `PasteStackKeys.action` 判断按键：⌘V 取下一条，esc 退出，其余不管。按住不放的重复按键、面板开着时的 ⌘V、PasteMe 自己发送的 ⌘V（`eventSourceUserData` 等于 `CGEventPasteKeystroke.marker`）都不取。
+- 时机：事件监听在按键送到目标应用之前同步回调，回调里用 `Paster.copyToPasteboard` 把下一条写进剪贴板（带 `ownMarker`，不会再被记录），目标应用处理这次 ⌘V 时读到的就是它。所以不需要在 keyUp 之后延迟替换、猜测目标应用什么时候读完剪贴板。回调要快：系统会停掉太慢的监听（`KeyEventTap` 收到 `tapDisabledByTimeout` 时重新打开）。
+- 结束时（手动退出或取完）在下一轮事件循环里移除监听，不在它自己的回调里移除。
+- 浮窗（`PasteStackHUD`）的面板 `canBecomeKey` 为 false：点里面的按钮也不能抢走目标应用的键盘焦点，否则接下来的 ⌘V 会落在浮窗上。
+- 监听别的应用的按键需要辅助功能权限，没有权限时 `CGEvent.tapCreate` 返回 nil，开启前先检查并提示。
+- 按键判断在 `PasteStackKeysTests`，顺序和开关在 `PasteStackTests`。监听本身只能在真实应用里验证：开启后依次 `pbcopy` 几段文字，在文本编辑里连按 ⌘V。
 
 ## 附加信息
 
@@ -107,7 +113,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 
 全局快捷键、面板、真正发送 ⌘V 这些行为，单元测试覆盖不到。改动涉及它们时，按下面的步骤运行应用确认。
 
-1. 用 `pgrep -fl PasteMe` 检查用户是否已经开着 PasteMe。两个实例会争抢 ⇧⌘V，需要先和用户确认能否退出。
+1. 用 `pgrep -fl PasteMe` 检查用户是否已经开着 PasteMe。两个实例会争抢全局快捷键（⇧⌘V、⌃⇧⌘V、⌃⇧⌘C），需要先和用户确认能否退出。
 2. 运行 `scripts/bundle.sh` 打包。用 Apple Development 证书签名时，辅助功能权限在重新打包后仍然有效。
 3. 把 home 指向临时目录再启动，这样不会碰到用户真实的历史和设置：
 

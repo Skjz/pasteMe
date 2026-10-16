@@ -1,6 +1,6 @@
 import AppKit
 
-/// 菜单栏图标。暂停记录时换成带斜杠的图标，一眼就能看出当前状态。
+/// 菜单栏图标。暂停记录、Paste Stack 开启时换成不同的图标，一眼就能看出当前状态。
 @MainActor
 enum StatusIcon {
     static let normal = symbol("doc.on.clipboard", "PasteMe")
@@ -28,6 +28,8 @@ enum StatusIcon {
         image.accessibilityDescription = base.accessibilityDescription
         return image
     }()
+
+    static let pasteStack = symbol("square.stack.3d.up", "PasteMe：Paste Stack 已开启")
 
     private static func symbol(_ name: String, _ description: String) -> NSImage? {
         NSImage(systemSymbolName: name, accessibilityDescription: description)

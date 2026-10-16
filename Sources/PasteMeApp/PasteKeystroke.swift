@@ -26,6 +26,9 @@ enum Accessibility {
 ///
 /// 按键发给当前前台应用。面板不激活 PasteMe，所以前台应用就是目标应用。
 struct CGEventPasteKeystroke: PasteKeystrokeSending {
+    /// 写在合成按键的 `eventSourceUserData` 里，Paste Stack 的事件监听据此认出这是 PasteMe 自己发的 ⌘V。"PMEV"
+    static let marker: Int64 = 0x504D_4556
+
     var isTrusted: Bool { Accessibility.isTrusted }
 
     func sendPaste(to target: TargetApp?) {
@@ -40,8 +43,10 @@ struct CGEventPasteKeystroke: PasteKeystrokeSending {
         let keyCode = CGKeyCode(kVK_ANSI_V)
         let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
         let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
-        down?.flags = .maskCommand
-        up?.flags = .maskCommand
+        for event in [down, up] {
+            event?.flags = .maskCommand
+            event?.setIntegerValueField(.eventSourceUserData, value: marker)
+        }
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
     }

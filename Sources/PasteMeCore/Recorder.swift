@@ -15,15 +15,23 @@ public final class Recorder {
 
     private let store: ClipStore
     private let enrichment: EnrichmentQueue?
+    private let pasteStack: PasteStack?
     private let now: () -> Date
     private var resumeTimer: Timer?
 
     /// - Parameters:
     ///   - enrichment: 记录图片后交给它识别文字。
+    ///   - pasteStack: 开启时，记下的条目依次加进去。
     ///   - now: 用于测试时控制时间。
-    public init(store: ClipStore, enrichment: EnrichmentQueue? = nil, now: @escaping () -> Date = Date.init) {
+    public init(
+        store: ClipStore,
+        enrichment: EnrichmentQueue? = nil,
+        pasteStack: PasteStack? = nil,
+        now: @escaping () -> Date = Date.init
+    ) {
         self.store = store
         self.enrichment = enrichment
+        self.pasteStack = pasteStack
         self.now = now
     }
 
@@ -67,6 +75,7 @@ public final class Recorder {
         if content.kind == .image || content.kind == .file {
             enrichment?.enqueue(id)
         }
+        pasteStack?.push(id)
         onRecord(id)
         return id
     }
