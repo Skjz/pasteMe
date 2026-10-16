@@ -54,12 +54,12 @@ public final class ClipStore {
     /// 返回记录的 id。
     @discardableResult
     public func insert(_ content: ClipContent, source: ClipSource?, at date: Date = Date()) throws -> Int64 {
-        let thumbnail = content.image.flatMap { Thumbnailer.thumbnail(for: $0) }
         let statement = try db.prepare(
             """
             INSERT INTO clips (kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (content_hash) DO UPDATE SET
+                thumbnail = coalesce(clips.thumbnail, excluded.thumbnail),
                 created_at = excluded.created_at,
                 source_bundle_id = excluded.source_bundle_id,
                 source_name = excluded.source_name
@@ -70,7 +70,7 @@ public final class ClipStore {
                 content.text.sqlValue,
                 content.rtf.sqlValue,
                 content.image.sqlValue,
-                thumbnail.sqlValue,
+                Self.thumbnail(for: content).sqlValue,
                 source?.bundleID.sqlValue ?? .null,
                 source?.name.sqlValue ?? .null,
                 .text(content.contentHash),
@@ -143,6 +143,16 @@ public final class ClipStore {
         let statement = try db.prepare("SELECT count(*) FROM clips")
         _ = try statement.step()
         return Int(statement.int(0))
+    }
+
+    /// 图片取自身数据；文件取第一个文件（是图片时）。缩略图在复制时生成并入库，
+    /// 原文件之后被移动或删除，卡片上仍能看到预览。
+    static func thumbnail(for content: ClipContent) -> Data? {
+        switch content.kind {
+        case .image: content.image.flatMap { Thumbnailer.thumbnail(for: $0) }
+        case .file: content.fileURLs.first.flatMap { Thumbnailer.thumbnail(forFileAt: $0) }
+        case .text, .link: nil
+        }
     }
 
     static func escapeLike(_ string: String) -> String {

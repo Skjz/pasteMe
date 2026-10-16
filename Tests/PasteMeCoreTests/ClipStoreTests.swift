@@ -59,6 +59,37 @@ import Testing
         #expect(try store.recent().first { $0.id == imageID }?.thumbnail != nil)
     }
 
+    @Test func imageFileGetsThumbnailButOtherFilesDoNot() throws {
+        let dir = try Self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pngURL = dir.appendingPathComponent("shot.png")
+        let textURL = dir.appendingPathComponent("notes.txt")
+        try #require(Self.makePNG(width: 8, height: 8)).write(to: pngURL)
+        try Data("hi".utf8).write(to: textURL)
+
+        let imageFileID = try store.insert(ClipContent(kind: .file, text: pngURL.path), source: nil)
+        let textFileID = try store.insert(ClipContent(kind: .file, text: textURL.path), source: nil)
+
+        let items = try store.recent()
+        #expect(items.first { $0.id == imageFileID }?.thumbnail != nil)
+        #expect(items.first { $0.id == textFileID }?.thumbnail == nil)
+    }
+
+    @Test func copyingAgainFillsMissingThumbnail() throws {
+        let dir = try Self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pngURL = dir.appendingPathComponent("later.png")
+        let content = ClipContent(kind: .file, text: pngURL.path)
+
+        // 第一次复制时文件还不存在（或不可读），没有缩略图。
+        let id = try store.insert(content, source: nil)
+        #expect(try store.recent().first?.thumbnail == nil)
+
+        try #require(Self.makePNG(width: 8, height: 8)).write(to: pngURL)
+        #expect(try store.insert(content, source: nil) == id)
+        #expect(try store.recent().first?.thumbnail != nil)
+    }
+
     @Test func touchMovesItemToTop() throws {
         let old = try store.insert(ClipContent(kind: .text, text: "old"), source: nil, at: Date(timeIntervalSince1970: 1))
         try store.insert(ClipContent(kind: .text, text: "new"), source: nil, at: Date(timeIntervalSince1970: 2))
@@ -86,6 +117,12 @@ import Testing
         let item = try #require(try store.recent().first)
         #expect(item.textLength == long.count)
         #expect(item.preview?.count == ClipStore.previewLength)
+    }
+
+    static func makeTempDirectory() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     static func makePNG(width: Int, height: Int) -> Data? {

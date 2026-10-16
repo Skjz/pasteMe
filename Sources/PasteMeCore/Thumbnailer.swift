@@ -9,6 +9,19 @@ public enum Thumbnailer {
     /// 返回 PNG 格式的缩略图；数据无法解码为图片时返回 nil。
     public static func thumbnail(for imageData: Data, maxPixelSize: Int = maxPixelSize) -> Data? {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { return nil }
+        return thumbnail(from: source, maxPixelSize: maxPixelSize)
+    }
+
+    /// 为磁盘上的图片文件生成缩略图；不是图片或读取失败时返回 nil。
+    public static func thumbnail(forFileAt url: URL, maxPixelSize: Int = maxPixelSize) -> Data? {
+        guard url.isFileURL,
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              CGImageSourceGetCount(source) > 0
+        else { return nil }
+        return thumbnail(from: source, maxPixelSize: maxPixelSize)
+    }
+
+    private static func thumbnail(from source: CGImageSource, maxPixelSize: Int) -> Data? {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
