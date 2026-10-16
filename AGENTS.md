@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Architecture
+
+Before changing code under `Sources/` or `Tests/`, read `docs/architecture.md`: which target owns what, the seams and their test fakes, which planned modules still live in older code, and how to run the app against a throwaway history to verify a change.
+
 ## Agent skills
 
 ### Issue tracker

@@ -66,6 +66,8 @@ swift run PasteMe
   PASTEME_SNAPSHOT=/tmp/panel.png swift run PasteMe
   ```
 
+代码分层、seam、测试替身，以及怎样在不碰真实历史的情况下运行应用验证改动，见 [docs/architecture.md](docs/architecture.md)。
+
 架构决策记录在 [docs/adr/](docs/adr/)：
 
 - [0001](docs/adr/0001-native-swift-package.md)：用 Swift Package 构建原生应用，不依赖第三方库。
@@ -73,6 +75,7 @@ swift run PasteMe
 - [0003](docs/adr/0003-single-threaded-clip-store.md)：`ClipStore` 只在单线程使用。
 - [0004](docs/adr/0004-like-search-not-fts.md)：搜索用 LIKE，暂不用 FTS5。
 - [0005](docs/adr/0005-mcp-handwritten-json-rpc.md)：MCP 服务手写 JSON-RPC。
+- [0006](docs/adr/0006-settings-defaults-domain.md)：设置的偏好域沿用 bundle id，在 .app 内用 `UserDefaults.standard` 读写。
 
 术语（条目、Pinboard、Paste Stack 等）的定义见 [GLOSSARY.md](GLOSSARY.md)。
 

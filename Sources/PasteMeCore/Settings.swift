@@ -24,7 +24,7 @@ public struct Settings {
 
     /// 在 PasteMe.app 里运行时主 bundle id 就是 `suiteName`，系统不接受把它当 suite 名
     /// （`UserDefaults(suiteName:)` 返回 nil），这时 `.standard` 就是这个偏好域。
-    /// `swift run` 或测试时没有这个 bundle id，用 suite 读写同一个偏好文件。
+    /// `swift run` 或测试时没有这个 bundle id，用 suite 读写同一个偏好文件。见 ADR 0006。
     static func sharedDefaults() -> UserDefaults {
         if Bundle.main.bundleIdentifier == suiteName { return .standard }
         return UserDefaults(suiteName: suiteName) ?? .standard

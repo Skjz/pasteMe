@@ -11,7 +11,7 @@
 | `EnrichmentQueue` + `Enricher` | `enqueue(id)`、`backfill()`；每种附加信息一个 `Enricher` | 处理状态、后台执行后回主线程写库、补做旧条目、限速、隐私开关 | #5 #11，以及文件缩略图 |
 | `Paster` | `paste(id, as: mode, into:)` | 读取完整内容、按模式变换、写剪贴板、移到最前、记录粘贴事件、发送 ⌘V | #6 #12 #13 |
 | `PanelKeymap` | 按键 + 面板上下文 → 面板命令（或交给搜索框） | 焦点规则（见工单 #1 的决定） | #1 #2 |
-| `HotKeyCenter`、`Settings` | 注册快捷键并按 id 分发；集中定义所有开关 | Carbon 事件分发；`UserDefaults(suiteName: "io.github.skjz.PasteMe")`，应用和 MCP 子进程共用 | #3 #6 #7 #8 #11 #12 #13 |
+| `HotKeyCenter`、`Settings` | 注册快捷键并按 id 分发；集中定义所有开关 | Carbon 事件分发；偏好域 `io.github.skjz.PasteMe`，应用和 MCP 子进程共用（在 .app 内的取法见 ADR 0006） | #3 #6 #7 #8 #11 #12 #13 |
 | `MCPServer` | 一行 JSON-RPC 请求进，一行响应出 | 协议方法、工具定义、只读访问历史（见 ADR 0005） | #8 |
 
 Target 结构：

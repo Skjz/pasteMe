@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/bundle.sh` builds and signs `build/PasteMe.app`, using an Apple Development certificate when one is available so the accessibility permission survives rebuilds.
 - Architecture decision records `docs/adr/0002`–`0005` (module and target layout, single-threaded store, LIKE search instead of FTS5, hand-written MCP JSON-RPC) and a `GLOSSARY.md` defining the project's domain terms.
 - `AGENTS.md` and `docs/agents/` describing where agent skills track issues (GitHub Issues), which triage labels they use, and where domain docs live.
+- `docs/architecture.md`, a guide for contributors and agents to the target layout, the paste flow, the seams and their test fakes, and how to run the app against a throwaway history; `AGENTS.md` points to it, and a new `CLAUDE.md` imports `AGENTS.md` so Claude Code sessions load it too. ADR 0006 records why settings are read through `UserDefaults.standard` inside the app bundle.
 
 ### Changed
 
