@@ -85,4 +85,38 @@ import PasteMeCore
         model.reload()
         #expect(model.selectedID == a)
     }
+
+    @Test func undoDeleteRestoresItemInPlaceAndSelectsIt() {
+        model.moveSelection(by: 1)
+        model.delete()
+        #expect(model.canUndoDelete)
+
+        model.undoDelete()
+
+        #expect(model.items.map(\.id) == [c, b, a])
+        #expect(model.selectedID == b)
+        #expect(!model.canUndoDelete)
+    }
+
+    @Test func undoDeleteRestoresInReverseOrder() {
+        model.delete()
+        model.delete()
+        #expect(model.items.map(\.id) == [a])
+
+        model.undoDelete()
+        #expect(model.items.map(\.id) == [b, a])
+        model.undoDelete()
+        #expect(model.items.map(\.id) == [c, b, a])
+        #expect(model.selectedID == c)
+    }
+
+    @Test func reopeningPanelForgetsDeletionsAndResetsFocus() {
+        model.focus = .cards
+        model.delete()
+
+        model.didShow()
+
+        #expect(!model.canUndoDelete)
+        #expect(model.focus == .search)
+    }
 }

@@ -16,6 +16,11 @@ struct HistoryView: View {
             }
         }
         .onChange(of: model.showCount) { searchFocused = true }
+        .onChange(of: model.focus) { _, focus in searchFocused = focus == .search }
+        .onChange(of: searchFocused) { _, focused in
+            // 用鼠标点进搜索框时，焦点回到搜索框。
+            if focused { model.focus = .search }
+        }
         .onChange(of: model.query) { model.reload() }
     }
 
@@ -28,12 +33,19 @@ struct HistoryView: View {
                 .font(.system(size: 15))
                 .focused($searchFocused)
             Spacer()
-            Text("← → 选择   ↩ 粘贴   ⇧↩ 纯文本   ⌘⌫ 删除   esc 关闭")
+            Text(hint)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
+    }
+
+    private var hint: String {
+        switch model.focus {
+        case .search: "← → 选择   ↓ 操作卡片   ↩ 粘贴   ⇧↩ 纯文本   esc 关闭"
+        case .cards: "← → 选择   ↑ 回到搜索   ↩ 粘贴   ⌘⌫ 删除   ⌘Z 撤销删除   esc 关闭"
+        }
     }
 
     private var emptyState: some View {
@@ -51,12 +63,17 @@ struct HistoryView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 14) {
                     ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
-                        ClipCardView(item: item, shortcutIndex: index < 9 ? index + 1 : nil, isSelected: item.id == model.selectedID)
+                        ClipCardView(
+                            item: item,
+                            shortcutIndex: index < 9 ? index + 1 : nil,
+                            isSelected: item.id == model.selectedID,
+                            cardsFocused: model.focus == .cards
+                        )
                             .id(item.id)
                             .onTapGesture(count: 2) { model.paste(item) }
                             .simultaneousGesture(TapGesture().onEnded {
                                 model.selectedID = item.id
-                                searchFocused = true
+                                model.focus = .cards
                             })
                             .contextMenu {
                                 Button("粘贴") { model.paste(item) }
@@ -64,7 +81,10 @@ struct HistoryView: View {
                                     Button("以纯文本粘贴") { model.paste(item, as: .plainText) }
                                 }
                                 Divider()
-                                Button("删除", role: .destructive) { model.delete(item) }
+                                Button("删除", role: .destructive) {
+                                    model.delete(item)
+                                    model.focus = .cards
+                                }
                             }
                     }
                 }

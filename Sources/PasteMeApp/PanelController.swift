@@ -1,5 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
 import PasteMeCore
 import SwiftUI
 
@@ -134,47 +133,66 @@ final class PanelController: NSObject, NSWindowDelegate {
         keyMonitor = nil
     }
 
-    /// 处理面板上的快捷键，返回 true 表示已处理、不再交给搜索框。
+    /// 处理面板上的快捷键，返回 true 表示已处理、不再交给搜索框。按键规则见 `PanelKeymap`。
     private func handle(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let command = flags.contains(.command)
-        let shift = flags.contains(.shift)
+        let key = PanelKey(
+            keyCode: Int(event.keyCode),
+            command: flags.contains(.command),
+            shift: flags.contains(.shift),
+            option: flags.contains(.option),
+            control: flags.contains(.control),
+            characters: event.characters ?? ""
+        )
+        let context = PanelContext(focus: model.focus, queryIsEmpty: model.query.isEmpty, canUndoDelete: model.canUndoDelete)
 
-        switch Int(event.keyCode) {
-        case kVK_Escape:
-            if model.query.isEmpty {
-                hide()
-            } else {
-                model.query = ""
-                model.reload()
+        switch PanelKeymap.action(for: key, in: context) {
+        case .passThrough:
+            return false
+        case .focusSearchThenPassThrough:
+            // 监视器在事件分发之前回调，这里同步换掉第一响应者，这次按键就会落进搜索框。
+            if let field = searchField(in: panel.contentView) {
+                panel.makeFirstResponder(field)
             }
-            return true
-        case kVK_LeftArrow:
-            model.moveSelection(by: -1)
-            return true
-        case kVK_RightArrow:
-            model.moveSelection(by: 1)
-            return true
-        case kVK_Return, kVK_ANSI_KeypadEnter:
-            model.paste(as: shift ? .plainText : .original)
-            return true
-        case kVK_Delete where command:
-            model.delete()
-            return true
-        default:
-            break
-        }
-
-        if command, let index = Self.digitKeyCodes.firstIndex(of: Int(event.keyCode)) {
-            model.paste(at: index, as: shift ? .plainText : .original)
+            model.focus = .search
+            return false
+        case .run(let command):
+            run(command)
             return true
         }
-        return false
     }
 
-    /// 数字键 1…9 的键码。用键码而不是字符判断，按住 Shift 时 1 会变成 "!"。
-    private static let digitKeyCodes = [
-        kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5,
-        kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9,
-    ]
+    private func run(_ command: PanelCommand) {
+        switch command {
+        case .close:
+            hide()
+        case .clearSearch:
+            model.query = ""
+            model.reload()
+            model.focus = .search
+        case .moveSelection(let offset):
+            model.moveSelection(by: offset)
+            model.focus = .cards
+        case .focus(let focus):
+            model.focus = focus
+        case .paste(let mode):
+            model.paste(as: mode)
+        case .pasteAt(let index, let mode):
+            model.paste(at: index, as: mode)
+        case .deleteSelected:
+            model.delete()
+        case .undoDelete:
+            model.undoDelete()
+        }
+    }
+
+    /// SwiftUI 的 `TextField` 在 macOS 上由 `NSTextField` 实现，面板里只有这一个。
+    private func searchField(in view: NSView?) -> NSTextField? {
+        guard let view else { return nil }
+        if let field = view as? NSTextField, field.isEditable { return field }
+        for subview in view.subviews {
+            if let field = searchField(in: subview) { return field }
+        }
+        return nil
+    }
 }

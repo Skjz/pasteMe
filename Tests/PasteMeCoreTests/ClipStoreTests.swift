@@ -82,6 +82,34 @@ import Testing
         #expect(try store.items().first?.id == old)
     }
 
+    @Test func restoreBringsBackDeletedItemWithSameIdTimeAndSource() throws {
+        let source = ClipSource(bundleID: "com.apple.Notes", name: "Notes")
+        let id = try store.insert(ClipContent(kind: .text, text: "keep", rtf: Data([1, 2])), source: source, at: Date(timeIntervalSince1970: 5))
+        try store.insert(ClipContent(kind: .text, text: "newer"), source: nil, at: Date(timeIntervalSince1970: 9))
+        let before = try store.items()
+
+        let deleted = try #require(try store.delete(id: id))
+        #expect(try store.count() == 1)
+
+        #expect(try store.restore(deleted) == id)
+        #expect(try store.items() == before)
+        #expect(try store.content(id: id) == ClipContent(kind: .text, text: "keep", rtf: Data([1, 2])))
+    }
+
+    @Test func deletingMissingItemReturnsNil() throws {
+        #expect(try store.delete(id: 42) == nil)
+    }
+
+    @Test func restoreKeepsNewerCopyOfSameContent() throws {
+        let id = try store.insert(ClipContent(kind: .text, text: "a"), source: nil, at: Date(timeIntervalSince1970: 1))
+        let deleted = try #require(try store.delete(id: id))
+        let recopied = try store.insert(ClipContent(kind: .text, text: "a"), source: nil, at: Date(timeIntervalSince1970: 7))
+
+        #expect(try store.restore(deleted) == recopied)
+        #expect(try store.count() == 1)
+        #expect(try store.items().first?.createdAt == Date(timeIntervalSince1970: 7))
+    }
+
     @Test func deleteRemovesItems() throws {
         let id = try store.insert(ClipContent(kind: .text, text: "x"), source: nil)
         try store.insert(ClipContent(kind: .text, text: "y"), source: nil)

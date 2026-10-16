@@ -8,6 +8,8 @@ struct ClipCardView: View {
     /// 1…9，显示 ⌘n 提示；超过 9 条为 nil。
     let shortcutIndex: Int?
     let isSelected: Bool
+    /// 焦点在卡片列表上时，选中的卡片边框更醒目，表示 ⌘⌫ 等操作会作用于它。
+    let cardsFocused: Bool
 
     static let size = CGSize(width: 230, height: 240)
 
@@ -24,10 +26,15 @@ struct ClipCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: isSelected ? 3 : 1)
+                .strokeBorder(borderColor, lineWidth: isSelected ? 3 : 1)
         }
         .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
         .contentShape(Rectangle())
+    }
+
+    private var borderColor: Color {
+        guard isSelected else { return Color.primary.opacity(0.1) }
+        return cardsFocused ? Color.accentColor : Color.accentColor.opacity(0.4)
     }
 
     private var header: some View {

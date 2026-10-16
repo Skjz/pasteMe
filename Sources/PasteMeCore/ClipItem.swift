@@ -101,3 +101,17 @@ public struct ClipSource: Sendable, Equatable {
         self.name = name
     }
 }
+
+/// 被删除条目的完整数据，由 `ClipStore.delete(id:)` 返回，用于撤销删除。
+public struct DeletedClip: Sendable, Equatable {
+    public let id: Int64
+    let kind: String
+    let text: String?
+    let rtf: Data?
+    let image: Data?
+    let thumbnail: Data?
+    let sourceBundleID: String?
+    let sourceName: String?
+    let contentHash: String
+    let createdAt: Double
+}
