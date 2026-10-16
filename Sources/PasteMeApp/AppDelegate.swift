@@ -4,8 +4,9 @@ import PasteMeCore
 import ServiceManagement
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var store: ClipStore!
+    private var paster: Paster!
     private var model: HistoryModel!
     private var monitor: ClipboardMonitor!
     private var panel: PanelController!
@@ -16,7 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let loginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private let accessibilityItem = NSMenuItem(title: "", action: #selector(openAccessibilitySettings), keyEquivalent: "")
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    override public init() {
+        super.init()
+    }
+
+    public func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             store = try ClipStore(path: ClipStore.defaultPath())
         } catch {
@@ -28,9 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
+        paster = Paster(store: store, pasteboard: GeneralPasteboard(), keystroke: CGEventPasteKeystroke())
         model = HistoryModel(store: store)
         panel = PanelController(model: model)
-        model.onPaste = { [weak self] item, plainText in self?.paste(item, plainText: plainText) }
+        model.onPaste = { [weak self] item, mode in self?.paste(item, as: mode) }
 
         monitor = ClipboardMonitor(store: store) { [weak self] in
             guard let self, self.panel.isVisible else { return }
@@ -54,8 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         #endif
 
-        if !Paster.isTrusted {
-            Paster.requestTrust()
+        if !Accessibility.isTrusted {
+            Accessibility.requestTrust()
         }
     }
 
@@ -75,22 +81,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - 粘贴
 
-    private func paste(_ item: ClipItem, plainText: Bool) {
-        guard var content = try? store.content(id: item.id) else { return }
-        if plainText { content = content.plainTextOnly }
-
-        PasteboardCodec.write(content, to: .general)
-        try? store.touch(id: item.id)
+    private func paste(_ item: ClipItem, as mode: PasteMode) {
+        // 先收起面板，⌘V 才会落到目标应用上。
         panel.hide()
-
-        guard Paster.isTrusted else {
-            // 没有权限时内容已经在剪贴板里，用户可以自己按 ⌘V。
-            Paster.requestTrust()
-            return
-        }
-        // 等面板收起、键盘焦点回到原应用后再发送 ⌘V。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            Paster.sendPasteKeystroke()
+        do {
+            if try paster.paste(item.id, as: mode, into: panel.targetApp) == .copiedOnly {
+                Accessibility.requestTrust()
+            }
+        } catch {
+            NSLog("PasteMe: 粘贴失败：\(error)")
         }
     }
 
@@ -121,10 +120,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
+    public func menuWillOpen(_ menu: NSMenu) {
         pauseItem.state = monitor.isPaused ? .on : .off
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        accessibilityItem.title = Paster.isTrusted ? "辅助功能权限：已开启" : "辅助功能权限：未开启（点此设置）"
+        accessibilityItem.title = Accessibility.isTrusted ? "辅助功能权限：已开启" : "辅助功能权限：未开启（点此设置）"
     }
 
     @objc private func showPanel() {
@@ -149,8 +148,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openAccessibilitySettings() {
-        Paster.requestTrust()
-        Paster.openAccessibilitySettings()
+        Accessibility.requestTrust()
+        Accessibility.openSettings()
     }
 
     @objc private func clearHistory() {

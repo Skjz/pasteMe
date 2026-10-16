@@ -1,4 +1,5 @@
 import AppKit
+import PasteMeApp
 
 let app = NSApplication.shared
 let delegate = AppDelegate()

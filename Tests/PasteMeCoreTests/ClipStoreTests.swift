@@ -10,11 +10,11 @@ import Testing
         store = try ClipStore(path: ":memory:")
     }
 
-    @Test func recentReturnsNewestFirst() throws {
+    @Test func itemsAreNewestFirst() throws {
         try store.insert(ClipContent(kind: .text, text: "first"), source: nil, at: Date(timeIntervalSince1970: 1))
         try store.insert(ClipContent(kind: .text, text: "second"), source: nil, at: Date(timeIntervalSince1970: 2))
 
-        #expect(try store.recent().map(\.preview) == ["second", "first"])
+        #expect(try store.items().map(\.preview) == ["second", "first"])
     }
 
     @Test func copyingSameContentAgainMovesItToTopWithoutDuplicating() throws {
@@ -27,26 +27,9 @@ import Testing
         )
 
         #expect(again == first)
-        let items = try store.recent()
+        let items = try store.items()
         #expect(items.map(\.preview) == ["a", "b"])
         #expect(items.first?.sourceName == "Notes")
-    }
-
-    @Test func searchMatchesTextAndSourceNameCaseInsensitively() throws {
-        try store.insert(ClipContent(kind: .text, text: "Hello World"), source: nil)
-        try store.insert(ClipContent(kind: .text, text: "other"), source: ClipSource(bundleID: nil, name: "Safari"))
-        try store.insert(ClipContent(kind: .text, text: "unrelated"), source: nil)
-
-        #expect(try store.recent(matching: "hello").map(\.preview) == ["Hello World"])
-        #expect(try store.recent(matching: "safari").map(\.preview) == ["other"])
-        #expect(try store.recent(matching: "  ").count == 3)
-    }
-
-    @Test func searchTreatsLikeWildcardsLiterally() throws {
-        try store.insert(ClipContent(kind: .text, text: "100% done"), source: nil)
-        try store.insert(ClipContent(kind: .text, text: "100 done"), source: nil)
-
-        #expect(try store.recent(matching: "100%").map(\.preview) == ["100% done"])
     }
 
     @Test func contentRoundTripsRichTextAndImage() throws {
@@ -56,7 +39,7 @@ import Testing
 
         #expect(try store.content(id: textID)?.rtf == Data("{\\rtf1 bold}".utf8))
         #expect(try store.content(id: imageID)?.image == png)
-        #expect(try store.recent().first { $0.id == imageID }?.thumbnail != nil)
+        #expect(try store.items().first { $0.id == imageID }?.thumbnail != nil)
     }
 
     @Test func imageFileGetsThumbnailButOtherFilesDoNot() throws {
@@ -70,7 +53,7 @@ import Testing
         let imageFileID = try store.insert(ClipContent(kind: .file, text: pngURL.path), source: nil)
         let textFileID = try store.insert(ClipContent(kind: .file, text: textURL.path), source: nil)
 
-        let items = try store.recent()
+        let items = try store.items()
         #expect(items.first { $0.id == imageFileID }?.thumbnail != nil)
         #expect(items.first { $0.id == textFileID }?.thumbnail == nil)
     }
@@ -83,11 +66,11 @@ import Testing
 
         // 第一次复制时文件还不存在（或不可读），没有缩略图。
         let id = try store.insert(content, source: nil)
-        #expect(try store.recent().first?.thumbnail == nil)
+        #expect(try store.items().first?.thumbnail == nil)
 
         try #require(Self.makePNG(width: 8, height: 8)).write(to: pngURL)
         #expect(try store.insert(content, source: nil) == id)
-        #expect(try store.recent().first?.thumbnail != nil)
+        #expect(try store.items().first?.thumbnail != nil)
     }
 
     @Test func touchMovesItemToTop() throws {
@@ -96,7 +79,7 @@ import Testing
 
         try store.touch(id: old, at: Date(timeIntervalSince1970: 3))
 
-        #expect(try store.recent().first?.id == old)
+        #expect(try store.items().first?.id == old)
     }
 
     @Test func deleteRemovesItems() throws {
@@ -114,7 +97,7 @@ import Testing
         let long = String(repeating: "a", count: ClipStore.previewLength + 10)
         try store.insert(ClipContent(kind: .text, text: long), source: nil)
 
-        let item = try #require(try store.recent().first)
+        let item = try #require(try store.items().first)
         #expect(item.textLength == long.count)
         #expect(item.preview?.count == ClipStore.previewLength)
     }
