@@ -44,6 +44,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     private let panel = ClipPanel()
     private let model: HistoryModel
+    private let dust = CardDust()
     private var keyMonitor: Any?
     private lazy var animator = PanelAnimator(window: panel)
 
@@ -74,7 +75,8 @@ final class PanelController: NSObject, NSWindowDelegate {
         effect.layer?.masksToBounds = true
         super.init()
 
-        let hosting = NSHostingView(rootView: HistoryView(model: model))
+        model.removalEffect = dust
+        let hosting = NSHostingView(rootView: HistoryView(model: model, dust: dust))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(hosting)
         NSLayoutConstraint.activate([
@@ -90,6 +92,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// 应用启动后调用一次，提前做好第一次呼出时才会做的准备工作。
     func prewarm() {
         animator.prepare()
+        DustPipeline.shared.prepare()
     }
 
     func toggle() {
@@ -155,6 +158,9 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     #if DEBUG
+    /// 基准用：面板窗口。
+    var window: NSWindow { panel }
+
     func snapshotPNG() -> Data? {
         guard let view = panel.contentView,
               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
