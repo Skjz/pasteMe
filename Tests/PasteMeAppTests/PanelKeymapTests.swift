@@ -97,6 +97,13 @@ import Testing
         #expect(action(escape, Self.searchEmpty) == .run(.close))
     }
 
+    @Test func escapeClearsFiltersBeforeClosing() {
+        let escape = PanelKey(keyCode: kVK_Escape, characters: "\u{1b}")
+        var filtered = Self.searchEmpty
+        filtered.filtersActive = true
+        #expect(action(escape, filtered) == .run(.clearSearch))
+    }
+
     @Test func returnPastesInBothFocuses() {
         let enter = PanelKey(keyCode: kVK_Return, characters: "\r")
         #expect(action(enter, Self.searching) == .run(.paste(.original)))

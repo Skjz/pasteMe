@@ -24,6 +24,8 @@ struct PanelContext: Equatable {
     var focus: PanelFocus
     var queryIsEmpty: Bool
     var canUndoDelete: Bool
+    /// 面板上选了类型、来源应用或时间筛选。
+    var filtersActive = false
 }
 
 enum PanelCommand: Equatable {
@@ -58,7 +60,8 @@ enum PanelKeymap {
 
         switch key.keyCode {
         case kVK_Escape:
-            return .run(context.queryIsEmpty ? .close : .clearSearch)
+            // 有搜索词或筛选条件时先清空它们，再按一次才关闭。
+            return .run(context.queryIsEmpty && !context.filtersActive ? .close : .clearSearch)
         case kVK_Return, kVK_ANSI_KeypadEnter:
             return .run(.paste(mode))
         case kVK_LeftArrow, kVK_RightArrow:

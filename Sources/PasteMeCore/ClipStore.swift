@@ -48,6 +48,20 @@ public final class ClipStore {
                 PRAGMA user_version = 1;
                 """)
         }
+        if try db.userVersion < 2 {
+            // 按来源应用筛选，以及列出历史里出现过的应用（#4）。
+            try db.execute("""
+                CREATE INDEX clips_source_bundle_id ON clips (source_bundle_id);
+                PRAGMA user_version = 2;
+                """)
+        }
+        if try db.userVersion < 3 {
+            // 图片里识别出的文字（#5）。NULL 表示还没识别，空字符串表示识别过但没有文字，以后不再识别。
+            try db.execute("""
+                ALTER TABLE clips ADD COLUMN ocr_text TEXT;
+                PRAGMA user_version = 3;
+                """)
+        }
     }
 
     /// 保存一次复制。内容已存在时不新增，只把原记录的时间和来源更新为这一次，使其排到最前。
@@ -85,7 +99,7 @@ public final class ClipStore {
     public func items(matching query: ClipQuery = ClipQuery()) throws -> [ClipItem] {
         var sql = """
             SELECT id, kind, substr(text, 1, \(Self.previewLength)), length(text), thumbnail,
-                   source_bundle_id, source_name, created_at
+                   source_bundle_id, source_name, created_at, substr(ocr_text, 1, \(Self.previewLength))
             FROM clips
             """
         var values: [SQLValue] = []
@@ -108,7 +122,8 @@ public final class ClipStore {
                 thumbnail: statement.blob(4),
                 sourceBundleID: statement.text(5),
                 sourceName: statement.text(6),
-                createdAt: Date(timeIntervalSince1970: statement.double(7))
+                createdAt: Date(timeIntervalSince1970: statement.double(7)),
+                recognizedText: statement.text(8)
             ))
         }
         return items
@@ -134,7 +149,7 @@ public final class ClipStore {
         let statement = try db.prepare(
             """
             DELETE FROM clips WHERE id = ?
-            RETURNING kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at
+            RETURNING kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at, ocr_text
             """,
             [.int(id)]
         )
@@ -149,7 +164,8 @@ public final class ClipStore {
             sourceBundleID: statement.text(5),
             sourceName: statement.text(6),
             contentHash: statement.text(7) ?? "",
-            createdAt: statement.double(8)
+            createdAt: statement.double(8),
+            recognizedText: statement.text(9)
         )
         while try statement.step() {}
         return deleted
@@ -161,8 +177,8 @@ public final class ClipStore {
     public func restore(_ clip: DeletedClip) throws -> Int64 {
         try db.run(
             """
-            INSERT INTO clips (id, kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO clips (id, kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at, ocr_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT DO NOTHING
             """,
             [
@@ -176,11 +192,74 @@ public final class ClipStore {
                 clip.sourceName.sqlValue,
                 .text(clip.contentHash),
                 .double(clip.createdAt),
+                clip.recognizedText.sqlValue,
             ]
         )
         let statement = try db.prepare("SELECT id FROM clips WHERE content_hash = ?", [.text(clip.contentHash)])
         guard try statement.step() else { throw SQLiteError(code: -1, message: "恢复后找不到条目") }
         return statement.int(0)
+    }
+
+    // MARK: - 图片中的文字
+
+    /// 还没识别过文字的图片条目（图片，以及有缩略图的图片文件），新的在前。
+    public func idsPendingTextRecognition() throws -> [Int64] {
+        let statement = try db.prepare(
+            """
+            SELECT id FROM clips
+            WHERE ocr_text IS NULL AND (kind = 'image' OR (kind = 'file' AND thumbnail IS NOT NULL))
+            ORDER BY created_at DESC
+            """
+        )
+        var ids: [Int64] = []
+        while try statement.step() { ids.append(statement.int(0)) }
+        return ids
+    }
+
+    /// 要识别文字的图片。条目不存在、不是图片或已经识别过时返回 nil。
+    public func textRecognitionInput(id: Int64) throws -> TextRecognitionInput? {
+        let statement = try db.prepare(
+            "SELECT kind, image, text, thumbnail FROM clips WHERE id = ? AND ocr_text IS NULL",
+            [.int(id)]
+        )
+        guard try statement.step() else { return nil }
+        switch statement.text(0).flatMap(ClipKind.init(rawValue:)) {
+        case .image:
+            return statement.blob(1).map(TextRecognitionInput.imageData)
+        case .file:
+            // 只有图片文件有缩略图。识别原文件，原文件不在了再退而识别缩略图。
+            guard let thumbnail = statement.blob(3),
+                  let path = statement.text(2)?.split(separator: "\n").first
+            else { return nil }
+            return .imageFile(URL(fileURLWithPath: String(path)), fallback: thumbnail)
+        case .text, .link, nil:
+            return nil
+        }
+    }
+
+    /// 保存识别结果。没有文字时传空字符串，这个条目以后不再识别。
+    public func setRecognizedText(_ text: String, id: Int64) throws {
+        try db.run("UPDATE clips SET ocr_text = ? WHERE id = ?", [.text(text), .int(id)])
+    }
+
+    /// 历史里出现过的来源应用，按条目数从多到少排列。没有 bundle id 的条目不算在内。
+    public func sourceApps() throws -> [SourceApp] {
+        // 应用名取这个应用最近一条条目上的名字（SQLite 里和 max() 一起查询的列取自那一行）。
+        let statement = try db.prepare(
+            """
+            SELECT source_bundle_id, source_name, count(*), max(created_at)
+            FROM clips
+            WHERE source_bundle_id IS NOT NULL
+            GROUP BY source_bundle_id
+            ORDER BY count(*) DESC, max(created_at) DESC
+            """
+        )
+        var apps: [SourceApp] = []
+        while try statement.step() {
+            guard let bundleID = statement.text(0) else { continue }
+            apps.append(SourceApp(bundleID: bundleID, name: statement.text(1) ?? bundleID, count: Int(statement.int(2))))
+        }
+        return apps
     }
 
     public func deleteAll() throws {

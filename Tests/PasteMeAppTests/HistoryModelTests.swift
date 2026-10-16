@@ -110,6 +110,68 @@ import PasteMeCore
         #expect(model.selectedID == c)
     }
 
+    @Test func filtersCombineWithTypedConditionsAndReloadImmediately() throws {
+        let store = try ClipStore(path: ":memory:")
+        let notes = ClipSource(bundleID: "com.apple.Notes", name: "备忘录")
+        let safari = ClipSource(bundleID: "com.apple.Safari", name: "Safari")
+        let day: TimeInterval = 24 * 3600
+        let now = Date(timeIntervalSince1970: 100 * day + 12 * 3600)
+        let noteLink = try store.insert(ClipContent(kind: .link, text: "https://notes.example"), source: notes, at: now)
+        let oldLink = try store.insert(ClipContent(kind: .link, text: "https://old.example"), source: notes, at: now - 3 * day)
+        let safariLink = try store.insert(ClipContent(kind: .link, text: "https://safari.example"), source: safari, at: now)
+        let noteText = try store.insert(ClipContent(kind: .text, text: "note"), source: notes, at: now)
+        let model = HistoryModel(store: store) { now }
+        model.didShow()
+
+        model.filters.kinds = [.link]
+        #expect(Set(model.items.map(\.id)) == [noteLink, oldLink, safariLink])
+
+        model.filters.sourceApp = SourceApp(bundleID: "com.apple.Notes", name: "备忘录", count: 3)
+        #expect(Set(model.items.map(\.id)) == [noteLink, oldLink])
+
+        model.filters.timeRange = .last7Days
+        model.query = "old"
+        #expect(model.items.map(\.id) == [oldLink])
+
+        // 搜索框里的类型和按钮选的类型取交集。
+        model.query = "type:text"
+        #expect(model.items.isEmpty)
+        #expect(model.activeConditions == ["类型条件没有交集", "来自备忘录", "最近 7 天"])
+
+        model.filters.kinds = []
+        #expect(model.items.map(\.id) == [noteText])
+    }
+
+    @Test func clearingSearchAlsoClearsFilters() {
+        model.filters.kinds = [.image]
+        model.query = "x"
+        #expect(!model.searchIsEmpty)
+
+        model.clearSearch()
+
+        #expect(model.searchIsEmpty)
+        #expect(model.items.map(\.id) == [c, b, a])
+    }
+
+    @Test func activeConditionsDescribeEverySearchCondition() {
+        model.filters.timeRange = .today
+        model.query = "发票 app:微信 type:图片"
+
+        #expect(model.activeConditions == ["类型为图片", "来源应用名包含“微信”", "今天", "包含“发票”"])
+    }
+
+    @Test func reopeningPanelClearsSearchAndFilters() {
+        model.query = "a"
+        model.filters.kinds = [.file]
+        model.filters.timeRange = .yesterday
+
+        model.didShow()
+
+        #expect(model.query.isEmpty)
+        #expect(model.filters == PanelFilters())
+        #expect(model.items.map(\.id) == [c, b, a])
+    }
+
     @Test func reopeningPanelForgetsDeletionsAndResetsFocus() {
         model.focus = .cards
         model.delete()

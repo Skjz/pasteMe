@@ -25,6 +25,8 @@ final class ClipPanel: NSPanel {
         // 收起时依赖这一点：开着系统动画时，窗口 orderOut 后再放回屏幕会先播系统的过渡，
         // 这期间窗口服务器不理会 setFrameOrigin，面板只会原地淡出。
         animationBehavior = .none
+        // 默认不出现在共享屏幕、录屏和截图里，见 `PanelController.showsDuringScreenSharing`。
+        sharingType = .none
     }
 
     /// 收起动画期间为 false：面板还在屏幕上，但不再接收键盘焦点。
@@ -55,6 +57,11 @@ final class PanelController: NSObject, NSWindowDelegate {
     var isVisible: Bool { phase == .showing || phase == .shown }
     /// 最近一次呼出面板时的前台应用，粘贴的内容会送到这里。
     private(set) var targetApp: TargetApp?
+
+    /// 共享屏幕、录屏和截图时能否看到面板。默认看不到，本机屏幕上照常显示。
+    var showsDuringScreenSharing = false {
+        didSet { panel.sharingType = showsDuringScreenSharing ? .readOnly : .none }
+    }
 
     init(model: HistoryModel) {
         self.model = model
@@ -192,7 +199,12 @@ final class PanelController: NSObject, NSWindowDelegate {
             control: flags.contains(.control),
             characters: event.characters ?? ""
         )
-        let context = PanelContext(focus: model.focus, queryIsEmpty: model.query.isEmpty, canUndoDelete: model.canUndoDelete)
+        let context = PanelContext(
+            focus: model.focus,
+            queryIsEmpty: model.query.isEmpty,
+            canUndoDelete: model.canUndoDelete,
+            filtersActive: model.filters.isActive
+        )
 
         switch PanelKeymap.action(for: key, in: context) {
         case .passThrough:
@@ -215,8 +227,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .close:
             hide()
         case .clearSearch:
-            model.query = ""
-            model.reload()
+            model.clearSearch()
             model.focus = .search
         case .moveSelection(let offset):
             model.moveSelection(by: offset)

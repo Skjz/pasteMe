@@ -71,16 +71,21 @@ public final class Paster {
     }
 
     public func paste(_ id: Int64, as mode: PasteMode = .original, into target: TargetApp?) throws -> PasteOutcome {
+        try copyToPasteboard(id, as: mode)
+
+        // 没有权限时内容已经在剪贴板里，用户可以自己按 ⌘V。
+        guard keystroke.isTrusted else { return .copiedOnly }
+        keystroke.sendPaste(to: target)
+        return .pasted
+    }
+
+    /// 只把条目写进剪贴板并移到历史最前，不发送 ⌘V。Paste Stack 用它：⌘V 是用户自己按的。
+    public func copyToPasteboard(_ id: Int64, as mode: PasteMode = .original) throws {
         guard var content = try store.content(id: id) else { throw PasteError.clipNotFound(id: id) }
         if mode == .plainText { content = content.plainTextOnly }
 
         pasteboard.write(content)
         // 内容已经在剪贴板里，排序没更新不影响这次粘贴。
         try? store.touch(id: id)
-
-        // 没有权限时内容已经在剪贴板里，用户可以自己按 ⌘V。
-        guard keystroke.isTrusted else { return .copiedOnly }
-        keystroke.sendPaste(to: target)
-        return .pasted
     }
 }

@@ -64,6 +64,8 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
     public var sourceBundleID: String?
     public var sourceName: String?
     public var createdAt: Date
+    /// 从图片里识别出的文字（前若干字符）。nil 表示还没识别，空字符串表示识别过但没有文字。
+    public var recognizedText: String?
 
     public init(
         id: Int64,
@@ -73,7 +75,8 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
         thumbnail: Data?,
         sourceBundleID: String?,
         sourceName: String?,
-        createdAt: Date
+        createdAt: Date,
+        recognizedText: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -83,6 +86,7 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
         self.sourceBundleID = sourceBundleID
         self.sourceName = sourceName
         self.createdAt = createdAt
+        self.recognizedText = recognizedText
     }
 
     public var filePaths: [String] {
@@ -102,6 +106,21 @@ public struct ClipSource: Sendable, Equatable {
     }
 }
 
+/// 历史里出现过的一个来源应用，以及来自它的条目数。
+public struct SourceApp: Sendable, Equatable, Identifiable {
+    public var bundleID: String
+    public var name: String
+    public var count: Int
+
+    public var id: String { bundleID }
+
+    public init(bundleID: String, name: String, count: Int) {
+        self.bundleID = bundleID
+        self.name = name
+        self.count = count
+    }
+}
+
 /// 被删除条目的完整数据，由 `ClipStore.delete(id:)` 返回，用于撤销删除。
 public struct DeletedClip: Sendable, Equatable {
     public let id: Int64
@@ -114,4 +133,5 @@ public struct DeletedClip: Sendable, Equatable {
     let sourceName: String?
     let contentHash: String
     let createdAt: Double
+    let recognizedText: String?
 }

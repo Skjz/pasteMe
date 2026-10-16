@@ -1,22 +1,18 @@
 import AppKit
 import PasteMeCore
 
-/// 轮询系统剪贴板，发现新内容就存入历史。
+/// 轮询系统剪贴板，发现新内容就交给 `Recorder`。
 ///
 /// macOS 没有剪贴板变化的通知，只能定时检查 `changeCount`；0.5 秒的间隔开销很小。
 @MainActor
 final class ClipboardMonitor {
-    var isPaused = false
-
-    private let store: ClipStore
+    private let recorder: Recorder
     private let pasteboard = NSPasteboard.general
-    private let onChange: () -> Void
     private var lastChangeCount: Int
     private var timer: Timer?
 
-    init(store: ClipStore, onChange: @escaping () -> Void) {
-        self.store = store
-        self.onChange = onChange
+    init(recorder: Recorder) {
+        self.recorder = recorder
         lastChangeCount = pasteboard.changeCount
     }
 
@@ -32,7 +28,8 @@ final class ClipboardMonitor {
         guard changeCount != lastChangeCount else { return }
         lastChangeCount = changeCount
 
-        guard !isPaused,
+        // 暂停时连剪贴板的内容都不读。
+        guard !recorder.isPaused,
               !PasteboardCodec.isOwnWrite(pasteboard),
               !PasteboardCodec.shouldIgnore(pasteboard),
               let content = PasteboardCodec.read(pasteboard)
@@ -41,8 +38,7 @@ final class ClipboardMonitor {
         let app = NSWorkspace.shared.frontmostApplication
         let source = ClipSource(bundleID: app?.bundleIdentifier, name: app?.localizedName)
         do {
-            try store.insert(content, source: source)
-            onChange()
+            try recorder.record(content, from: source)
         } catch {
             NSLog("PasteMe: 保存剪贴板内容失败：\(error)")
         }

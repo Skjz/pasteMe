@@ -7,6 +7,8 @@ struct ClipCardView: View {
     let item: ClipItem
     /// 1…9，显示 ⌘n 提示；超过 9 条为 nil。
     let shortcutIndex: Int?
+    /// 当前的搜索文字。命中图片里的文字时，卡片底部显示命中的那一段。
+    var searchText = ""
 
     static let size = CGSize(width: 230, height: 240)
 
@@ -129,9 +131,19 @@ struct ClipCardView: View {
     }
 
     private var footer: some View {
-        HStack {
-            Text(detail)
-            Spacer()
+        HStack(spacing: 4) {
+            if item.recognizedText?.isEmpty == false {
+                Image(systemName: "text.viewfinder")
+                    .help("图片里的文字可以搜索")
+            }
+            if let snippet = item.recognizedTextSnippet(matching: searchText) {
+                Text(snippet.highlighted)
+                    .lineLimit(1)
+            } else {
+                Text(detail)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
             if let shortcutIndex {
                 Text("⌘\(shortcutIndex)")
             }
@@ -149,6 +161,42 @@ struct ClipCardView: View {
         case .image: item.sourceName ?? ""
         case .file: item.filePaths.count == 1 ? "1 个文件" : "\(item.filePaths.count) 个文件"
         }
+    }
+}
+
+/// 图片文字里命中搜索词的那一段：命中的词，以及前后几个字。
+struct TextSnippet: Equatable {
+    var before: String
+    var match: String
+    var after: String
+
+    /// 命中的词加粗、用强调色。
+    var highlighted: AttributedString {
+        var match = AttributedString(match)
+        match.font = .system(size: 11, weight: .semibold)
+        match.foregroundColor = .accentColor
+        return AttributedString(before) + match + AttributedString(after)
+    }
+}
+
+extension ClipItem {
+    /// 搜索词出现在图片的文字里时，取出它和前后几个字，换行换成空格。和数据库的搜索一样不区分大小写。
+    func recognizedTextSnippet(matching search: String, context: Int = 6) -> TextSnippet? {
+        let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard kind == .image || kind == .file, !needle.isEmpty,
+              let text = recognizedText,
+              let range = text.range(of: needle, options: .caseInsensitive)
+        else { return nil }
+        func flat(_ part: Substring) -> String {
+            part.replacingOccurrences(of: "\n", with: " ")
+        }
+        let before = text[..<range.lowerBound].suffix(context)
+        let after = text[range.upperBound...].prefix(context * 3)
+        return TextSnippet(
+            before: (before.startIndex > text.startIndex ? "…" : "") + flat(before),
+            match: flat(text[range]),
+            after: flat(after) + (after.endIndex < text.endIndex ? "…" : "")
+        )
     }
 }
 
@@ -269,6 +317,17 @@ enum AppIconCache {
             .flatMap(IconColor.dominant(in:))
         colors[bundleID] = color
         return color
+    }
+
+    private static var menuIcons: [String: NSImage] = [:]
+
+    /// 菜单里用的 16 点小图标。
+    static func menuIcon(for bundleID: String) -> NSImage? {
+        if let cached = menuIcons[bundleID] { return cached }
+        guard let icon = icon(for: bundleID)?.copy() as? NSImage else { return nil }
+        icon.size = NSSize(width: 16, height: 16)
+        menuIcons[bundleID] = icon
+        return icon
     }
 
     static func icon(for bundleID: String?) -> NSImage? {
