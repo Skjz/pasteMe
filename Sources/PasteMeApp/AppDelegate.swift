@@ -1,5 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
 import PasteMeCore
 import ServiceManagement
 
@@ -8,12 +7,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var store: ClipStore!
     private var paster: Paster!
     private var model: HistoryModel!
+    private var recorder: Recorder!
     private var monitor: ClipboardMonitor!
     private var panel: PanelController!
-    private var hotKey: HotKey?
+    private let hotKeys = HotKeyCenter()
+    private let toast = Toast()
     private var statusItem: NSStatusItem!
 
-    private let pauseItem = NSMenuItem(title: "暂停记录", action: #selector(togglePause), keyEquivalent: "")
+    /// 没有暂停时是带子菜单的“暂停记录”，暂停时是“恢复记录”。在 `menuWillOpen` 里切换。
+    private let pauseItem = NSMenuItem(title: "暂停记录", action: nil, keyEquivalent: "")
+    private lazy var pauseMenu = makePauseMenu()
     private let loginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private let screenSharingItem = NSMenuItem(title: "共享屏幕时显示面板", action: #selector(toggleShowDuringScreenSharing), keyEquivalent: "")
     private let accessibilityItem = NSMenuItem(title: "", action: #selector(openAccessibilitySettings), keyEquivalent: "")
@@ -43,18 +46,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         panel.showsDuringScreenSharing = settings.showDuringScreenSharing
         model.onPaste = { [weak self] item, mode in self?.paste(item, as: mode) }
 
-        monitor = ClipboardMonitor(store: store) { [weak self] in
+        recorder = Recorder(store: store)
+        recorder.onRecord = { [weak self] _ in
             guard let self, self.panel.isVisible else { return }
             self.model.reload()
         }
+        recorder.onPauseChange = { [weak self] in self?.pauseDidChange() }
+        monitor = ClipboardMonitor(recorder: recorder)
         monitor.start()
 
-        hotKey = HotKey(keyCode: kVK_ANSI_V, modifiers: cmdKey | shiftKey) { [weak self] in
-            self?.panel.toggle()
-        }
-        if hotKey == nil {
-            NSLog("PasteMe: ⇧⌘V 注册失败，可能已被其他应用占用")
-        }
+        hotKeys.register(.panel) { [weak self] in self?.panel.toggle() }
+        hotKeys.register(.pause) { [weak self] in self?.togglePause() }
 
         setUpStatusItem()
         panel.prewarm()
@@ -107,13 +109,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     private func setUpStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "PasteMe")
+        statusItem.button?.image = StatusIcon.normal
 
         let menu = NSMenu()
         menu.delegate = self
 
-        let open = NSMenuItem(title: "打开历史", action: #selector(showPanel), keyEquivalent: "v")
-        open.keyEquivalentModifierMask = [.command, .shift]
+        let open = NSMenuItem(title: "打开历史", action: #selector(showPanel), keyEquivalent: "")
+        open.showShortcut(.panel)
         menu.addItem(open)
         menu.addItem(.separator())
         menu.addItem(pauseItem)
@@ -145,7 +147,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     public func menuWillOpen(_ menu: NSMenu) {
-        pauseItem.state = monitor.isPaused ? .on : .off
+        updatePauseItem()
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         screenSharingItem.state = settings.showDuringScreenSharing ? .on : .off
         for item in cursorStyleItem.submenu?.items ?? [] {
@@ -164,10 +166,73 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         panel.show()
     }
 
-    @objc private func togglePause() {
-        monitor.isPaused.toggle()
-        statusItem.button?.appearsDisabled = monitor.isPaused
+    // MARK: - 暂停记录
+
+    private func makePauseMenu() -> NSMenu {
+        let menu = NSMenu()
+        for minutes in [5, 30, 60] {
+            let title = minutes < 60 ? "暂停 \(minutes) 分钟" : "暂停 \(minutes / 60) 小时"
+            let item = NSMenuItem(title: title, action: #selector(pauseFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = minutes
+            menu.addItem(item)
+        }
+        let untilResumed = NSMenuItem(title: "直到手动恢复", action: #selector(pauseFromMenu(_:)), keyEquivalent: "")
+        untilResumed.target = self
+        untilResumed.showShortcut(.pause)
+        menu.addItem(untilResumed)
+        return menu
     }
+
+    private func updatePauseItem() {
+        if let until = recorder.pausedUntil, recorder.isPaused {
+            pauseItem.submenu = nil
+            pauseItem.action = #selector(resumeFromMenu)
+            pauseItem.showShortcut(.pause)
+            pauseItem.title = until == .distantFuture ? "恢复记录" : "恢复记录（\(Self.timeFormat.string(from: until)) 自动恢复）"
+        } else {
+            pauseItem.action = nil
+            pauseItem.keyEquivalent = ""
+            pauseItem.title = "暂停记录"
+            pauseItem.submenu = pauseMenu
+        }
+    }
+
+    /// 菜单里的定时暂停；`representedObject` 是分钟数，没有时一直暂停到手动恢复。
+    @objc private func pauseFromMenu(_ sender: NSMenuItem) {
+        if let minutes = sender.representedObject as? Int {
+            recorder.pause(until: Date().addingTimeInterval(Double(minutes) * 60))
+        } else {
+            recorder.pause()
+        }
+    }
+
+    @objc private func resumeFromMenu() {
+        recorder.resume()
+    }
+
+    /// 全局快捷键：没有暂停时一直暂停到手动恢复，暂停中则恢复。
+    private func togglePause() {
+        recorder.isPaused ? recorder.resume() : recorder.pause()
+    }
+
+    private func pauseDidChange() {
+        statusItem.button?.image = recorder.isPaused ? StatusIcon.paused : StatusIcon.normal
+        guard let until = recorder.pausedUntil else {
+            toast.show("已恢复记录", symbol: "play.circle")
+            return
+        }
+        let detail = until == .distantFuture
+            ? "再按 \(GlobalShortcut.pause.symbol) 恢复"
+            : "\(Self.timeFormat.string(from: until)) 自动恢复"
+        toast.show("已暂停记录", detail: detail, symbol: "pause.circle")
+    }
+
+    private static let timeFormat: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
 
     @objc private func toggleShowDuringScreenSharing() {
         settings.showDuringScreenSharing.toggle()

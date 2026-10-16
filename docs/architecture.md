@@ -17,11 +17,15 @@ ADR 0002 规划的模块里，有几个要等第一个用到它的工单才建�
 
 | 规划中的模块 | 现在由谁承担 | 建立时机 |
 | --- | --- | --- |
-| `Recorder` | `ClipboardMonitor.poll()`：轮询、判断记不记录、入库 | #7 |
-| `HotKeyCenter` | `HotKey`：只能注册一个快捷键 | #7 |
 | `EnrichmentQueue` | 缩略图在 `ClipStore.insert` 里同步生成 | #5 |
 | Paste Stack | 无 | #6 |
 | `MCPServer`（`PasteMeMCP` target） | 无 | #8 |
+
+## 记录和全局快捷键
+
+- `ClipboardMonitor` 只轮询剪贴板：发现变化后跳过 PasteMe 自己写入的内容和敏感内容，读出内容和来源应用，交给 `Recorder.record(_:from:)`。暂停时它连剪贴板都不读。
+- `Recorder` 决定记不记录（暂停），入库后调用 `onRecord`。暂停只在内存里：`pausedUntil` 为 `.distantFuture` 表示直到手动恢复，定时暂停由 `Recorder` 自己的定时器到时恢复，`onPauseChange` 通知应用换菜单栏图标、显示提示。测试用注入的时钟（`RecorderTests`）。
+- 全局快捷键都通过 `HotKeyCenter.register(_:action:)` 注册，按键组合定义在 `GlobalShortcut`。Carbon 会把每个快捷键事件发给所有已安装的处理器，所以只装一个处理器，读出事件里的快捷键 id 再分发；`HotKeyCenterTests` 直接调用 `dispatch` 模拟按键。
 
 ## 面板按键
 

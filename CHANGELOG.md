@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ⌃⇧⌘V pauses recording until you press it again, from any app. The "暂停记录" menu item is now a submenu that also pauses for 5 minutes, 30 minutes or 1 hour and resumes on its own when the time is up. While recording is paused the menu bar icon has a slash through it, the menu item turns into "恢复记录" (with the time it resumes on its own), and a short notice appears on screen whenever recording pauses or resumes. Pausing is not remembered across restarts, so PasteMe always starts out recording. ⌥⇧⌘V was avoided because many apps use it for Paste and Match Style. (#7)
 - The panel is hidden from screen sharing, screen recordings and screenshots, so people in a meeting can't see your clipboard history; it still shows on your own screen. Turn on "共享屏幕时显示面板" in the menu bar menu to let it be captured, for example when recording a tutorial. The setting is kept across restarts. This relies on macOS's window sharing setting, which some capture tools may not honor. (#3)
 
 - `scripts/bench-panel.sh` measures how smoothly the panel opens and closes. It runs a debug build against a throwaway history that fills itself with test entries, opens and closes the panel repeatedly, and prints how many frames missed the 120 Hz deadline on screen (via a tiny Metal layer that records when each frame is actually presented) and on the main thread. `docs/agents/ui-performance.md` describes how to use it to compare a change against a baseline and track down the cause of stutter; `AGENTS.md` points to it.
@@ -41,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Deciding whether to record a copy, and pausing, moved from `ClipboardMonitor` into `Recorder` in `PasteMeCore`, covered by `RecorderTests`. `HotKey` is replaced by `HotKeyCenter`, which registers any number of global shortcuts behind one Carbon event handler and runs the one whose id was pressed; before, a second shortcut would have triggered every registered action. (#7)
 - The card row has 30 pt margins on both sides and 18 pt between cards. When the selection scrolls the list, the selected card keeps the margin instead of sitting against the panel edge.
 
 - The panel now tracks keyboard focus: the search field when the panel opens, the card list after ↓ or a click on a card. ⌘⌫ and ⌘Z act on the search text while the search field has focus, and delete the selected entry / undo the delete while the card list has focus. ← → move the text cursor when the search field has text, and select cards otherwise. ↑ or typing returns focus to the search field. The selected card's border is brighter when the card list has focus, and the hint line lists the keys for the current focus. (#1)
