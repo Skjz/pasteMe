@@ -10,7 +10,7 @@ import Testing
 
     init() throws {
         store = try ClipStore(path: ":memory:")
-        recorder = Recorder(store: store) { [unowned self] in self.now }
+        recorder = Recorder(store: store, now: { [unowned self] in self.now })
     }
 
     @Test func recordsCopiesAndReportsTheirIDs() throws {

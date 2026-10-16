@@ -64,6 +64,8 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
     public var sourceBundleID: String?
     public var sourceName: String?
     public var createdAt: Date
+    /// 从图片里识别出的文字（前若干字符）。nil 表示还没识别，空字符串表示识别过但没有文字。
+    public var recognizedText: String?
 
     public init(
         id: Int64,
@@ -73,7 +75,8 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
         thumbnail: Data?,
         sourceBundleID: String?,
         sourceName: String?,
-        createdAt: Date
+        createdAt: Date,
+        recognizedText: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -83,6 +86,7 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
         self.sourceBundleID = sourceBundleID
         self.sourceName = sourceName
         self.createdAt = createdAt
+        self.recognizedText = recognizedText
     }
 
     public var filePaths: [String] {
@@ -129,4 +133,5 @@ public struct DeletedClip: Sendable, Equatable {
     let sourceName: String?
     let contentHash: String
     let createdAt: Double
+    let recognizedText: String?
 }

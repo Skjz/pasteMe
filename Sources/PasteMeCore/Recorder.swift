@@ -14,12 +14,16 @@ public final class Recorder {
     public var onRecord: (Int64) -> Void = { _ in }
 
     private let store: ClipStore
+    private let enrichment: EnrichmentQueue?
     private let now: () -> Date
     private var resumeTimer: Timer?
 
-    /// `now` 用于测试时控制时间。
-    public init(store: ClipStore, now: @escaping () -> Date = Date.init) {
+    /// - Parameters:
+    ///   - enrichment: 记录图片后交给它识别文字。
+    ///   - now: 用于测试时控制时间。
+    public init(store: ClipStore, enrichment: EnrichmentQueue? = nil, now: @escaping () -> Date = Date.init) {
         self.store = store
+        self.enrichment = enrichment
         self.now = now
     }
 
@@ -60,6 +64,9 @@ public final class Recorder {
         }
         guard !isPaused else { return nil }
         let id = try store.insert(content, source: source, at: now())
+        if content.kind == .image || content.kind == .file {
+            enrichment?.enqueue(id)
+        }
         onRecord(id)
         return id
     }

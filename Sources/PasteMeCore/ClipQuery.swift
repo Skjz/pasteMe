@@ -5,7 +5,7 @@ import Foundation
 /// 怎样把条件变成 SQL（搜索哪些列、如何转义）都在这个文件里；以后增加筛选条件只改这里。
 /// 所有条件同时满足的条目才会返回。
 public struct ClipQuery: Sendable, Equatable {
-    /// 只返回文本或来源应用名包含这段文字的条目（子串匹配，不区分 ASCII 大小写）。
+    /// 只返回文本、图片中的文字或来源应用名包含这段文字的条目（子串匹配，不区分 ASCII 大小写）。
     /// 去掉首尾空白后为空时不按文字筛选。
     public var text: String
     /// 只返回这几种类型的条目。nil 表示不限类型；空集合表示什么都不返回（例如两个类型条件没有交集）。
@@ -138,8 +138,8 @@ extension ClipQuery {
         if !trimmed.isEmpty {
             // 搜索用 LIKE 子串匹配而不是 FTS5，原因见 ADR 0004。
             let pattern = SQLValue.text("%" + Self.escapeLike(trimmed) + "%")
-            clauses.append("(text LIKE ? ESCAPE '\\' OR source_name LIKE ? ESCAPE '\\')")
-            values += [pattern, pattern]
+            clauses.append("(text LIKE ? ESCAPE '\\' OR ocr_text LIKE ? ESCAPE '\\' OR source_name LIKE ? ESCAPE '\\')")
+            values += [pattern, pattern, pattern]
         }
         if let kinds {
             if kinds.isEmpty {

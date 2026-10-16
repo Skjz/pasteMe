@@ -174,8 +174,12 @@ import Testing
             """)
 
         let store = try ClipStore(path: path)
+        #expect(try old.userVersion == 3)
         #expect(try store.items().map(\.preview) == ["old entry"])
         #expect(try store.items(matching: ClipQuery(sourceBundleID: "com.apple.Notes")).count == 1)
+        // 迁移加上的 ocr_text 列为 NULL，旧条目照常能搜到。
+        #expect(try store.items().first?.recognizedText == nil)
+        #expect(try store.items(matching: ClipQuery(text: "old")).count == 1)
         #expect(try store.insert(ClipContent(kind: .text, text: "new"), source: nil) > 1)
     }
 }

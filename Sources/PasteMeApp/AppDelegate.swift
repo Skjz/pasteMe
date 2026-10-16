@@ -8,6 +8,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var paster: Paster!
     private var model: HistoryModel!
     private var recorder: Recorder!
+    private var enrichment: EnrichmentQueue!
     private var monitor: ClipboardMonitor!
     private var panel: PanelController!
     private let hotKeys = HotKeyCenter()
@@ -46,11 +47,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         panel.showsDuringScreenSharing = settings.showDuringScreenSharing
         model.onPaste = { [weak self] item, mode in self?.paste(item, as: mode) }
 
-        recorder = Recorder(store: store)
-        recorder.onRecord = { [weak self] _ in
-            guard let self, self.panel.isVisible else { return }
-            self.model.reload()
-        }
+        enrichment = EnrichmentQueue(store: store, recognizer: VisionTextRecognizer())
+        enrichment.onEnriched = { [weak self] _ in self?.reloadPanelIfVisible() }
+        recorder = Recorder(store: store, enrichment: enrichment)
+        recorder.onRecord = { [weak self] _ in self?.reloadPanelIfVisible() }
         recorder.onPauseChange = { [weak self] in self?.pauseDidChange() }
         monitor = ClipboardMonitor(recorder: recorder)
         monitor.start()
@@ -75,6 +75,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         if !Accessibility.isTrusted {
             Accessibility.requestTrust()
         }
+
+        // 给以前的图片补做文字识别。等启动时的其他工作做完再开始，之后每条之间也会停一下。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.enrichment.backfill()
+        }
+    }
+
+    private func reloadPanelIfVisible() {
+        if panel.isVisible { model.reload() }
     }
 
     #if DEBUG

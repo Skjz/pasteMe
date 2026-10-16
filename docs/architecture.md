@@ -17,7 +17,6 @@ ADR 0002 规划的模块里，有几个要等第一个用到它的工单才建�
 
 | 规划中的模块 | 现在由谁承担 | 建立时机 |
 | --- | --- | --- |
-| `EnrichmentQueue` | 缩略图在 `ClipStore.insert` 里同步生成 | #5 |
 | Paste Stack | 无 | #6 |
 | `MCPServer`（`PasteMeMCP` target） | 无 | #8 |
 
@@ -26,6 +25,14 @@ ADR 0002 规划的模块里，有几个要等第一个用到它的工单才建�
 - `ClipboardMonitor` 只轮询剪贴板：发现变化后跳过 PasteMe 自己写入的内容和敏感内容，读出内容和来源应用，交给 `Recorder.record(_:from:)`。暂停时它连剪贴板都不读。
 - `Recorder` 决定记不记录（暂停），入库后调用 `onRecord`。暂停只在内存里：`pausedUntil` 为 `.distantFuture` 表示直到手动恢复，定时暂停由 `Recorder` 自己的定时器到时恢复，`onPauseChange` 通知应用换菜单栏图标、显示提示。测试用注入的时钟（`RecorderTests`）。
 - 全局快捷键都通过 `HotKeyCenter.register(_:action:)` 注册，按键组合定义在 `GlobalShortcut`。Carbon 会把每个快捷键事件发给所有已安装的处理器，所以只装一个处理器，读出事件里的快捷键 id 再分发；`HotKeyCenterTests` 直接调用 `dispatch` 模拟按键。
+
+## 附加信息
+
+- 图片中的文字由 `EnrichmentQueue` 补充：`Recorder` 记下图片或图片文件后调用 `enqueue(id)`，启动 3 秒后 `AppDelegate` 调用 `backfill()` 补做旧条目。队列一次只处理一个条目，新复制的排在前面，补做的每条之间停 0.5 秒。
+- 线程：在主线程用 `ClipStore.textRecognitionInput(id:)` 读出图片（`Sendable` 的 `TextRecognitionInput`），在后台识别，回到主线程用 `setRecognizedText(_:id:)` 写回（ADR 0003）。`VisionTextRecognizer` 自己用 `Task.detached` 切到后台，不依赖调用方。
+- `ocr_text` 为 NULL 表示还没识别，空字符串表示识别过但没有文字或识别失败，以后不再识别。图片文件识别原文件，原文件不在了识别缩略图（缩略图只有 480 像素，效果差一些）。
+- 缩略图仍在 `ClipStore.insert` 里同步生成，没有移进队列：复制图片后卡片要马上能显示缩略图。
+- 测试用 `FakeRecognizer`（`TextRecognitionTests.swift`），另有一个测试真的调用 Vision 识别画出来的中英文。
 
 ## 面板按键
 
@@ -76,6 +83,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 
 | Seam | 生产实现 | 测试替身 |
 | --- | --- | --- |
+| `TextRecognizing` | `VisionTextRecognizer`（Core） | `FakeRecognizer`（`TextRecognitionTests.swift`） |
 | `PasteboardWriting` | `GeneralPasteboard`（Core，`PasteboardCodec` 写 `NSPasteboard.general`） | `FakePasteboard`（`PasterTests.swift`） |
 | `PasteKeystrokeSending` | `CGEventPasteKeystroke`（App） | `FakeKeystroke`（`PasterTests.swift`） |
 | `ClipStore(path:)` | `ClipStore.defaultPath()` | `ClipStore(path: ":memory:")` |

@@ -89,11 +89,12 @@ struct HistoryView: View {
 
     private var cards: some View {
         ScrollViewReader { proxy in
+            let searchText = model.currentQuery.text
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: Self.cardSpacing) {
                     ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
                         let selected = item.id == model.selectedID
-                        ClipCardView(item: item, shortcutIndex: index < 9 ? index + 1 : nil)
+                        ClipCardView(item: item, shortcutIndex: index < 9 ? index + 1 : nil, searchText: searchText)
                             .scaleEffect(scale(selected: selected))
                             .animation(.spring(response: 0.28, dampingFraction: 0.7), value: selected)
                             .zIndex(selected ? 1 : 0)
