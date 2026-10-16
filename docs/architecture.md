@@ -31,6 +31,14 @@ ADR 0002 规划的模块里，有几个要等第一个用到它的工单才建�
 - 焦点在卡片上时打字，需要让这次按键直接进入搜索框。本地事件监视器在事件分发之前回调，所以 `PanelController` 在监视器里同步把搜索框设为第一响应者，再把事件放行。搜索框是在视图层级里找到的第一个可编辑 `NSTextField`。
 - 删除时 `ClipStore.delete(id:)` 返回 `DeletedClip`，`HistoryModel` 保存到面板关闭为止，⌘Z 用 `ClipStore.restore(_:)` 按原来的 id、时间和缩略图放回。
 
+## 面板动画
+
+- `PanelMotion` 是纯值类型，按弹簧的解析解算出某一时刻的进度（0 收起，1 就位）和速度，参数在 `Spring.show` / `.hide` / `.fade` 里调整，测试在 `PanelMotionTests`。从任意进度和速度出发，所以动画中途反向时不会跳。
+- `PanelAnimator` 用 display link 逐帧移动窗口、改透明度。display link 按显示器创建，不用时暂停而不销毁，并在启动时由 `PanelController.prewarm()` 提前创建：第一次创建要读取显示器的模式列表，约 0.2 秒，放在第一次呼出时会丢掉开头的帧。
+- 收起时面板立即 `orderOut`，键盘焦点马上回到目标应用，⌘V 的时机和没有动画时一样。面板的内容视图搬进替身窗口 `GhostPanel`（不接收输入），由它滑出屏幕；收起中途再次呼出时，内容搬回面板，面板从替身的位置接着动画。不要改成让面板自己留在屏幕上滑出：面板交出焦点后再放回屏幕，窗口服务器不再更新它的位置，只有透明度会变。
+- 卡片依次出现在 `HistoryView` 里用 SwiftUI 动画实现，只对前 8 张做。
+- 验证动画时截图拍不到面板，可以用 `CGWindowListCopyWindowInfo` 每隔几毫秒采样 PasteMe 窗口的位置和透明度，看每一帧的位置。
+
 ## 粘贴流程
 
 ```text

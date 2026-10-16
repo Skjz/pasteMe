@@ -52,6 +52,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
 
         setUpStatusItem()
+        panel.prewarm()
 
         #if DEBUG
         if let path = ProcessInfo.processInfo.environment["PASTEME_SNAPSHOT"] {
