@@ -16,6 +16,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private let pauseItem = NSMenuItem(title: "暂停记录", action: #selector(togglePause), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private let accessibilityItem = NSMenuItem(title: "", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+    private let cursorStyleItem = NSMenuItem(title: "光标样式", action: nil, keyEquivalent: "")
+    private let settings = Settings()
 
     override public init() {
         super.init()
@@ -35,6 +37,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         paster = Paster(store: store, pasteboard: GeneralPasteboard(), keystroke: CGEventPasteKeystroke())
         model = HistoryModel(store: store)
+        model.cursorStyle = settings.cursorStyle
         panel = PanelController(model: model)
         model.onPaste = { [weak self] item, mode in self?.paste(item, as: mode) }
 
@@ -110,6 +113,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         menu.addItem(pauseItem)
         menu.addItem(loginItem)
         menu.addItem(accessibilityItem)
+        menu.addItem(cursorStyleItem)
+        cursorStyleItem.submenu = makeCursorStyleMenu()
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "清空历史…", action: #selector(clearHistory), keyEquivalent: ""))
         menu.addItem(.separator())
@@ -121,10 +126,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         statusItem.menu = menu
     }
 
+    private func makeCursorStyleMenu() -> NSMenu {
+        let menu = NSMenu()
+        for style in CursorStyle.allCases {
+            let item = NSMenuItem(title: style.title, action: #selector(chooseCursorStyle(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = style.rawValue
+            menu.addItem(item)
+        }
+        return menu
+    }
+
     public func menuWillOpen(_ menu: NSMenu) {
         pauseItem.state = monitor.isPaused ? .on : .off
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        for item in cursorStyleItem.submenu?.items ?? [] {
+            item.state = item.representedObject as? String == model.cursorStyle.rawValue ? .on : .off
+        }
         accessibilityItem.title = Accessibility.isTrusted ? "辅助功能权限：已开启" : "辅助功能权限：未开启（点此设置）"
+    }
+
+    @objc private func chooseCursorStyle(_ sender: NSMenuItem) {
+        guard let style = (sender.representedObject as? String).flatMap(CursorStyle.init(rawValue:)) else { return }
+        settings.cursorStyle = style
+        model.cursorStyle = style
     }
 
     @objc private func showPanel() {

@@ -146,6 +146,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
 
         phase = .showing
+        model.isPanelVisible = true
         model.didShow()
         panel.makeKeyAndOrderFront(nil)
         installKeyMonitor()
@@ -170,6 +171,7 @@ final class PanelController: NSObject, NSWindowDelegate {
             guard let self else { return }
             self.ghost.orderOut(nil)
             self.phase = .hidden
+            self.model.isPanelVisible = false
         }
     }
 

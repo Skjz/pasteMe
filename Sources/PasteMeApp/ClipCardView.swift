@@ -7,9 +7,6 @@ struct ClipCardView: View {
     let item: ClipItem
     /// 1…9，显示 ⌘n 提示；超过 9 条为 nil。
     let shortcutIndex: Int?
-    let isSelected: Bool
-    /// 焦点在卡片列表上时，选中的卡片边框更醒目，表示 ⌘⌫ 等操作会作用于它。
-    let cardsFocused: Bool
 
     static let size = CGSize(width: 230, height: 240)
 
@@ -26,40 +23,48 @@ struct ClipCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(borderColor, lineWidth: isSelected ? 3 : 1)
+                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
         .contentShape(Rectangle())
     }
 
-    private var borderColor: Color {
-        guard isSelected else { return Color.primary.opacity(0.1) }
-        return cardsFocused ? Color.accentColor : Color.accentColor.opacity(0.4)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(item.kind.title)
+                .font(.system(size: 13, weight: .semibold))
+            Text(item.createdAt, format: .relative(presentation: .named))
+                .font(.system(size: 11))
+                .opacity(0.85)
+        }
+        .foregroundStyle(style.darkText ? Color.black.opacity(0.78) : .white)
+        .padding(.leading, 10)
+        .padding(.trailing, Self.headerIconSize)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(style.color)
+        .overlay(alignment: .trailing) { headerIcon }
+        // 图标比标题栏高，超出标题栏的部分裁掉；右上角由卡片的圆角裁掉。
+        .clipped()
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.kind.title)
-                    .font(.system(size: 13, weight: .semibold))
-                Text(item.createdAt, format: .relative(presentation: .named))
-                    .font(.system(size: 11))
-                    .opacity(0.85)
-            }
-            Spacer(minLength: 0)
-            if let icon = AppIconCache.icon(for: item.sourceBundleID) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 30, height: 30)
-                    .help(item.sourceName ?? "")
-            }
+    /// 标题栏里的来源应用图标：比标题栏还大，贴在右边、一部分被裁掉，带阴影，看起来从标题栏上凸出来。
+    @ViewBuilder
+    private var headerIcon: some View {
+        if let icon = AppIconCache.icon(for: item.sourceBundleID) {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: Self.headerIconSize, height: Self.headerIconSize)
+                .shadow(color: .black.opacity(0.3), radius: 4, x: -1, y: 2)
+                .offset(x: Self.headerIconSize * 0.2, y: 3)
+                .help(item.sourceName ?? "")
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity)
-        .background(item.kind.color)
     }
+
+    static let headerIconSize: CGFloat = 60
+
+    private var style: CardStyle { CardStyle(for: item) }
 
     @ViewBuilder
     private var content: some View {
@@ -161,10 +166,41 @@ extension ClipKind {
     }
 }
 
-/// 按 bundle id 缓存来源应用的图标。
+/// 卡片标题栏的颜色：来源应用图标的代表色，找不到图标时按类型取色。光标也用这个颜色。
+@MainActor
+struct CardStyle {
+    var color: Color
+    /// 标题栏颜色偏亮，文字用深色。
+    var darkText: Bool
+
+    init(for item: ClipItem) {
+        if let rgb = AppIconCache.color(for: item.sourceBundleID) {
+            color = Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+            darkText = rgb.prefersDarkText
+        } else {
+            color = item.kind.color
+            darkText = false
+        }
+    }
+}
+
+/// 按 bundle id 缓存来源应用的图标和图标的代表色。
 @MainActor
 enum AppIconCache {
     private static var cache: [String: NSImage] = [:]
+    private static var colors: [String: SRGBColor?] = [:]
+
+    /// 图标的代表色（见 `IconColor.dominant`）。找不到应用或图标全透明时为 nil。
+    static func color(for bundleID: String?) -> SRGBColor? {
+        guard let bundleID else { return nil }
+        if let cached = colors[bundleID] { return cached }
+        var rect = NSRect(x: 0, y: 0, width: 64, height: 64)
+        let color = icon(for: bundleID)?
+            .cgImage(forProposedRect: &rect, context: nil, hints: nil)
+            .flatMap(IconColor.dominant(in:))
+        colors[bundleID] = color
+        return color
+    }
 
     static func icon(for bundleID: String?) -> NSImage? {
         guard let bundleID else { return nil }

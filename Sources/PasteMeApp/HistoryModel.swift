@@ -9,6 +9,10 @@ final class HistoryModel {
     var query = ""
     var selectedID: Int64?
     private(set) var items: [ClipItem] = []
+    /// 光标的样式。初始值和修改都来自 `Settings.cursorStyle`，放在这里是为了让视图随之更新。
+    var cursorStyle = CursorStyle.breathe
+    /// 面板在屏幕上（包括呼出和收起动画期间）。为 false 时视图停掉一直在跑的动画。
+    var isPanelVisible = false
     /// 键盘操作当前作用于搜索框还是卡片列表，视图据此移动键盘焦点。
     var focus: PanelFocus = .search
     /// 每次面板弹出时加一，视图据此把焦点放回搜索框、重新播放卡片出现的动画。
