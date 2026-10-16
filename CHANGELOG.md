@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Search filters next to the panel's search field: four type buttons (文本, 链接, 图片, 文件) that can be combined, a menu of the apps that appear in your history with their icons (most used first), and a time menu (今天, 昨天, 最近 7 天, 最近 30 天). Filters combine with each other and with the search text. You can also type them: `type:图片` or `type:image` (the first letters are enough, e.g. `type:im`), and `app:微信` for apps whose name contains the text; a full-width colon works too. When nothing matches, the panel lists the conditions that ruled everything out. esc clears the search text and filters together, and they reset each time the panel opens. A database index on the source app keeps filtering fast; with 10,000 entries a filtered search takes well under 50 ms. (#4)
 - ⌃⇧⌘V pauses recording until you press it again, from any app. The "暂停记录" menu item is now a submenu that also pauses for 5 minutes, 30 minutes or 1 hour and resumes on its own when the time is up. While recording is paused the menu bar icon has a slash through it, the menu item turns into "恢复记录" (with the time it resumes on its own), and a short notice appears on screen whenever recording pauses or resumes. Pausing is not remembered across restarts, so PasteMe always starts out recording. ⌥⇧⌘V was avoided because many apps use it for Paste and Match Style. (#7)
 - The panel is hidden from screen sharing, screen recordings and screenshots, so people in a meeting can't see your clipboard history; it still shows on your own screen. Turn on "共享屏幕时显示面板" in the menu bar menu to let it be captured, for example when recording a tutorial. The setting is kept across restarts. This relies on macOS's window sharing setting, which some capture tools may not honor. (#3)
 
@@ -42,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `ClipQuery` gains type, source app (by bundle id or by part of the name), and time conditions, and `ClipQuery.parse(_:)` turns `type:` and `app:` words typed in the search field into those conditions. `ClipStore.sourceApps()` lists the apps in the history by entry count. The database moves to `user_version = 2`, which adds an index on `source_bundle_id`; existing histories are migrated on launch. (#4)
 - Deciding whether to record a copy, and pausing, moved from `ClipboardMonitor` into `Recorder` in `PasteMeCore`, covered by `RecorderTests`. `HotKey` is replaced by `HotKeyCenter`, which registers any number of global shortcuts behind one Carbon event handler and runs the one whose id was pressed; before, a second shortcut would have triggered every registered action. (#7)
 - The card row has 30 pt margins on both sides and 18 pt between cards. When the selection scrolls the list, the selected card keeps the margin instead of sitting against the panel edge.
 

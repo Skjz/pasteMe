@@ -102,6 +102,21 @@ public struct ClipSource: Sendable, Equatable {
     }
 }
 
+/// 历史里出现过的一个来源应用，以及来自它的条目数。
+public struct SourceApp: Sendable, Equatable, Identifiable {
+    public var bundleID: String
+    public var name: String
+    public var count: Int
+
+    public var id: String { bundleID }
+
+    public init(bundleID: String, name: String, count: Int) {
+        self.bundleID = bundleID
+        self.name = name
+        self.count = count
+    }
+}
+
 /// 被删除条目的完整数据，由 `ClipStore.delete(id:)` 返回，用于撤销删除。
 public struct DeletedClip: Sendable, Equatable {
     public let id: Int64

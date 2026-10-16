@@ -2,11 +2,28 @@ import Foundation
 import Observation
 import PasteMeCore
 
-/// 历史面板的状态：当前搜索词、列表、选中项、焦点，以及可以撤销的删除。
+/// 面板上用按钮和菜单选的筛选条件。搜索框里写的 `type:`、`app:` 不在这里，见 `ClipQuery.parse`。
+struct PanelFilters: Equatable {
+    /// 空集合表示不限类型。
+    var kinds: Set<ClipKind> = []
+    var sourceApp: SourceApp?
+    var timeRange = TimeRange.all
+
+    var isActive: Bool { !kinds.isEmpty || sourceApp != nil || timeRange != .all }
+}
+
+/// 历史面板的状态：当前搜索词和筛选条件、列表、选中项、焦点，以及可以撤销的删除。
 @Observable
 @MainActor
 final class HistoryModel {
-    var query = ""
+    /// 搜索框里的文字。修改后立即重新查询。
+    var query = "" {
+        didSet { if query != oldValue { reloadUnlessResetting() } }
+    }
+    /// 修改后立即重新查询。面板每次呼出时清空，和搜索词一样。
+    var filters = PanelFilters() {
+        didSet { if filters != oldValue { reloadUnlessResetting() } }
+    }
     var selectedID: Int64?
     private(set) var items: [ClipItem] = []
     /// 光标的样式。初始值和修改都来自 `Settings.cursorStyle`，放在这里是为了让视图随之更新。
@@ -22,13 +39,83 @@ final class HistoryModel {
     @ObservationIgnored var onPaste: (ClipItem, PasteMode) -> Void = { _, _ in }
 
     @ObservationIgnored private let store: ClipStore
+    @ObservationIgnored private let now: () -> Date
+    /// `didShow` 一次改好搜索词和筛选条件，最后只查询一次。
+    @ObservationIgnored private var resetting = false
     /// 本次打开面板后删除的条目，最后删除的在末尾。面板重新打开时清空。
     private var deleted: [DeletedClip] = []
 
     var canUndoDelete: Bool { !deleted.isEmpty }
 
-    init(store: ClipStore) {
+    /// `now` 用于测试时控制“今天”是哪一天。
+    init(store: ClipStore, now: @escaping () -> Date = Date.init) {
         self.store = store
+        self.now = now
+    }
+
+    /// 没有搜索词，也没有筛选条件。
+    var searchIsEmpty: Bool { query.isEmpty && !filters.isActive }
+
+    /// 搜索框里的文字和面板上的筛选条件合起来的查询条件。
+    var currentQuery: ClipQuery {
+        var query = ClipQuery.parse(query)
+        if !filters.kinds.isEmpty {
+            query = query.restricting(to: filters.kinds)
+        }
+        query.sourceBundleID = filters.sourceApp?.bundleID
+        (query.createdFrom, query.createdBefore) = filters.timeRange.bounds(now: now())
+        return query
+    }
+
+    /// 当前起作用的条件，例如 ["类型为图片", "来自微信"]，没有结果时用来说明原因。
+    var activeConditions: [String] {
+        let query = currentQuery
+        var conditions: [String] = []
+        if let kinds = query.kinds {
+            let names = ClipKind.allCases.filter(kinds.contains).map(\.title)
+            conditions.append(names.isEmpty ? "类型条件没有交集" : "类型为" + names.joined(separator: "或"))
+        }
+        if let app = filters.sourceApp {
+            conditions.append("来自\(app.name)")
+        }
+        if let name = query.sourceName {
+            conditions.append("来源应用名包含“\(name)”")
+        }
+        if filters.timeRange != .all {
+            conditions.append(filters.timeRange.title)
+        }
+        let text = query.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty {
+            conditions.append("包含“\(text)”")
+        }
+        return conditions
+    }
+
+    /// 清空搜索词和所有筛选条件。
+    func clearSearch() {
+        resetting = true
+        query = ""
+        filters = PanelFilters()
+        resetting = false
+        reload()
+    }
+
+    func toggleKind(_ kind: ClipKind) {
+        if filters.kinds.contains(kind) {
+            filters.kinds.remove(kind)
+        } else {
+            filters.kinds.insert(kind)
+        }
+    }
+
+    /// 历史里出现过的来源应用，按条目数排列。打开应用筛选菜单时才查询。
+    func sourceApps() -> [SourceApp] {
+        do {
+            return try store.sourceApps()
+        } catch {
+            NSLog("PasteMe: 读取来源应用失败：\(error)")
+            return []
+        }
     }
 
     var selectedItem: ClipItem? {
@@ -36,7 +123,10 @@ final class HistoryModel {
     }
 
     func didShow() {
+        resetting = true
         query = ""
+        filters = PanelFilters()
+        resetting = false
         focus = .search
         deleted = []
         reload()
@@ -44,9 +134,13 @@ final class HistoryModel {
         showCount += 1
     }
 
+    private func reloadUnlessResetting() {
+        if !resetting { reload() }
+    }
+
     func reload() {
         do {
-            items = try store.items(matching: ClipQuery(text: query))
+            items = try store.items(matching: currentQuery)
         } catch {
             NSLog("PasteMe: 读取历史失败：\(error)")
             items = []

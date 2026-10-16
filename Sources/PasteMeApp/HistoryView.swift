@@ -38,21 +38,26 @@ struct HistoryView: View {
             // 用鼠标点进搜索框时，焦点回到搜索框。
             if focused { model.focus = .search }
         }
-        .onChange(of: model.query) { model.reload() }
     }
 
     private var searchBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("搜索剪贴板历史", text: $model.query)
+            TextField("搜索，或输入 type:图片 app:微信", text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
                 .focused($searchFocused)
-            Spacer()
+                // 不设上限时搜索框会占满整行，筛选按钮被挤到最右边，提示也没有位置了。
+                .frame(minWidth: 220, maxWidth: 360)
+            FilterBar(model: model)
+            Spacer(minLength: 12)
             Text(hint)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                // 面板窄时先截掉提示，不挤占搜索框和筛选按钮。
+                .layoutPriority(-1)
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
@@ -67,9 +72,16 @@ struct HistoryView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "doc.on.clipboard")
+            Image(systemName: model.searchIsEmpty ? "doc.on.clipboard" : "magnifyingglass")
                 .font(.system(size: 36))
-            Text(model.query.isEmpty ? "还没有记录，复制点什么试试" : "没有匹配“\(model.query)”的记录")
+            if model.searchIsEmpty {
+                Text("还没有记录，复制点什么试试")
+            } else {
+                Text("没有符合条件的记录")
+                Text(model.activeConditions.joined(separator: "、"))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

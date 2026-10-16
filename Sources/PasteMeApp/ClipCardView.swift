@@ -271,6 +271,17 @@ enum AppIconCache {
         return color
     }
 
+    private static var menuIcons: [String: NSImage] = [:]
+
+    /// 菜单里用的 16 点小图标。
+    static func menuIcon(for bundleID: String) -> NSImage? {
+        if let cached = menuIcons[bundleID] { return cached }
+        guard let icon = icon(for: bundleID)?.copy() as? NSImage else { return nil }
+        icon.size = NSSize(width: 16, height: 16)
+        menuIcons[bundleID] = icon
+        return icon
+    }
+
     static func icon(for bundleID: String?) -> NSImage? {
         guard let bundleID else { return nil }
         if let cached = cache[bundleID] { return cached }

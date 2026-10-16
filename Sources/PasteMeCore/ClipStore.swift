@@ -48,6 +48,13 @@ public final class ClipStore {
                 PRAGMA user_version = 1;
                 """)
         }
+        if try db.userVersion < 2 {
+            // 按来源应用筛选，以及列出历史里出现过的应用（#4）。
+            try db.execute("""
+                CREATE INDEX clips_source_bundle_id ON clips (source_bundle_id);
+                PRAGMA user_version = 2;
+                """)
+        }
     }
 
     /// 保存一次复制。内容已存在时不新增，只把原记录的时间和来源更新为这一次，使其排到最前。
@@ -181,6 +188,26 @@ public final class ClipStore {
         let statement = try db.prepare("SELECT id FROM clips WHERE content_hash = ?", [.text(clip.contentHash)])
         guard try statement.step() else { throw SQLiteError(code: -1, message: "恢复后找不到条目") }
         return statement.int(0)
+    }
+
+    /// 历史里出现过的来源应用，按条目数从多到少排列。没有 bundle id 的条目不算在内。
+    public func sourceApps() throws -> [SourceApp] {
+        // 应用名取这个应用最近一条条目上的名字（SQLite 里和 max() 一起查询的列取自那一行）。
+        let statement = try db.prepare(
+            """
+            SELECT source_bundle_id, source_name, count(*), max(created_at)
+            FROM clips
+            WHERE source_bundle_id IS NOT NULL
+            GROUP BY source_bundle_id
+            ORDER BY count(*) DESC, max(created_at) DESC
+            """
+        )
+        var apps: [SourceApp] = []
+        while try statement.step() {
+            guard let bundleID = statement.text(0) else { continue }
+            apps.append(SourceApp(bundleID: bundleID, name: statement.text(1) ?? bundleID, count: Int(statement.int(2))))
+        }
+        return apps
     }
 
     public func deleteAll() throws {

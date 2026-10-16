@@ -199,7 +199,12 @@ final class PanelController: NSObject, NSWindowDelegate {
             control: flags.contains(.control),
             characters: event.characters ?? ""
         )
-        let context = PanelContext(focus: model.focus, queryIsEmpty: model.query.isEmpty, canUndoDelete: model.canUndoDelete)
+        let context = PanelContext(
+            focus: model.focus,
+            queryIsEmpty: model.query.isEmpty,
+            canUndoDelete: model.canUndoDelete,
+            filtersActive: model.filters.isActive
+        )
 
         switch PanelKeymap.action(for: key, in: context) {
         case .passThrough:
@@ -222,8 +227,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .close:
             hide()
         case .clearSearch:
-            model.query = ""
-            model.reload()
+            model.clearSearch()
             model.focus = .search
         case .moveSelection(let offset):
             model.moveSelection(by: offset)
