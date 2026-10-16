@@ -90,6 +90,12 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 
 **测试**
 
+三层，从快到慢。改删除动画或面板卡片列表的布局时三层都要跑：
+
+1. `PanelFlushTests`：把 `HistoryModel.animate` 换成「先检查当时的 `cards`、再执行」，模拟 SwiftUI 进入 `withAnimation` 前的渲染，检查删除、撤销做到一半时没有重复的条目、留空位的过程中卡片不换位置。
+2. `DeleteAnimationScenarioTests`：`PanelSimulator` 用真实的 `HistoryModel` 和 `CardDust` 加虚拟时钟（`CardDust.now`、`CardDust.schedule`、`DustView.advance()`），按 SwiftUI 的规则算出每张卡片每一帧在屏幕上的位置和大小，逐帧检查：颗粒和卡片对齐、卡片之间不重叠、卡片不滑进颗粒、空位等颗粒播完才去掉，最后一切停在布局位置上。几个具名场景对应用户碰到过的操作，另有随机操作序列。随机序列平时跑 60 个种子；改了这部分逻辑后用 `PASTEME_FUZZ_SEEDS=2000 swift test --filter randomSequences` 多跑一些（约 2 分钟），失败信息里有种子和操作，`PM_TRACE=<种子>` 逐帧打印那个种子的状态。
+3. `SwiftUIAssumptionTests`：在不显示的窗口里放真实的 `HistoryView`，确认上面两层依赖的 SwiftUI 行为还成立：进入 `withAnimation` 前先渲染；带动画的移动只报告终点；新位置在 `CardDust.slideWindow` 以内报上来；新插入的选中卡片和选中项在同一次更新里报告。这层失败说明 SwiftUI 或面板的视图结构变了，先改 `PanelSimulator` 和 `CardDust` 的对应部分。
+
 `DustShaderTests` 离屏执行着色器，检查第一帧拼出的卡片没有缝、方向正确、颗粒向上飘、最后全部透明。测试管不到的是观感和真实屏幕上的掉帧：流畅度用 `scripts/bench-panel.sh --delete` 测（见 `docs/agents/ui-performance.md`），观感请用户在真实屏幕上看。用户录屏反馈时要先打开「共享屏幕时显示面板」，否则录不到面板；用 ffmpeg 逐帧导出、按相邻帧的差异找到动画发生的时间段再放大看。
 
 ## 粘贴流程
@@ -117,6 +123,8 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 | --- | --- | --- |
 | `TextRecognizing` | `VisionTextRecognizer`（Core） | `FakeRecognizer`（`TextRecognitionTests.swift`） |
 | `CardRemovalEffect` | `CardDust`（App） | `FakeRemovalEffect`（`FakeRemovalEffect.swift`） |
+| `HistoryModel.animate` | `withAnimation` | 先检查视图可见的状态再执行（`PanelFlushTests`、`PanelSimulator`） |
+| `CardDust.now`、`CardDust.schedule` | `CACurrentMediaTime`、`DispatchQueue.main.asyncAfter` | 虚拟时钟（`PanelSimulator`），配合 `DustView.advance()` 逐帧推进 |
 | `AppNames(systemNames:)` | `AppBundleNames.names(ofBundleID:)`（Core，读已安装应用的本地化名字） | 固定的字典（`AppNamesTests`、`AppAliasesTests`） |
 | `PasteboardWriting` | `GeneralPasteboard`（Core，`PasteboardCodec` 写 `NSPasteboard.general`） | `FakePasteboard`（`PasterTests.swift`） |
 | `PasteKeystrokeSending` | `CGEventPasteKeystroke`（App） | `FakeKeystroke`（`PasterTests.swift`） |
