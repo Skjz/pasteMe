@@ -62,15 +62,9 @@ struct PanelMotion: Equatable {
 /// 按 `PanelMotion` 逐帧移动面板窗口、改变透明度。
 ///
 /// 移动的是窗口本身而不是内容视图，这样毛玻璃背景和窗口阴影跟着一起动。
-/// 动画进行中可以换窗口（面板和收起用的替身窗口之间交接），进度和速度不变。
 @MainActor
 final class PanelAnimator: NSObject {
-    var window: NSWindow {
-        didSet {
-            guard window !== oldValue else { return }
-            apply(progress)
-        }
-    }
+    private let window: NSWindow
     /// 面板就位时的窗口位置。
     var shownFrame: NSRect = .zero
     private(set) var progress: Double = 0

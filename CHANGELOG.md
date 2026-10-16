@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Opening and closing the panel no longer stutters. After the card color and cursor changes, about a third of the frames while the panel slid up missed the 120 Hz deadline: every card clipped its enlarged header icon at run time, so each card had to be recomposited on every frame of its entrance animation. The cropped icon with its shadow is now drawn once per app as an image that fits the header. Closing also no longer blocks for 30–50 ms moving the panel's content into a separate window for the slide-out; the panel slides out itself.
+
 - Pressing ⌘⌫ in the panel's search field to delete the typed text no longer deletes the selected clipboard entry. (#1)
 
 ### Changed
