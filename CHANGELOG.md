@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/bench-panel.sh` measures how smoothly the panel opens and closes. It runs a debug build against a throwaway history that fills itself with test entries, opens and closes the panel repeatedly, and prints how many frames missed the 120 Hz deadline on screen (via a tiny Metal layer that records when each frame is actually presented) and on the main thread. `docs/agents/ui-performance.md` describes how to use it to compare a change against a baseline and track down the cause of stutter; `AGENTS.md` points to it.
+
 - Card headers take the main color of the source app's icon instead of a fixed color per type, with dark header text on light colors such as yellow and light green. Cards from an unknown app keep the color of their type. The app icon in the header is larger and tucked into the top-right corner, partly cropped by the card edge, with a soft shadow.
 - A glowing cursor ring marks the selected card and slides between cards as the selection moves; the selected card also grows slightly. The ring takes the card's header color. Choose between two styles under "光标样式" in the menu bar menu: 呼吸 (a softly pulsing glow, the default) or 流光 (a gradient border that rotates around the card). With Reduce Motion turned on, the ring stops moving.
 

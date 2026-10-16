@@ -4,6 +4,10 @@
 
 Before changing code under `Sources/` or `Tests/`, read `docs/architecture.md`: which target owns what, the seams and their test fakes, which planned modules still live in older code, and how to run the app against a throwaway history to verify a change.
 
+## UI performance
+
+Before calling a change to the panel, cards or cursor smooth, or when the user reports stutter, measure it with `scripts/bench-panel.sh` following `docs/agents/ui-performance.md`.
+
 ## Agent skills
 
 ### Issue tracker
