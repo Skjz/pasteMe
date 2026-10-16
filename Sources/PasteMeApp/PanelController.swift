@@ -22,36 +22,15 @@ final class ClipPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         // 呼出和收起的动画由 PanelAnimator 负责，不要系统自带的窗口动画。
+        // 收起时依赖这一点：开着系统动画时，窗口 orderOut 后再放回屏幕会先播系统的过渡，
+        // 这期间窗口服务器不理会 setFrameOrigin，面板只会原地淡出。
         animationBehavior = .none
     }
 
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
+    /// 收起动画期间为 false：面板还在屏幕上，但不再接收键盘焦点。
+    var allowsKey = true
 
-/// 收起动画用的替身窗口，不接收任何输入。
-///
-/// 面板本身在收起时立即 `orderOut`，把键盘焦点还给目标应用，⌘V 不用等动画结束。
-/// 面板的内容视图在收起期间搬到替身窗口里，由它滑出屏幕。不能让面板留在屏幕上自己滑出去：
-/// 面板交出焦点后再放回屏幕，窗口服务器就不再更新它的位置。
-final class GhostPanel: NSPanel {
-    init() {
-        super.init(
-            contentRect: .zero,
-            styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        level = .statusBar
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = true
-        ignoresMouseEvents = true
-        animationBehavior = .none
-    }
-
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { allowsKey }
     override var canBecomeMain: Bool { false }
 }
 
@@ -62,9 +41,6 @@ final class PanelController: NSObject, NSWindowDelegate {
     static let margin: CGFloat = 8
 
     private let panel = ClipPanel()
-    private let ghost = GhostPanel()
-    /// 毛玻璃背景和 SwiftUI 内容。平时在面板里，收起动画期间在替身窗口里。
-    private let content: NSVisualEffectView
     private let model: HistoryModel
     private var keyMonitor: Any?
     private lazy var animator = PanelAnimator(window: panel)
@@ -89,7 +65,6 @@ final class PanelController: NSObject, NSWindowDelegate {
         effect.wantsLayer = true
         effect.layer?.cornerRadius = 16
         effect.layer?.masksToBounds = true
-        content = effect
         super.init()
 
         let hosting = NSHostingView(rootView: HistoryView(model: model))
@@ -122,14 +97,10 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
 
         if phase == .hiding {
-            // 收起动画进行到一半时再次呼出：面板接过替身窗口的位置，从那里滑回去，留在原来的屏幕上。
-            panel.setFrame(ghost.frame, display: false)
-            moveContent(to: panel)
-            animator.window = panel
-            ghost.orderOut(nil)
+            // 收起动画进行到一半时再次呼出：面板还在屏幕上，恢复接收输入，从当前位置滑回去，留在原来的屏幕上。
+            panel.allowsKey = true
+            panel.ignoresMouseEvents = false
         } else {
-            moveContent(to: panel)
-            animator.window = panel
             // 出现在鼠标所在的屏幕底部。
             let mouse = NSEvent.mouseLocation
             let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
@@ -155,30 +126,25 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// 收起面板。面板立即离开屏幕、交出键盘焦点，由替身窗口播放收起动画。
+    /// 收起面板。键盘焦点立即还给目标应用，之后才播放收起动画，所以随后发送的 ⌘V 不用等动画结束。
     func hide() {
         guard isVisible else { return }
         phase = .hiding
         removeKeyMonitor()
-        // orderOut 会触发 windowDidResignKey，此时已是 .hiding，不会重复收起。
+        panel.allowsKey = false
+        panel.ignoresMouseEvents = true
+        // orderOut 让面板交出键盘焦点（会触发 windowDidResignKey，此时已是 .hiding，不会重复收起），
+        // 再不取得焦点地放回屏幕，由面板自己播放收起动画。这一步依赖 ClipPanel 关掉了系统窗口动画。
         panel.orderOut(nil)
-        ghost.setFrame(panel.frame, display: false)
-        ghost.alphaValue = panel.alphaValue
-        moveContent(to: ghost)
-        ghost.orderFrontRegardless()
-        animator.window = ghost
+        panel.orderFrontRegardless()
         animator.animate(to: 0, spring: .hide) { [weak self] in
             guard let self else { return }
-            self.ghost.orderOut(nil)
+            self.panel.orderOut(nil)
+            self.panel.allowsKey = true
+            self.panel.ignoresMouseEvents = false
             self.phase = .hidden
             self.model.isPanelVisible = false
         }
-    }
-
-    private func moveContent(to window: NSWindow) {
-        guard content.window !== window else { return }
-        content.window?.contentView = NSView()
-        window.contentView = content
     }
 
     #if DEBUG

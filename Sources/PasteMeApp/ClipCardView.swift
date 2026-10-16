@@ -20,9 +20,9 @@ struct ClipCardView: View {
         }
         .frame(width: Self.size.width, height: Self.size.height)
         .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: Self.cornerRadius)
                 .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
@@ -39,30 +39,36 @@ struct ClipCardView: View {
         }
         .foregroundStyle(style.darkText ? Color.black.opacity(0.78) : .white)
         .padding(.leading, 10)
-        .padding(.trailing, Self.headerIconSize)
-        .padding(.vertical, 8)
+        .padding(.trailing, Self.headerIconSlice.width)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: Self.headerHeight)
         .background(style.color)
-        .overlay(alignment: .trailing) { headerIcon }
-        // 图标比标题栏高，超出标题栏的部分裁掉；右上角由卡片的圆角裁掉。
-        .clipped()
+        .overlay(alignment: .topTrailing) { headerIcon }
     }
 
     /// 标题栏里的来源应用图标：比标题栏还大，贴在右边、一部分被裁掉，带阴影，看起来从标题栏上凸出来。
+    ///
+    /// 放大、阴影、被标题栏和卡片右上圆角裁掉的样子都已经画进图片（见 `AppIconCache.headerIcon`），
+    /// 图片正好是标题栏右端的大小，不超出标题栏，所以标题栏不用 `.clipped()`。在运行时裁切超出的大图标，
+    /// 会让每张卡片在依次出现的动画里逐帧重新合成，呼出面板时大约三分之一的帧赶不上 120 Hz。
     @ViewBuilder
     private var headerIcon: some View {
-        if let icon = AppIconCache.icon(for: item.sourceBundleID) {
-            Image(nsImage: icon)
+        if let image = AppIconCache.headerIcon(for: item.sourceBundleID) {
+            Image(nsImage: image)
                 .resizable()
-                .interpolation(.high)
-                .frame(width: Self.headerIconSize, height: Self.headerIconSize)
-                .shadow(color: .black.opacity(0.3), radius: 4, x: -1, y: 2)
-                .offset(x: Self.headerIconSize * 0.2, y: 3)
+                .frame(width: Self.headerIconSlice.width, height: Self.headerIconSlice.height)
                 .help(item.sourceName ?? "")
         }
     }
 
+    static let cornerRadius: CGFloat = 12
+    static let headerHeight: CGFloat = 48
+    /// 图标放大后的边长。
     static let headerIconSize: CGFloat = 60
+    /// 标题栏右端放图标的那一块，图标图片就是这么大。
+    static let headerIconSlice = CGSize(width: 64, height: headerHeight)
+    /// 图标在这一块里的位置（左上角为原点）：右边超出卡片 12 点，上边超出 3 点，下边超出 9 点。
+    static let headerIconFrame = CGRect(x: 16, y: -3, width: headerIconSize, height: headerIconSize)
 
     private var style: CardStyle { CardStyle(for: item) }
 
@@ -189,6 +195,69 @@ struct CardStyle {
 enum AppIconCache {
     private static var cache: [String: NSImage] = [:]
     private static var colors: [String: SRGBColor?] = [:]
+
+    private static var headerIcons: [String: NSImage] = [:]
+
+    /// 标题栏右端的图标图片：图标放大到 `ClipCardView.headerIconSize`，加上阴影，裁成标题栏右端那一块
+    /// （`ClipCardView.headerIconSlice`），右上角按卡片圆角裁掉。每个应用只画一次。
+    static func headerIcon(for bundleID: String?) -> NSImage? {
+        guard let bundleID, let icon = icon(for: bundleID) else { return nil }
+        if let cached = headerIcons[bundleID] { return cached }
+        let image = drawHeaderSlice(icon)
+        headerIcons[bundleID] = image
+        return image
+    }
+
+    private static func drawHeaderSlice(_ icon: NSImage) -> NSImage {
+        let slice = ClipCardView.headerIconSlice
+        let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(slice.width * scale),
+            pixelsHigh: Int(slice.height * scale),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return icon }
+        rep.size = slice
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSGraphicsContext.current?.imageInterpolation = .high
+
+        // AppKit 的坐标原点在左下角。裁掉右上角：卡片的圆角。
+        let radius = ClipCardView.cornerRadius
+        let clip = NSBezierPath()
+        clip.move(to: .zero)
+        clip.line(to: NSPoint(x: slice.width, y: 0))
+        clip.line(to: NSPoint(x: slice.width, y: slice.height - radius))
+        clip.appendArc(
+            withCenter: NSPoint(x: slice.width - radius, y: slice.height - radius),
+            radius: radius, startAngle: 0, endAngle: 90
+        )
+        clip.line(to: NSPoint(x: 0, y: slice.height))
+        clip.close()
+        clip.addClip()
+
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.3)
+        shadow.shadowBlurRadius = 8
+        // (−1, −2) 是往左下方投影。
+        shadow.shadowOffset = NSSize(width: -1, height: -2)
+        shadow.set()
+        let frame = ClipCardView.headerIconFrame
+        let rect = NSRect(x: frame.minX, y: slice.height - frame.maxY, width: frame.width, height: frame.height)
+        icon.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+
+        let image = NSImage(size: slice)
+        image.addRepresentation(rep)
+        return image
+    }
 
     /// 图标的代表色（见 `IconColor.dominant`）。找不到应用或图标全透明时为 nil。
     static func color(for bundleID: String?) -> SRGBColor? {

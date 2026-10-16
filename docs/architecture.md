@@ -36,6 +36,7 @@ ADR 0002 规划的模块里，有几个要等第一个用到它的工单才建�
 - 标题栏颜色由 `CardStyle(for:)` 决定：来源应用图标的代表色（`IconColor.dominant`，在 `PasteMeCore`，测试在 `IconColorTests`），找不到应用或图标全透明时用类型的颜色。图标和颜色都由 `AppIconCache` 按 bundle id 缓存，每个应用只算一次。
 - 光标（`SelectionCursor`）不是每张卡片各画一个，而是在卡片列表上叠一层，按选中卡片的序号算出横向位置，所以选中项变化时能滑过去。这依赖卡片宽度固定（`ClipCardView.size`）和间距固定（`HistoryView.cardSpacing`）；改卡片布局时要同时改光标的位置计算。
 - 光标的旋转和明暗变化由 `TimelineView` 逐帧驱动，面板收起后（`HistoryModel.isPanelVisible` 为 false）或开启「减少动态效果」时暂停，不在后台耗电。
+- 标题栏图标比标题栏大、一部分被裁掉。这个裁切不能在运行时用 `.clipped()` 做：裁切超出范围的内容会让每张卡片在依次出现的动画里逐帧重新合成，#17 之后呼出面板时大约三分之一的帧赶不上 120 Hz。现在由 `AppIconCache.headerIcon` 把放大、阴影、裁切和卡片右上圆角一起画成一张正好标题栏右端大小的图片，所以标题栏高度固定为 `ClipCardView.headerHeight`。改标题栏的布局时要同时改 `headerIconSlice` 和 `headerIconFrame`。
 - 光标样式存在 `Settings.cursorStyle`，同时放一份在 `HistoryModel.cursorStyle`，让视图在菜单里切换后立即更新。
 - 卡片列表左右的留白用 `contentMargins` 而不是 `padding`，这样 `scrollTo` 滚到某张卡片时也会留出这段距离。放大的卡片和光标的光晕会超出滚动区域的上下边，所以滚动区域设了 `scrollClipDisabled()`。
 
@@ -43,9 +44,14 @@ ADR 0002 规划的模块里，有几个要等第一个用到它的工单才建�
 
 - `PanelMotion` 是纯值类型，按弹簧的解析解算出某一时刻的进度（0 收起，1 就位）和速度，参数在 `Spring.show` / `.hide` / `.fade` 里调整，测试在 `PanelMotionTests`。从任意进度和速度出发，所以动画中途反向时不会跳。
 - `PanelAnimator` 用 display link 逐帧移动窗口、改透明度。display link 按显示器创建，不用时暂停而不销毁，并在启动时由 `PanelController.prewarm()` 提前创建：第一次创建要读取显示器的模式列表，约 0.2 秒，放在第一次呼出时会丢掉开头的帧。
-- 收起时面板立即 `orderOut`，键盘焦点马上回到目标应用，⌘V 的时机和没有动画时一样。面板的内容视图搬进替身窗口 `GhostPanel`（不接收输入），由它滑出屏幕；收起中途再次呼出时，内容搬回面板，面板从替身的位置接着动画。不要改成让面板自己留在屏幕上滑出：面板交出焦点后再放回屏幕，窗口服务器不再更新它的位置，只有透明度会变。
+- 收起时面板先 `orderOut`，键盘焦点马上回到目标应用，⌘V 的时机和没有动画时一样；再用 `orderFrontRegardless` 不取得焦点地放回屏幕，由面板自己滑出（期间 `allowsKey` 和接收鼠标都关掉）。收起中途再次呼出时，面板恢复接收输入，从当前位置弹回去。
+- 这依赖 `ClipPanel.animationBehavior = .none`。开着系统窗口动画时，窗口重新上屏会先播系统的过渡，窗口服务器不理会 `setFrameOrigin`，面板只会原地淡出。以前因为这个现象用过一个替身窗口，把面板的内容视图搬过去播动画，但每次搬动内容视图要 18 ms 左右，呼出和收起都会丢帧，已经去掉。
 - 卡片依次出现在 `HistoryView` 里用 SwiftUI 动画实现，只对前 8 张做。
 - 验证动画时截图拍不到面板，可以用 `CGWindowListCopyWindowInfo` 每隔几毫秒采样 PasteMe 窗口的位置和透明度，看每一帧的位置。
+- 衡量动画是否流畅，看两种时间：
+  - 主线程：在 `PanelAnimator` 的 display link 回调里记时间戳，看两帧之间的间隔。
+  - 实际上屏：在面板的内容图层里临时加一个 2×2 的 `CAMetalLayer`，每个 display link 回调提交一帧，用 `MTLDrawable.addPresentedHandler` 记下 `presentedTime`。相邻两次上屏之间超过 1.5 帧的空档就是用户看到的掉帧。主线程准时而这里掉帧，说明瓶颈在渲染端。
+- 不要批量用 Instruments 的 Animation Hitches 模板录制：每录十几秒就会在 `$TMPDIR` 留下十几 GB 的原始追踪文件，删掉输出的 `.trace` 也不会删它们，曾经把磁盘占满。
 
 ## 粘贴流程
 
