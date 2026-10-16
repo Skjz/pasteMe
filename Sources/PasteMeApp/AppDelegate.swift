@@ -12,6 +12,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var pasteStack: PasteStackController!
     private var monitor: ClipboardMonitor!
     private var panel: PanelController!
+    private var appNames: AppNames!
+    private var aliasesWindow: AppAliasesWindow!
     private let hotKeys = HotKeyCenter()
     private let toast = Toast()
     private var statusItem: NSStatusItem!
@@ -43,11 +45,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
 
         paster = Paster(store: store, pasteboard: GeneralPasteboard(), keystroke: CGEventPasteKeystroke())
-        model = HistoryModel(store: store)
+        appNames = AppNames(store: store, settings: settings)
+        aliasesWindow = AppAliasesWindow(appNames: appNames, settings: settings)
+        model = HistoryModel(store: store, appNames: appNames)
         model.cursorStyle = settings.cursorStyle
         panel = PanelController(model: model)
         panel.showsDuringScreenSharing = settings.showDuringScreenSharing
         model.onPaste = { [weak self] item, mode in self?.paste(item, as: mode) }
+        model.onEditAliases = { [weak self] bundleID in self?.showAliases(focusing: bundleID) }
 
         enrichment = EnrichmentQueue(store: store, recognizer: VisionTextRecognizer())
         enrichment.onEnriched = { [weak self] _ in self?.reloadPanelIfVisible() }
@@ -67,12 +72,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         hotKeys.register(.pause) { [weak self] in self?.togglePause() }
         hotKeys.register(.pasteStack) { [weak self] in self?.pasteStack.toggle() }
 
+        setUpMainMenu()
         setUpStatusItem()
         panel.prewarm()
 
         #if DEBUG
         if let cycles = PanelBenchmark.requestedCycles {
-            PanelBenchmark.run(panel: panel, store: store, cycles: cycles)
+            PanelBenchmark.run(panel: panel, model: model, store: store, cycles: cycles)
             return
         }
         if let path = ProcessInfo.processInfo.environment["PASTEME_SNAPSHOT"] {
@@ -86,8 +92,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
 
         // 给以前的图片补做文字识别。等启动时的其他工作做完再开始，之后每条之间也会停一下。
+        // 同时在后台读出来源应用的各种名字，第一次搜索时不用在主线程上读。
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.enrichment.backfill()
+            Task { await self?.appNames.prefetch() }
         }
     }
 
@@ -99,10 +107,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// 调试用：弹出面板，把它渲染成 PNG 后退出。用于在没有屏幕录制权限时检查界面。
     /// `PASTEME_SNAPSHOT=/tmp/panel.png swift run PasteMe`
     /// 加上 `PASTEME_SNAPSHOT_QUERY=…` 时先在搜索框里输入这段文字，例如 `type:图片 报销`。
+    /// 加上 `PASTEME_SNAPSHOT_DELETE=1` 时删除选中的卡片，0.1 秒后再渲染：颗粒动画还在播放，
+    /// 可以确认被删的卡片变成了空位、其他卡片没有移动（颗粒画在 Metal 图层上，不在渲染结果里）。
     private func writeSnapshot(to path: String) {
+        let environment = ProcessInfo.processInfo.environment
         panel.show()
-        if let query = ProcessInfo.processInfo.environment["PASTEME_SNAPSHOT_QUERY"] {
+        if let query = environment["PASTEME_SNAPSHOT_QUERY"] {
             model.query = query
+        }
+        if environment["PASTEME_SNAPSHOT_DELETE"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                self.model.focus = .cards
+                self.model.delete()
+            }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
             if let data = self.panel.snapshotPNG() {
@@ -148,6 +165,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         menu.addItem(accessibilityItem)
         menu.addItem(cursorStyleItem)
         cursorStyleItem.submenu = makeCursorStyleMenu()
+        menu.addItem(NSMenuItem(title: "应用别名…", action: #selector(showAliasesFromMenu), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "清空历史…", action: #selector(clearHistory), keyEquivalent: ""))
         menu.addItem(.separator())
@@ -157,6 +175,36 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             item.target = self
         }
         statusItem.menu = menu
+    }
+
+    /// 不显示的主菜单。PasteMe 没有菜单栏，但输入框的 ⌘X、⌘C、⌘V、⌘A、⌘Z 要靠「编辑」菜单里的项目才能用，
+    /// ⌘W 关闭窗口也一样。
+    private func setUpMainMenu() {
+        let main = NSMenu()
+        // 第一项是应用菜单，这里空着。
+        let appItem = NSMenuItem()
+        appItem.submenu = NSMenu()
+        main.addItem(appItem)
+
+        let edit = NSMenu(title: "编辑")
+        edit.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        let window = NSMenu(title: "窗口")
+        window.addItem(withTitle: "关闭", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let windowItem = NSMenuItem()
+        windowItem.submenu = window
+        main.addItem(windowItem)
+
+        NSApp.mainMenu = main
     }
 
     private func makeCursorStyleMenu() -> NSMenu {
@@ -189,6 +237,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     @objc private func showPanel() {
         panel.show()
+    }
+
+    @objc private func showAliasesFromMenu() {
+        aliasesWindow.show()
+    }
+
+    /// 卡片右键菜单里的「设置别名…」：先收起面板，再打开别名窗口并定位到这个应用。
+    private func showAliases(focusing bundleID: String) {
+        panel.hide()
+        aliasesWindow.show(focusing: bundleID)
     }
 
     // MARK: - 暂停记录

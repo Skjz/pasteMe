@@ -5,15 +5,20 @@ import Foundation
 /// 怎样把条件变成 SQL（搜索哪些列、如何转义）都在这个文件里；以后增加筛选条件只改这里。
 /// 所有条件同时满足的条目才会返回。
 public struct ClipQuery: Sendable, Equatable {
-    /// 只返回文本、图片中的文字或来源应用名包含这段文字的条目（子串匹配，不区分 ASCII 大小写）。
-    /// 去掉首尾空白后为空时不按文字筛选。
+    /// 只返回文本、图片中的文字或来源应用名包含这段文字的条目（子串匹配，不区分 ASCII 大小写），
+    /// 以及来自 `appsMatchingText` 里的应用的条目。去掉首尾空白后为空时不按文字筛选。
     public var text: String
     /// 只返回这几种类型的条目。nil 表示不限类型；空集合表示什么都不返回（例如两个类型条件没有交集）。
     public var kinds: Set<ClipKind>?
     /// 只返回来自这个应用（bundle id）的条目。
     public var sourceBundleID: String?
-    /// 只返回来源应用名包含这段文字的条目，来自搜索框里的 `app:`。
+    /// 只返回来源应用名包含这段文字、或者来自 `appsMatchingSourceName` 里的应用的条目，来自搜索框里的 `app:`。
     public var sourceName: String?
+    /// 其他名字或别名包含 `text` 的来源应用（bundle id），由 `resolvingAppNames` 填入。
+    /// 条目只记了复制时的应用名（例如“访达”），搜英文名 "finder" 要靠它找到。
+    public var appsMatchingText: [String] = []
+    /// 其他名字或别名包含 `sourceName` 的来源应用，由 `resolvingAppNames` 填入。
+    public var appsMatchingSourceName: [String] = []
     /// 只返回这个时间及以后复制的条目。
     public var createdFrom: Date?
     /// 只返回这个时间以前复制的条目（不含这个时间）。
@@ -48,6 +53,15 @@ public struct ClipQuery: Sendable, Equatable {
         guard let kinds else { return self }
         var query = self
         query.kinds = self.kinds.map { $0.intersection(kinds) } ?? kinds
+        return query
+    }
+
+    /// 按应用的其他名字和别名找出 `text`、`sourceName` 对应的来源应用。`lookup` 返回名字包含这段文字的应用。
+    public func resolvingAppNames(_ lookup: (String) -> [String]) -> ClipQuery {
+        var query = self
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        query.appsMatchingText = trimmed.isEmpty ? [] : lookup(trimmed)
+        query.appsMatchingSourceName = sourceName.map(lookup) ?? []
         return query
     }
 
@@ -142,8 +156,11 @@ extension ClipQuery {
         if !trimmed.isEmpty {
             // 搜索用 LIKE 子串匹配而不是 FTS5，原因见 ADR 0004。
             let pattern = SQLValue.text("%" + Self.escapeLike(trimmed) + "%")
-            clauses.append("(text LIKE ? ESCAPE '\\' OR ocr_text LIKE ? ESCAPE '\\' OR source_name LIKE ? ESCAPE '\\')")
-            values += [pattern, pattern, pattern]
+            clauses.append(
+                "(text LIKE ? ESCAPE '\\' OR ocr_text LIKE ? ESCAPE '\\' OR source_name LIKE ? ESCAPE '\\'"
+                    + Self.orSourceIn(appsMatchingText) + ")"
+            )
+            values += [pattern, pattern, pattern] + appsMatchingText.map(SQLValue.text)
         }
         if let ids {
             clauses.append("(id IN (\(ids.map { _ in "?" }.joined(separator: ", "))))")
@@ -163,8 +180,9 @@ extension ClipQuery {
             values.append(.text(sourceBundleID))
         }
         if let sourceName {
-            clauses.append("(source_name LIKE ? ESCAPE '\\')")
+            clauses.append("(source_name LIKE ? ESCAPE '\\'" + Self.orSourceIn(appsMatchingSourceName) + ")")
             values.append(.text("%" + Self.escapeLike(sourceName) + "%"))
+            values += appsMatchingSourceName.map(SQLValue.text)
         }
         if let createdFrom {
             clauses.append("(created_at >= ?)")
@@ -177,6 +195,11 @@ extension ClipQuery {
 
         guard !clauses.isEmpty else { return nil }
         return (clauses.joined(separator: " AND "), values)
+    }
+
+    /// ` OR source_bundle_id IN (?, …)`，没有应用时为空。
+    private static func orSourceIn(_ bundleIDs: [String]) -> String {
+        bundleIDs.isEmpty ? "" : " OR source_bundle_id IN (" + bundleIDs.map { _ in "?" }.joined(separator: ", ") + ")"
     }
 
     static func escapeLike(_ string: String) -> String {

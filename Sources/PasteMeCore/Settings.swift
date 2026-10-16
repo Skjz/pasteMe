@@ -32,9 +32,31 @@ public struct Settings {
         nonmutating set { defaults.set(newValue.rawValue, forKey: Key.cursorStyle) }
     }
 
+    /// 用户给来源应用加的别名，键是 bundle id。搜索时和应用的名字一样匹配（`AppNames`）。
+    /// 写入时去掉首尾空白、空的和重复的别名，没有别名的应用不保存。
+    public var appAliases: [String: [String]] {
+        get { defaults.dictionary(forKey: Key.appAliases) as? [String: [String]] ?? [:] }
+        nonmutating set {
+            var cleaned: [String: [String]] = [:]
+            for (bundleID, aliases) in newValue {
+                let aliases = AppAlias.parse(aliases.joined(separator: "\n"))
+                if !aliases.isEmpty { cleaned[bundleID] = aliases }
+            }
+            defaults.set(cleaned, forKey: Key.appAliases)
+        }
+    }
+
+    /// 改一个应用的别名，其他应用的不变。
+    public func setAliases(_ aliases: [String], for bundleID: String) {
+        var all = appAliases
+        all[bundleID] = aliases
+        appAliases = all
+    }
+
     private enum Key {
         static let showDuringScreenSharing = "showDuringScreenSharing"
         static let cursorStyle = "cursorStyle"
+        static let appAliases = "appAliases"
     }
 
     /// 在 PasteMe.app 里运行时主 bundle id 就是 `suiteName`，系统不接受把它当 suite 名

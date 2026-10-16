@@ -4,10 +4,11 @@ import Metal
 import PasteMeCore
 import QuartzCore
 
-/// 调试用：面板呼出和收起动画的性能基准。用法和读数见 `docs/agents/ui-performance.md`。
+/// 调试用：面板动画的性能基准。用法和读数见 `docs/agents/ui-performance.md`。
 ///
 /// `PASTEME_BENCH=<次数>` 启动时运行：历史为空时先填入测试条目，然后反复呼出、收起面板，
 /// 每次记录两组数据后打印，最后打印中位数并退出。
+/// 再加上 `PASTEME_BENCH_DELETE=1` 时改为呼出面板后反复删除选中的卡片、再撤销，测颗粒动画和补位动画。
 /// - 主线程：display link 回调之间的间隔，以及 `show()` / `hide()` 本身的耗时。
 /// - 实际上屏：面板里一个 2×2 的 Metal 图层每帧提交一次，`presentedTime` 之间的空档就是用户看到的掉帧。
 @MainActor
@@ -20,8 +21,19 @@ enum PanelBenchmark {
     nonisolated private static let framePeriod = 1.0 / 120
     /// 每次呼出或收起后统计多久。呼出约 0.4 秒静止，收起约 0.25 秒。
     private static let window = 0.45
+    /// 删除后统计多久：颗粒飘散约 1.4 秒，之后右边的卡片补位约 0.5 秒。
+    private static let deleteWindow = 2.0
+    /// 撤销后统计多久：右边的卡片让位、颗粒聚拢，约 1 秒。
+    private static let undoWindow = 1.5
+
+    private static var measuresDelete: Bool {
+        ProcessInfo.processInfo.environment["PASTEME_BENCH_DELETE"] == "1"
+    }
 
     private static var recording = false
+    /// 测删除时逐帧调用 `frameTick` 的 display link。颗粒动画自己的 display link 在撤销后要等一会儿才开始，
+    /// 不能用来计时。
+    private static var ticker: BenchTicker?
     private static var ticks: [CFTimeInterval] = []
     private static var probe: PresentProbe?
 
@@ -33,20 +45,26 @@ enum PanelBenchmark {
         probe?.tick()
     }
 
-    static func run(panel: PanelController, store: ClipStore, cycles: Int) {
+    static func run(panel: PanelController, model: HistoryModel, store: ClipStore, cycles: Int) {
         seedIfEmpty(store)
         var results: [String: [Sample]] = [:]
+        let phases = measuresDelete ? ["delete", "undo"] : ["show", "hide"]
 
-        func measure(_ phase: String, _ action: () -> Void, then next: @escaping @MainActor () -> Void) {
+        func measure(
+            _ phase: String, for duration: Double = window, _ action: () -> Void,
+            then next: @escaping @MainActor () -> Void
+        ) {
             ticks = []
             probe?.reset()
             recording = true
+            ticker?.start()
             let start = CACurrentMediaTime()
             action()
             let call = CACurrentMediaTime() - start
             ticks.insert(start, at: 0)
-            after(window) {
+            after(duration) {
                 recording = false
+                ticker?.stop()
                 let sample = Sample(call: call, ticks: ticks, presented: probe?.presented ?? [])
                 print("\(phase) \(sample.line)")
                 results[phase, default: []].append(sample)
@@ -57,12 +75,22 @@ enum PanelBenchmark {
         func cycle(_ index: Int) {
             guard index < cycles else {
                 // 第一次是冷启动，不计入中位数。
-                for phase in ["show", "hide"] {
+                for phase in phases {
                     let samples = Array((results[phase] ?? []).dropFirst())
                     print("median \(phase) \(Sample.medianLine(samples))")
                 }
                 fflush(stdout)
                 NSApp.terminate(nil)
+                return
+            }
+            if measuresDelete {
+                measure("delete", for: deleteWindow, { model.delete() }) {
+                    after(0.3) {
+                        measure("undo", for: undoWindow, { model.undoDelete() }) {
+                            after(0.3) { cycle(index + 1) }
+                        }
+                    }
+                }
                 return
             }
             measure("show", { panel.show() }) {
@@ -74,8 +102,17 @@ enum PanelBenchmark {
             }
         }
 
-        // 等启动时的其他工作做完再开始。
-        after(1.0) { cycle(0) }
+        // 等启动时的其他工作做完再开始。测删除时先呼出面板，焦点放到卡片上，和按 ⌘⌫ 时一样。
+        if measuresDelete {
+            after(1.0) {
+                panel.show()
+                model.focus = .cards
+                ticker = BenchTicker(window: panel.window)
+                after(1.0) { cycle(0) }
+            }
+        } else {
+            after(1.0) { cycle(0) }
+        }
     }
 
     private static func after(_ seconds: Double, _ body: @escaping @MainActor () -> Void) {
@@ -163,6 +200,28 @@ enum PanelBenchmark {
         }
         guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
         return rep.representation(using: .png, properties: [:])
+    }
+}
+
+/// 测删除时每帧调用一次 `PanelBenchmark.frameTick`。
+@MainActor
+private final class BenchTicker: NSObject {
+    private let window: NSWindow
+    private var link: CADisplayLink?
+
+    init(window: NSWindow) {
+        self.window = window
+        super.init()
+        link = window.contentView?.displayLink(target: self, selector: #selector(step))
+        link?.isPaused = true
+        link?.add(to: .main, forMode: .common)
+    }
+
+    func start() { link?.isPaused = false }
+    func stop() { link?.isPaused = true }
+
+    @objc private func step(_ link: CADisplayLink) {
+        PanelBenchmark.frameTick(in: window)
     }
 }
 
