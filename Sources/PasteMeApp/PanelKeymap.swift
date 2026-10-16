@@ -26,6 +26,10 @@ struct PanelContext: Equatable {
     var canUndoDelete: Bool
     /// 面板上选了类型、来源应用或时间筛选。
     var filtersActive = false
+    /// 搜索框下面显示着 `@` 的候选列表。
+    var suggestionsShown = false
+    /// 输入法正在组字：搜索框里有还没确认的文字（拼音等）。
+    var composing = false
 }
 
 enum PanelCommand: Equatable {
@@ -37,6 +41,9 @@ enum PanelCommand: Equatable {
     case pasteAt(index: Int, PasteMode)
     case deleteSelected
     case undoDelete
+    case moveSuggestion(by: Int)
+    case acceptSuggestion
+    case dismissSuggestions
 }
 
 /// 按键交给谁处理。
@@ -52,11 +59,25 @@ enum PanelKeyAction: Equatable {
 /// 把按键和面板状态转成面板命令。
 ///
 /// 焦点规则（工单 #1）：焦点在搜索框时，编辑文字的按键（⌘⌫、⌘Z，以及有搜索词时的 ← →）交给搜索框；
-/// 焦点在卡片列表时，它们操作卡片。↓ 从搜索框进入卡片列表，↑ 回到搜索框；在卡片上打字也会回到搜索框。
+/// 焦点在卡片列表时，它们操作卡片。↓ 从搜索框进入卡片列表，↑ 回到搜索框；在卡片上打字也会进入搜索框。
+///
+/// 搜索框下面显示着 `@` 的候选列表时，↑ ↓ 在列表里移动，↩ 和 Tab 选中，esc 关掉列表。
+/// 输入法组字时 ↩、方向键、esc 是用来选字和取消的，所有按键都交给输入法。
 enum PanelKeymap {
     static func action(for key: PanelKey, in context: PanelContext) -> PanelKeyAction {
+        guard !context.composing else { return .passThrough }
         let onCards = context.focus == .cards
         let mode: PasteMode = key.shift ? .plainText : .original
+
+        if context.suggestionsShown, !key.command {
+            switch key.keyCode {
+            case kVK_DownArrow: return .run(.moveSuggestion(by: 1))
+            case kVK_UpArrow: return .run(.moveSuggestion(by: -1))
+            case kVK_Return, kVK_ANSI_KeypadEnter, kVK_Tab: return .run(.acceptSuggestion)
+            case kVK_Escape: return .run(.dismissSuggestions)
+            default: break
+            }
+        }
 
         switch key.keyCode {
         case kVK_Escape:

@@ -106,13 +106,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     #if DEBUG
     /// 调试用：弹出面板，把它渲染成 PNG 后退出。用于在没有屏幕录制权限时检查界面。
     /// `PASTEME_SNAPSHOT=/tmp/panel.png swift run PasteMe`
-    /// 加上 `PASTEME_SNAPSHOT_QUERY=…` 时先在搜索框里输入这段文字，例如 `type:图片 报销`。
+    /// 加上 `PASTEME_SNAPSHOT_QUERY=…` 时先在搜索框里输入这段文字，例如 `type:图片 报销`，焦点也移到搜索框，
+    /// 和打字时一样；输入 `@` 可以检查候选列表。
     /// 加上 `PASTEME_SNAPSHOT_DELETE=1` 时删除选中的卡片，0.1 秒后再渲染：颗粒动画还在播放，
     /// 可以确认被删的卡片变成了空位、其他卡片没有移动（颗粒画在 Metal 图层上，不在渲染结果里）。
     private func writeSnapshot(to path: String) {
         let environment = ProcessInfo.processInfo.environment
         panel.show()
         if let query = environment["PASTEME_SNAPSHOT_QUERY"] {
+            model.focus = .search
             model.query = query
         }
         if environment["PASTEME_SNAPSHOT_DELETE"] == "1" {

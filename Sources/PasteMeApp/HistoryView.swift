@@ -29,6 +29,8 @@ struct HistoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             searchBar
+                // 候选列表画在卡片上面。
+                .zIndex(1)
             if model.cards.isEmpty {
                 emptyState
             } else {
@@ -41,7 +43,8 @@ struct HistoryView: View {
                 .allowsHitTesting(false)
         }
         .onChange(of: model.showCount) {
-            searchFocused = true
+            // 上次关闭面板时焦点可能还在搜索框里，窗口再次成为 key 时会还给它。
+            searchFocused = model.focus == .search
             cardsRevealed = false
             DispatchQueue.main.async {
                 withAnimation { cardsRevealed = true }
@@ -60,10 +63,19 @@ struct HistoryView: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("搜索，或输入 type:图片 app:微信", text: $model.query)
+            TextField("搜索，或输入 @ 按类型、应用筛选", text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
                 .focused($searchFocused)
+                .overlay(alignment: .topLeading) {
+                    if model.showsSuggestions {
+                        // 列表从搜索框下边再往下 8 点开始。
+                        GeometryReader { field in
+                            FilterSuggestionList(model: model)
+                                .offset(x: -6, y: field.size.height + 8)
+                        }
+                    }
+                }
                 // 不设上限时搜索框会占满整行，筛选按钮被挤到最右边，提示也没有位置了。
                 .frame(minWidth: 220, maxWidth: 360)
             FilterBar(model: model)
@@ -80,9 +92,10 @@ struct HistoryView: View {
     }
 
     private var hint: String {
+        if model.showsSuggestions { return "↑ ↓ 选择   ↩ 筛选   esc 取消" }
         switch model.focus {
-        case .search: "← → 选择   ↓ 操作卡片   ↩ 粘贴   ⇧↩ 纯文本   esc 关闭"
-        case .cards: "← → 选择   ↑ 回到搜索   ↩ 粘贴   ⌘⌫ 删除   ⌘Z 撤销删除   esc 关闭"
+        case .search: return "← → 选择   ↓ 操作卡片   ↩ 粘贴   ⇧↩ 纯文本   esc 关闭"
+        case .cards: return "← → 选择   ↩ 粘贴   ⌘⌫ 删除   ⌘Z 撤销删除   直接打字搜索   esc 关闭"
         }
     }
 
