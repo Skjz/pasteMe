@@ -1,0 +1,171 @@
+import AppKit
+import Carbon.HIToolbox
+import PasteMeCore
+import ServiceManagement
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private var store: ClipStore!
+    private var model: HistoryModel!
+    private var monitor: ClipboardMonitor!
+    private var panel: PanelController!
+    private var hotKey: HotKey?
+    private var statusItem: NSStatusItem!
+
+    private let pauseItem = NSMenuItem(title: "暂停记录", action: #selector(togglePause), keyEquivalent: "")
+    private let loginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+    private let accessibilityItem = NSMenuItem(title: "", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        do {
+            store = try ClipStore(path: ClipStore.defaultPath())
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "无法打开历史数据库"
+            alert.informativeText = String(describing: error)
+            alert.runModal()
+            NSApp.terminate(nil)
+            return
+        }
+
+        model = HistoryModel(store: store)
+        panel = PanelController(model: model)
+        model.onPaste = { [weak self] item, plainText in self?.paste(item, plainText: plainText) }
+
+        monitor = ClipboardMonitor(store: store) { [weak self] in
+            guard let self, self.panel.isVisible else { return }
+            self.model.reload()
+        }
+        monitor.start()
+
+        hotKey = HotKey(keyCode: kVK_ANSI_V, modifiers: cmdKey | shiftKey) { [weak self] in
+            self?.panel.toggle()
+        }
+        if hotKey == nil {
+            NSLog("PasteMe: ⇧⌘V 注册失败，可能已被其他应用占用")
+        }
+
+        setUpStatusItem()
+
+        #if DEBUG
+        if let path = ProcessInfo.processInfo.environment["PASTEME_SNAPSHOT"] {
+            writeSnapshot(to: path)
+            return
+        }
+        #endif
+
+        if !Paster.isTrusted {
+            Paster.requestTrust()
+        }
+    }
+
+    #if DEBUG
+    /// 调试用：弹出面板，把它渲染成 PNG 后退出。用于在没有屏幕录制权限时检查界面。
+    /// `PASTEME_SNAPSHOT=/tmp/panel.png swift run PasteMe`
+    private func writeSnapshot(to path: String) {
+        panel.show()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            if let data = self.panel.snapshotPNG() {
+                try? data.write(to: URL(fileURLWithPath: path))
+            }
+            NSApp.terminate(nil)
+        }
+    }
+    #endif
+
+    // MARK: - 粘贴
+
+    private func paste(_ item: ClipItem, plainText: Bool) {
+        guard var content = try? store.content(id: item.id) else { return }
+        if plainText { content = content.plainTextOnly }
+
+        PasteboardCodec.write(content, to: .general)
+        try? store.touch(id: item.id)
+        panel.hide()
+
+        guard Paster.isTrusted else {
+            // 没有权限时内容已经在剪贴板里，用户可以自己按 ⌘V。
+            Paster.requestTrust()
+            return
+        }
+        // 等面板收起、键盘焦点回到原应用后再发送 ⌘V。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            Paster.sendPasteKeystroke()
+        }
+    }
+
+    // MARK: - 菜单栏
+
+    private func setUpStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem.button?.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "PasteMe")
+
+        let menu = NSMenu()
+        menu.delegate = self
+
+        let open = NSMenuItem(title: "打开历史", action: #selector(showPanel), keyEquivalent: "v")
+        open.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(open)
+        menu.addItem(.separator())
+        menu.addItem(pauseItem)
+        menu.addItem(loginItem)
+        menu.addItem(accessibilityItem)
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "清空历史…", action: #selector(clearHistory), keyEquivalent: ""))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "退出 PasteMe", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) {
+            item.target = self
+        }
+        statusItem.menu = menu
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        pauseItem.state = monitor.isPaused ? .on : .off
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        accessibilityItem.title = Paster.isTrusted ? "辅助功能权限：已开启" : "辅助功能权限：未开启（点此设置）"
+    }
+
+    @objc private func showPanel() {
+        panel.show()
+    }
+
+    @objc private func togglePause() {
+        monitor.isPaused.toggle()
+        statusItem.button?.appearsDisabled = monitor.isPaused
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            NSLog("PasteMe: 设置登录时启动失败：\(error)")
+        }
+    }
+
+    @objc private func openAccessibilitySettings() {
+        Paster.requestTrust()
+        Paster.openAccessibilitySettings()
+    }
+
+    @objc private func clearHistory() {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "清空全部剪贴板历史？"
+        alert.informativeText = "此操作无法撤销。"
+        alert.addButton(withTitle: "清空")
+        alert.addButton(withTitle: "取消")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try store.deleteAll()
+        } catch {
+            NSLog("PasteMe: 清空历史失败：\(error)")
+        }
+    }
+}
