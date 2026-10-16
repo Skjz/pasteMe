@@ -12,8 +12,8 @@ final class HistoryModel {
     /// 每次面板弹出时加一，视图据此把焦点放回搜索框。
     private(set) var showCount = 0
 
-    /// 粘贴某条记录；第二个参数为 true 时去掉格式。
-    @ObservationIgnored var onPaste: (ClipItem, Bool) -> Void = { _, _ in }
+    /// 粘贴某个条目。
+    @ObservationIgnored var onPaste: (ClipItem, PasteMode) -> Void = { _, _ in }
 
     @ObservationIgnored private let store: ClipStore
 
@@ -34,7 +34,7 @@ final class HistoryModel {
 
     func reload() {
         do {
-            items = try store.recent(matching: query)
+            items = try store.items(matching: ClipQuery(text: query))
         } catch {
             NSLog("PasteMe: 读取历史失败：\(error)")
             items = []
@@ -51,15 +51,15 @@ final class HistoryModel {
         selectedID = items[next].id
     }
 
-    func paste(_ item: ClipItem? = nil, plainText: Bool = false) {
+    func paste(_ item: ClipItem? = nil, as mode: PasteMode = .original) {
         guard let item = item ?? selectedItem else { return }
-        onPaste(item, plainText)
+        onPaste(item, mode)
     }
 
     /// ⌘1…⌘9：粘贴当前列表里的第 n 条。
-    func paste(at index: Int, plainText: Bool = false) {
+    func paste(at index: Int, as mode: PasteMode = .original) {
         guard items.indices.contains(index) else { return }
-        onPaste(items[index], plainText)
+        onPaste(items[index], mode)
     }
 
     func delete(_ item: ClipItem? = nil) {

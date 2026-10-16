@@ -61,7 +61,7 @@ struct HistoryView: View {
                             .contextMenu {
                                 Button("粘贴") { model.paste(item) }
                                 if item.kind == .text {
-                                    Button("以纯文本粘贴") { model.paste(item, plainText: true) }
+                                    Button("以纯文本粘贴") { model.paste(item, as: .plainText) }
                                 }
                                 Divider()
                                 Button("删除", role: .destructive) { model.delete(item) }

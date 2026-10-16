@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import PasteMeCore
 import SwiftUI
 
 /// 不激活 PasteMe 自身的浮动面板。
@@ -39,6 +40,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     private var keyMonitor: Any?
 
     var isVisible: Bool { panel.isVisible }
+    /// 最近一次呼出面板时的前台应用，粘贴的内容会送到这里。
+    private(set) var targetApp: TargetApp?
 
     init(model: HistoryModel) {
         self.model = model
@@ -70,6 +73,11 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func show() {
+        // 面板不激活 PasteMe，呼出前的前台应用就是目标应用。
+        targetApp = NSWorkspace.shared.frontmostApplication.map {
+            TargetApp(bundleID: $0.bundleIdentifier, name: $0.localizedName)
+        }
+
         // 出现在鼠标所在的屏幕底部。
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
@@ -148,7 +156,7 @@ final class PanelController: NSObject, NSWindowDelegate {
             model.moveSelection(by: 1)
             return true
         case kVK_Return, kVK_ANSI_KeypadEnter:
-            model.paste(plainText: shift)
+            model.paste(as: shift ? .plainText : .original)
             return true
         case kVK_Delete where command:
             model.delete()
@@ -158,7 +166,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
 
         if command, let index = Self.digitKeyCodes.firstIndex(of: Int(event.keyCode)) {
-            model.paste(at: index, plainText: shift)
+            model.paste(at: index, as: shift ? .plainText : .original)
             return true
         }
         return false

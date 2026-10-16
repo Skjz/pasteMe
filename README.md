@@ -57,8 +57,9 @@ swift test
 swift run PasteMe
 ```
 
-- `Sources/PasteMeCore`：与界面无关的部分，包括数据模型、SQLite 存储、剪贴板内容的读写转换。单元测试覆盖这一层。
-- `Sources/PasteMe`：菜单栏应用本体，包括剪贴板轮询、全局快捷键、面板和卡片视图。
+- `Sources/PasteMeCore`：与界面无关的部分，包括数据模型、SQLite 存储、查询条件（`ClipQuery`）、粘贴流程（`Paster`）、设置（`Settings`）、剪贴板内容的读写转换。测试在 `Tests/PasteMeCoreTests`。
+- `Sources/PasteMeApp`：菜单栏应用本体，包括剪贴板轮询、全局快捷键、发送 ⌘V、面板和卡片视图。做成库是为了让面板逻辑也能测试，测试在 `Tests/PasteMeAppTests`。
+- `Sources/PasteMe`：可执行文件，只有 `main.swift`，负责启动 `PasteMeApp` 里的 `AppDelegate`。
 - 调试构建可以把面板渲染成图片后退出，用于在没有屏幕录制权限时检查界面：
 
   ```bash

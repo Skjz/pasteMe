@@ -81,22 +81,20 @@ public final class ClipStore {
         return statement.int(0)
     }
 
-    /// 按时间倒序返回最近的记录。`query` 非空时只返回文本或来源应用名包含该字符串的记录（不区分 ASCII 大小写）。
-    public func recent(limit: Int = 200, matching query: String = "") throws -> [ClipItem] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// 按时间倒序返回符合 `query` 的条目。
+    public func items(matching query: ClipQuery = ClipQuery()) throws -> [ClipItem] {
         var sql = """
             SELECT id, kind, substr(text, 1, \(Self.previewLength)), length(text), thumbnail,
                    source_bundle_id, source_name, created_at
             FROM clips
             """
         var values: [SQLValue] = []
-        if !trimmed.isEmpty {
-            sql += " WHERE text LIKE ? ESCAPE '\\' OR source_name LIKE ? ESCAPE '\\'"
-            let pattern = "%" + Self.escapeLike(trimmed) + "%"
-            values += [.text(pattern), .text(pattern)]
+        if let filter = query.filter {
+            sql += " WHERE " + filter.clause
+            values += filter.values
         }
         sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
-        values.append(.int(Int64(limit)))
+        values.append(.int(Int64(query.limit)))
 
         let statement = try db.prepare(sql, values)
         var items: [ClipItem] = []
@@ -153,14 +151,5 @@ public final class ClipStore {
         case .file: content.fileURLs.first.flatMap { Thumbnailer.thumbnail(forFileAt: $0) }
         case .text, .link: nil
         }
-    }
-
-    static func escapeLike(_ string: String) -> String {
-        var escaped = ""
-        for char in string {
-            if char == "\\" || char == "%" || char == "_" { escaped.append("\\") }
-            escaped.append(char)
-        }
-        return escaped
     }
 }
