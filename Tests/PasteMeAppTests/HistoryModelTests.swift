@@ -173,14 +173,14 @@ import PasteMeCore
         #expect(model.items.map(\.id) == [c, b, a])
     }
 
-    @Test func reopeningPanelForgetsDeletionsAndResetsFocus() {
-        model.focus = .cards
+    @Test func reopeningPanelForgetsDeletionsAndPutsFocusOnCards() {
         model.delete()
+        model.focus = .search
 
         model.didShow()
 
         #expect(!model.canUndoDelete)
-        #expect(model.focus == .search)
+        #expect(model.focus == .cards)
     }
 
     @Test func deletingLeavesAGapUntilTheDisappearEffectFinishes() {

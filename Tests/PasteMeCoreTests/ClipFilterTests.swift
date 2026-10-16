@@ -95,6 +95,25 @@ import Testing
         #expect(ClipQuery.parse("app:") == ClipQuery())
     }
 
+    @Test func mentionIsTheLastWordWhenItStartsWithAt() {
+        #expect(FilterMention(in: "@") == FilterMention(text: "", remainder: ""))
+        #expect(FilterMention(in: "报销 @wx") == FilterMention(text: "wx", remainder: "报销 "))
+        #expect(FilterMention(in: "＠微信") == FilterMention(text: "微信", remainder: ""))
+        // 写完了（后面打了空格），或者 @ 不在词首，例如邮箱地址。
+        #expect(FilterMention(in: "@wx ") == nil)
+        #expect(FilterMention(in: "@wx 报销") == nil)
+        #expect(FilterMention(in: "a@b.com") == nil)
+        #expect(FilterMention(in: "@a@b") == nil)
+        #expect(FilterMention(in: "报销") == nil)
+    }
+
+    @Test func kindsMatchingAPrefixOfTheirNames() {
+        #expect(ClipKind.matching("") == ClipKind.allCases)
+        #expect(ClipKind.matching("IM") == [.image])
+        #expect(ClipKind.matching("文") == [.text, .file])
+        #expect(ClipKind.matching("微信").isEmpty)
+    }
+
     @Test func timeRangesFollowCalendarDays() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))

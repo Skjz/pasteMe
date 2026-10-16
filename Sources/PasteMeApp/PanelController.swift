@@ -130,6 +130,11 @@ final class PanelController: NSObject, NSWindowDelegate {
         model.isPanelVisible = true
         model.didShow()
         panel.makeKeyAndOrderFront(nil)
+        // 窗口第一次成为 key 时，AppKit 会把键盘焦点交给第一个能输入的视图，也就是搜索框。
+        // 呼出时焦点在卡片列表上，交还给窗口本身。
+        if model.focus == .cards {
+            panel.makeFirstResponder(nil)
+        }
         installKeyMonitor()
         animator.animate(to: 1, spring: .show) { [weak self] in
             self?.phase = .shown
@@ -209,7 +214,10 @@ final class PanelController: NSObject, NSWindowDelegate {
             focus: model.focus,
             queryIsEmpty: model.query.isEmpty,
             canUndoDelete: model.canUndoDelete,
-            filtersActive: model.filters.isActive
+            filtersActive: model.filters.isActive,
+            suggestionsShown: model.showsSuggestions,
+            // 编辑搜索框时第一响应者是它的字段编辑器。
+            composing: (panel.firstResponder as? NSTextView)?.hasMarkedText() == true
         )
 
         switch PanelKeymap.action(for: key, in: context) {
@@ -233,8 +241,9 @@ final class PanelController: NSObject, NSWindowDelegate {
         case .close:
             hide()
         case .clearSearch:
+            // 回到刚呼出面板时的样子。
             model.clearSearch()
-            model.focus = .search
+            model.focus = .cards
         case .moveSelection(let offset):
             model.moveSelection(by: offset)
             model.focus = .cards
@@ -248,6 +257,12 @@ final class PanelController: NSObject, NSWindowDelegate {
             model.delete()
         case .undoDelete:
             model.undoDelete()
+        case .moveSuggestion(let offset):
+            model.moveSuggestion(by: offset)
+        case .acceptSuggestion:
+            model.acceptSuggestion()
+        case .dismissSuggestions:
+            model.dismissSuggestions()
         }
     }
 

@@ -36,6 +36,19 @@ struct PanelFilters: Equatable {
     var isActive: Bool { !kinds.isEmpty || sourceApp != nil || timeRange != .all }
 }
 
+/// 搜索框里输入 `@` 后候选列表里的一项，选中后变成筛选条件。
+enum FilterSuggestion: Equatable, Identifiable {
+    case kind(ClipKind)
+    case app(SourceApp)
+
+    var id: String {
+        switch self {
+        case .kind(let kind): "kind:\(kind.rawValue)"
+        case .app(let app): "app:\(app.bundleID)"
+        }
+    }
+}
+
 /// 面板上卡片列表里的一格：一张卡片，或者删除后消失动画还没播完的空位。
 struct PanelCard: Identifiable, Equatable {
     /// 条目，空位时是被删的条目。卡片变成空位时视图还是同一个，只是不再显示。
@@ -53,8 +66,19 @@ struct PanelCard: Identifiable, Equatable {
 final class HistoryModel {
     /// 搜索框里的文字。修改后立即重新查询。
     var query = "" {
-        didSet { if query != oldValue { reloadUnlessResetting() } }
+        didSet {
+            guard query != oldValue else { return }
+            updateSuggestions()
+            reloadUnlessResetting()
+        }
     }
+    /// 搜索框末尾正在写 `@词` 时的候选项：名字对得上的类型和来源应用。为空时不显示候选列表。
+    private(set) var suggestions: [FilterSuggestion] = []
+    /// 候选列表里高亮的一项，↩ 选中它。
+    private(set) var suggestionIndex = 0
+    /// 按 esc 关掉候选列表时 `@` 前面的文字，用来认出是哪个 `@词`。这个词按普通文字搜索，
+    /// 直到它被删掉，或者写完了又开始写下一个 `@词`。
+    @ObservationIgnored private var dismissedMention: String?
     /// 修改后立即重新查询。面板每次呼出时清空，和搜索词一样。
     var filters = PanelFilters() {
         didSet { if filters != oldValue { reloadUnlessResetting() } }
@@ -65,9 +89,10 @@ final class HistoryModel {
     var cursorStyle = CursorStyle.breathe
     /// 面板在屏幕上（包括呼出和收起动画期间）。为 false 时视图停掉一直在跑的动画。
     var isPanelVisible = false
-    /// 键盘操作当前作用于搜索框还是卡片列表，视图据此移动键盘焦点。
-    var focus: PanelFocus = .search
-    /// 每次面板弹出时加一，视图据此把焦点放回搜索框、重新播放卡片出现的动画。
+    /// 键盘操作当前作用于搜索框还是卡片列表，视图据此移动键盘焦点。呼出面板时在卡片列表上：
+    /// 在卡片上打字也会进入搜索框（`PanelKeymap`），所以一打开就能用方向键、⌘⌫ 操作卡片。
+    var focus: PanelFocus = .cards
+    /// 每次面板弹出时加一，视图据此同步焦点、重新播放卡片出现的动画。
     private(set) var showCount = 0
     /// 撤销删除后、出现动画播完之前的卡片。视图不画它们，由动画代替。
     private(set) var hiddenIDs: Set<Int64> = []
@@ -129,9 +154,12 @@ final class HistoryModel {
     /// 没有搜索词，也没有筛选条件。
     var searchIsEmpty: Bool { query.isEmpty && !filters.isActive }
 
+    /// 候选列表显示在搜索框下面：焦点在搜索框上，并且有候选项。
+    var showsSuggestions: Bool { focus == .search && !suggestions.isEmpty }
+
     /// 搜索框里的文字和面板上的筛选条件合起来的查询条件。
     var currentQuery: ClipQuery {
-        var query = ClipQuery.parse(query)
+        var query = ClipQuery.parse(searchInput)
         if !filters.kinds.isEmpty {
             query = query.restricting(to: filters.kinds)
         }
@@ -141,6 +169,13 @@ final class HistoryModel {
             query = query.resolvingAppNames { appNames.bundleIDs(matching: $0) }
         }
         return query
+    }
+
+    /// 搜索框里要按文字和 `type:`、`app:` 解析的部分。有候选项时正在写的 `@词` 还不算：
+    /// 选好之前不按它搜索，列表不会因为多打了一个字就变空。
+    private var searchInput: String {
+        guard !suggestions.isEmpty, let mention = FilterMention(in: query) else { return query }
+        return mention.remainder
     }
 
     /// 当前起作用的条件，例如 ["类型为图片", "来自微信"]，没有结果时用来说明原因。
@@ -186,6 +221,54 @@ final class HistoryModel {
         }
     }
 
+    private func updateSuggestions() {
+        guard let mention = FilterMention(in: query) else {
+            dismissedMention = nil
+            suggestions = []
+            return
+        }
+        let found = mention.remainder == dismissedMention ? [] : suggestions(matching: mention.text)
+        if found != suggestions {
+            suggestions = found
+            suggestionIndex = 0
+        }
+    }
+
+    /// 名字以 `text` 开头的类型，以及名字或别名包含 `text` 的来源应用。`text` 为空时列出全部。
+    private func suggestions(matching text: String) -> [FilterSuggestion] {
+        let apps = appNames?.apps(matching: text)
+            ?? sourceApps().filter { text.isEmpty || $0.name.localizedCaseInsensitiveContains(text) }
+        return ClipKind.matching(text).map(FilterSuggestion.kind) + apps.map(FilterSuggestion.app)
+    }
+
+    /// ↑ ↓：在候选列表里移动高亮，到头时停住。
+    func moveSuggestion(by offset: Int) {
+        guard !suggestions.isEmpty else { return }
+        suggestionIndex = min(max(suggestionIndex + offset, 0), suggestions.count - 1)
+    }
+
+    /// 选中一个候选项，默认是高亮的那个：搜索框里去掉 `@词`，候选项变成筛选条件，和用筛选按钮选的一样。
+    func acceptSuggestion(_ suggestion: FilterSuggestion? = nil) {
+        let highlighted = suggestions.indices.contains(suggestionIndex) ? suggestions[suggestionIndex] : nil
+        guard let mention = FilterMention(in: query), let chosen = suggestion ?? highlighted else { return }
+        resetting = true
+        query = mention.remainder
+        switch chosen {
+        case .kind(let kind): filters.kinds.insert(kind)
+        case .app(let app): filters.sourceApp = app
+        }
+        resetting = false
+        reloadUnlessResetting()
+    }
+
+    /// esc：关掉候选列表，正在写的 `@词` 改按普通文字搜索，例如要搜 `@gmail.com` 时。
+    func dismissSuggestions() {
+        guard !suggestions.isEmpty, let mention = FilterMention(in: query) else { return }
+        dismissedMention = mention.remainder
+        suggestions = []
+        reloadUnlessResetting()
+    }
+
     /// 历史里出现过的来源应用，按条目数排列。打开应用筛选菜单时才查询。
     func sourceApps() -> [SourceApp] {
         do {
@@ -205,7 +288,7 @@ final class HistoryModel {
         query = ""
         filters = PanelFilters()
         resetting = false
-        focus = .search
+        focus = .cards
         deleted = []
         removalEffect?.cancelAll()
         hiddenIDs = []

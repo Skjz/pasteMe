@@ -105,6 +105,28 @@ public struct ClipQuery: Sendable, Equatable {
     }
 }
 
+/// 搜索框里正在写的 `@词`：输入 `@` 后，从候选列表里选类型或来源应用作为筛选条件。
+///
+/// 只认搜索框的最后一个词，`@`（或全角的“＠”）在词首、后面还没有空格。
+/// `a@b.com` 这样的邮箱地址不算，按普通文字搜索。
+public struct FilterMention: Equatable, Sendable {
+    /// `@` 后面已经写的文字，可以为空。
+    public var text: String
+    /// `@` 前面的文字。选好筛选条件后，搜索框里只留下这些。
+    public var remainder: String
+}
+
+extension FilterMention {
+    public init?(in input: String) {
+        guard let at = input.lastIndex(where: { $0 == "@" || $0 == "＠" }) else { return nil }
+        let after = input[input.index(after: at)...]
+        guard !after.contains(where: \.isWhitespace) else { return nil }
+        if at > input.startIndex, !input[input.index(before: at)].isWhitespace { return nil }
+        text = String(after)
+        remainder = String(input[..<at])
+    }
+}
+
 /// 面板的时间筛选。
 public enum TimeRange: String, CaseIterable, Sendable {
     case all
@@ -143,6 +165,11 @@ extension ClipKind {
     func matchesSearchName(_ value: String) -> Bool {
         let value = value.lowercased()
         return searchNames.contains { $0.hasPrefix(value) }
+    }
+
+    /// 中文或英文名以 `value` 开头的类型，和 `type:` 后面的写法一样。`value` 为空时返回所有类型。
+    public static func matching(_ value: String) -> [ClipKind] {
+        allCases.filter { $0.matchesSearchName(value) }
     }
 }
 

@@ -85,6 +85,16 @@ import Testing
         #expect(names.bundleIDs(matching: "wx") == ["com.tencent.xinWeChat"])
     }
 
+    @Test func appsWhoseNameStartsWithTheTextComeFirst() {
+        let names = makeNames()
+        settings.setAliases(["chooser"], for: "com.apple.finder")
+
+        // 两个应用都只有一条条目，按条目数排时微信（较新）在前；访达的别名以 ch 开头，排到前面。
+        #expect(names.apps(matching: "").map(\.bundleID) == ["com.tencent.xinWeChat", "com.apple.finder"])
+        #expect(names.apps(matching: "ch").map(\.bundleID) == ["com.apple.finder", "com.tencent.xinWeChat"])
+        #expect(names.apps(matching: "safari").isEmpty)
+    }
+
     @Test func searchingAnEnglishNameFindsEntriesRecordedUnderTheChineseName() throws {
         let names = makeNames()
         settings.setAliases(["绿泡泡"], for: "com.tencent.xinWeChat")

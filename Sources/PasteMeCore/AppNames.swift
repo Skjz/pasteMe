@@ -97,14 +97,27 @@ public final class AppNames {
     public func bundleIDs(matching text: String) -> [String] {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return [] }
+        return apps(matching: text).map(\.bundleID)
+    }
+
+    /// 名字或别名包含 `text` 的来源应用，搜索框里 `@` 后面的候选列表用。有名字以 `text` 开头的排在前面，
+    /// 其余的按条目数排列。`text` 为空时返回所有来源应用。
+    public func apps(matching text: String) -> [SourceApp] {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return sourceApps() }
         let aliases = settings.appAliases
-        return sourceApps().compactMap { app in
+        let options: String.CompareOptions = [.caseInsensitive, .widthInsensitive, .diacriticInsensitive]
+        var prefixed: [SourceApp] = []
+        var contained: [SourceApp] = []
+        for app in sourceApps() {
             let names = [app.name] + systemNames(of: app.bundleID) + (aliases[app.bundleID] ?? [])
-            let matches = names.contains {
-                $0.range(of: text, options: [.caseInsensitive, .widthInsensitive, .diacriticInsensitive]) != nil
+            if names.contains(where: { $0.range(of: text, options: options.union(.anchored)) != nil }) {
+                prefixed.append(app)
+            } else if names.contains(where: { $0.range(of: text, options: options) != nil }) {
+                contained.append(app)
             }
-            return matches ? app.bundleID : nil
         }
+        return prefixed + contained
     }
 
     /// 应用自己声明的名字，不含用户的别名。还没读过时现在读。

@@ -88,6 +88,37 @@ import Testing
         #expect(action(PanelKey(keyCode: kVK_ANSI_A, command: true, characters: "a"), Self.onCards) == .passThrough)
     }
 
+    // MARK: @ 的候选列表
+
+    static let suggesting = PanelContext(focus: .search, queryIsEmpty: false, canUndoDelete: true, suggestionsShown: true)
+
+    @Test func arrowsReturnAndEscapeWorkTheSuggestionList() {
+        #expect(action(PanelKey(keyCode: kVK_DownArrow), Self.suggesting) == .run(.moveSuggestion(by: 1)))
+        #expect(action(PanelKey(keyCode: kVK_UpArrow), Self.suggesting) == .run(.moveSuggestion(by: -1)))
+        #expect(action(PanelKey(keyCode: kVK_Return, characters: "\r"), Self.suggesting) == .run(.acceptSuggestion))
+        #expect(action(PanelKey(keyCode: kVK_Tab, characters: "\t"), Self.suggesting) == .run(.acceptSuggestion))
+        #expect(action(PanelKey(keyCode: kVK_Escape, characters: "\u{1b}"), Self.suggesting) == .run(.dismissSuggestions))
+    }
+
+    @Test func otherKeysWorkAsUsualWhileSuggesting() {
+        #expect(action(Self.left, Self.suggesting) == .passThrough)
+        #expect(action(PanelKey(keyCode: kVK_ANSI_W, characters: "w"), Self.suggesting) == .passThrough)
+        let commandTwo = PanelKey(keyCode: kVK_ANSI_2, command: true, characters: "2")
+        #expect(action(commandTwo, Self.suggesting) == .run(.pasteAt(index: 1, .original)))
+    }
+
+    // MARK: 输入法组字
+
+    @Test func keysGoToTheInputMethodWhileComposing() {
+        var composing = Self.searchEmpty
+        composing.composing = true
+        composing.suggestionsShown = true
+        #expect(action(PanelKey(keyCode: kVK_Return, characters: "\r"), composing) == .passThrough)
+        #expect(action(PanelKey(keyCode: kVK_Escape, characters: "\u{1b}"), composing) == .passThrough)
+        #expect(action(Self.left, composing) == .passThrough)
+        #expect(action(PanelKey(keyCode: kVK_DownArrow), composing) == .passThrough)
+    }
+
     // MARK: 两种焦点下相同
 
     @Test func escapeClearsSearchFirstThenCloses() {
