@@ -26,4 +26,22 @@ import Testing
         Settings(defaults: defaults).showDuringScreenSharing = false
         #expect(Settings(defaults: defaults).showDuringScreenSharing == false)
     }
+
+    @Test func cursorStyleIsBreatheByDefault() {
+        #expect(Settings(defaults: defaults).cursorStyle == .breathe)
+    }
+
+    @Test func cursorStylePersists() {
+        Settings(defaults: defaults).cursorStyle = .flow
+        #expect(Settings(defaults: defaults).cursorStyle == .flow)
+
+        Settings(defaults: defaults).cursorStyle = .breathe
+        #expect(Settings(defaults: defaults).cursorStyle == .breathe)
+    }
+
+    @Test func unknownCursorStyleFallsBackToBreathe() {
+        // 例如以前的版本存过、现在已经删掉的样式。
+        defaults.set("plain", forKey: "cursorStyle")
+        #expect(Settings(defaults: defaults).cursorStyle == .breathe)
+    }
 }

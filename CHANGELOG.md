@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Card headers take the main color of the source app's icon instead of a fixed color per type, with dark header text on light colors such as yellow and light green. Cards from an unknown app keep the color of their type. The app icon in the header is larger and tucked into the top-right corner, partly cropped by the card edge, with a soft shadow.
+- A glowing cursor ring marks the selected card and slides between cards as the selection moves; the selected card also grows slightly. The ring takes the card's header color. Choose between two styles under "光标样式" in the menu bar menu: 呼吸 (a softly pulsing glow, the default) or 流光 (a gradient border that rotates around the card). With Reduce Motion turned on, the ring stops moving.
+
 - The panel slides up from the bottom of the screen with a slight bounce (about 0.3 s) and slides back down when it closes (about 0.17 s). The first cards rise and fade in one after another. Pressing ⇧⌘V again while the panel is closing sends it back up from where it is. With Reduce Motion turned on in System Settings, the panel only fades in and out. Pasting is as fast as before: the panel gives keyboard focus back to the target app as soon as it starts closing. (#2)
 
 - ⌘Z in the panel restores entries deleted since the panel was opened, most recent first. (#1)
@@ -31,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pressing ⌘⌫ in the panel's search field to delete the typed text no longer deletes the selected clipboard entry. (#1)
 
 ### Changed
+
+- The card row has 30 pt margins on both sides and 18 pt between cards. When the selection scrolls the list, the selected card keeps the margin instead of sitting against the panel edge.
 
 - The panel now tracks keyboard focus: the search field when the panel opens, the card list after ↓ or a click on a card. ⌘⌫ and ⌘Z act on the search text while the search field has focus, and delete the selected entry / undo the delete while the card list has focus. ← → move the text cursor when the search field has text, and select cards otherwise. ↑ or typing returns focus to the search field. The selected card's border is brighter when the card list has focus, and the hint line lists the keys for the current focus. (#1)
 - `ClipStore.delete(id:)` now returns the deleted entry as a `DeletedClip`, and the new `ClipStore.restore(_:)` puts it back with its original id, time, source and thumbnail. If the same content was copied again in the meantime, the newer entry is kept. Panel key handling moved into `PanelKeymap`, a pure function covered by `PanelKeymapTests`.

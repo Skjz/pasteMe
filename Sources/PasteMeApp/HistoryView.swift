@@ -11,6 +11,11 @@ struct HistoryView: View {
 
     /// 只给前几张卡片做依次出现的动画，屏幕外的卡片直接显示。
     private static let staggeredCards = 8
+    private static let cardSpacing: CGFloat = 18
+    /// 卡片列表左右两端的留白。选中的卡片放大、外面再套一圈光标后，离面板边缘仍有约 20 点。
+    private static let sideMargin: CGFloat = 30
+    /// 选中的卡片放大到的比例。
+    private static let selectedScale: CGFloat = 1.05
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -73,14 +78,13 @@ struct HistoryView: View {
     private var cards: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 14) {
+                LazyHStack(spacing: Self.cardSpacing) {
                     ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
-                        ClipCardView(
-                            item: item,
-                            shortcutIndex: index < 9 ? index + 1 : nil,
-                            isSelected: item.id == model.selectedID,
-                            cardsFocused: model.focus == .cards
-                        )
+                        let selected = item.id == model.selectedID
+                        ClipCardView(item: item, shortcutIndex: index < 9 ? index + 1 : nil)
+                            .scaleEffect(scale(selected: selected))
+                            .animation(.spring(response: 0.28, dampingFraction: 0.7), value: selected)
+                            .zIndex(selected ? 1 : 0)
                             .modifier(StaggeredAppearance(
                                 index: index,
                                 revealed: cardsRevealed || index >= Self.staggeredCards,
@@ -105,15 +109,46 @@ struct HistoryView: View {
                             }
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 6)
+                .padding(.vertical, 10)
+                // 卡片在滚动区域里竖直居中，光标也竖直居中，只按序号算横向位置。
+                .overlay(alignment: .leading) { cursor }
             }
+            // 放大的卡片和光标的光晕会超出滚动区域的上下边，不裁掉。
+            .scrollClipDisabled()
+            // 左右留白用 contentMargins 而不是 padding：滚动到某张卡片时，scrollTo 也会留出这段距离，
+            // 卡片不会贴着面板边缘。
+            .contentMargins(.horizontal, Self.sideMargin, for: .scrollContent)
             .onChange(of: model.selectedID) { _, id in
                 guard let id else { return }
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
             }
         }
-        .padding(.bottom, 14)
+        .padding(.bottom, 10)
+    }
+
+    private func scale(selected: Bool) -> CGFloat {
+        selected ? Self.selectedScale : 1
+    }
+
+    /// 画在所有卡片上面的光标，按选中卡片的序号算出位置，选中项变化时滑过去。
+    @ViewBuilder
+    private var cursor: some View {
+        if let index = model.items.firstIndex(where: { $0.id == model.selectedID }) {
+            let size = ClipCardView.size
+            let outset = SelectionCursor.outset
+            SelectionCursor(
+                style: model.cursorStyle,
+                color: CardStyle(for: model.items[index]).color,
+                cardsFocused: model.focus == .cards,
+                animating: model.isPanelVisible && !reduceMotion
+            )
+            .frame(width: size.width + outset * 2, height: size.height + outset * 2)
+            .scaleEffect(scale(selected: true))
+            .offset(x: CGFloat(index) * (size.width + Self.cardSpacing) - outset)
+            .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.72), value: index)
+            .opacity(cardsRevealed ? 1 : 0)
+            .animation(cardsRevealed ? .easeOut(duration: 0.25).delay(0.1) : nil, value: cardsRevealed)
+        }
     }
 }
 
