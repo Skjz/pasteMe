@@ -58,6 +58,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         panel.prewarm()
 
         #if DEBUG
+        if let cycles = PanelBenchmark.requestedCycles {
+            PanelBenchmark.run(panel: panel, store: store, cycles: cycles)
+            return
+        }
         if let path = ProcessInfo.processInfo.environment["PASTEME_SNAPSHOT"] {
             writeSnapshot(to: path)
             return

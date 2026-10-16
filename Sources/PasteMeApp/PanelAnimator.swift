@@ -131,6 +131,9 @@ final class PanelAnimator: NSObject {
 
     @objc private func step(_ link: CADisplayLink) {
         guard link === displayLink else { return }
+        #if DEBUG
+        PanelBenchmark.frameTick(in: window)
+        #endif
         guard let motion else { return stop() }
         let t = CACurrentMediaTime() - startTime
         // 进度 1 对应窗口移动约 340 点，0.001 不到半个点。

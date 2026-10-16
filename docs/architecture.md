@@ -47,11 +47,7 @@ ADR 0002 规划的模块里，有几个要等第一个用到它的工单才建�
 - 收起时面板先 `orderOut`，键盘焦点马上回到目标应用，⌘V 的时机和没有动画时一样；再用 `orderFrontRegardless` 不取得焦点地放回屏幕，由面板自己滑出（期间 `allowsKey` 和接收鼠标都关掉）。收起中途再次呼出时，面板恢复接收输入，从当前位置弹回去。
 - 这依赖 `ClipPanel.animationBehavior = .none`。开着系统窗口动画时，窗口重新上屏会先播系统的过渡，窗口服务器不理会 `setFrameOrigin`，面板只会原地淡出。以前因为这个现象用过一个替身窗口，把面板的内容视图搬过去播动画，但每次搬动内容视图要 18 ms 左右，呼出和收起都会丢帧，已经去掉。
 - 卡片依次出现在 `HistoryView` 里用 SwiftUI 动画实现，只对前 8 张做。
-- 验证动画时截图拍不到面板，可以用 `CGWindowListCopyWindowInfo` 每隔几毫秒采样 PasteMe 窗口的位置和透明度，看每一帧的位置。
-- 衡量动画是否流畅，看两种时间：
-  - 主线程：在 `PanelAnimator` 的 display link 回调里记时间戳，看两帧之间的间隔。
-  - 实际上屏：在面板的内容图层里临时加一个 2×2 的 `CAMetalLayer`，每个 display link 回调提交一帧，用 `MTLDrawable.addPresentedHandler` 记下 `presentedTime`。相邻两次上屏之间超过 1.5 帧的空档就是用户看到的掉帧。主线程准时而这里掉帧，说明瓶颈在渲染端。
-- 不要批量用 Instruments 的 Animation Hitches 模板录制：每录十几秒就会在 `$TMPDIR` 留下十几 GB 的原始追踪文件，删掉输出的 `.trace` 也不会删它们，曾经把磁盘占满。
+- 动画是否流畅用 `scripts/bench-panel.sh` 测量（DEBUG 构建里的 `PanelBenchmark`），步骤和读数见 `docs/agents/ui-performance.md`。
 
 ## 粘贴流程
 
