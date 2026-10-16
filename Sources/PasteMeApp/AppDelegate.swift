@@ -15,6 +15,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     private let pauseItem = NSMenuItem(title: "暂停记录", action: #selector(togglePause), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+    private let screenSharingItem = NSMenuItem(title: "共享屏幕时显示面板", action: #selector(toggleShowDuringScreenSharing), keyEquivalent: "")
     private let accessibilityItem = NSMenuItem(title: "", action: #selector(openAccessibilitySettings), keyEquivalent: "")
     private let cursorStyleItem = NSMenuItem(title: "光标样式", action: nil, keyEquivalent: "")
     private let settings = Settings()
@@ -39,6 +40,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         model = HistoryModel(store: store)
         model.cursorStyle = settings.cursorStyle
         panel = PanelController(model: model)
+        panel.showsDuringScreenSharing = settings.showDuringScreenSharing
         model.onPaste = { [weak self] item, mode in self?.paste(item, as: mode) }
 
         monitor = ClipboardMonitor(store: store) { [weak self] in
@@ -116,6 +118,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         menu.addItem(.separator())
         menu.addItem(pauseItem)
         menu.addItem(loginItem)
+        menu.addItem(screenSharingItem)
         menu.addItem(accessibilityItem)
         menu.addItem(cursorStyleItem)
         cursorStyleItem.submenu = makeCursorStyleMenu()
@@ -144,6 +147,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     public func menuWillOpen(_ menu: NSMenu) {
         pauseItem.state = monitor.isPaused ? .on : .off
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        screenSharingItem.state = settings.showDuringScreenSharing ? .on : .off
         for item in cursorStyleItem.submenu?.items ?? [] {
             item.state = item.representedObject as? String == model.cursorStyle.rawValue ? .on : .off
         }
@@ -163,6 +167,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     @objc private func togglePause() {
         monitor.isPaused.toggle()
         statusItem.button?.appearsDisabled = monitor.isPaused
+    }
+
+    @objc private func toggleShowDuringScreenSharing() {
+        settings.showDuringScreenSharing.toggle()
+        panel.showsDuringScreenSharing = settings.showDuringScreenSharing
     }
 
     @objc private func toggleLaunchAtLogin() {

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The panel is hidden from screen sharing, screen recordings and screenshots, so people in a meeting can't see your clipboard history; it still shows on your own screen. Turn on "共享屏幕时显示面板" in the menu bar menu to let it be captured, for example when recording a tutorial. The setting is kept across restarts. This relies on macOS's window sharing setting, which some capture tools may not honor. (#3)
+
 - `scripts/bench-panel.sh` measures how smoothly the panel opens and closes. It runs a debug build against a throwaway history that fills itself with test entries, opens and closes the panel repeatedly, and prints how many frames missed the 120 Hz deadline on screen (via a tiny Metal layer that records when each frame is actually presented) and on the main thread. `docs/agents/ui-performance.md` describes how to use it to compare a change against a baseline and track down the cause of stutter; `AGENTS.md` points to it.
 
 - Card headers take the main color of the source app's icon instead of a fixed color per type, with dark header text on light colors such as yellow and light green. Cards from an unknown app keep the color of their type. The app icon in the header is larger and tucked into the top-right corner, partly cropped by the card edge, with a soft shadow.
@@ -47,4 +49,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The app code moved out of the `PasteMe` executable target into a new `PasteMeApp` library target, so panel logic can be unit-tested; `PasteMe` now contains only `main.swift`. A new `PasteMeAppTests` target covers moving the selection and which card is selected after a delete.
 - `ClipStore.recent(limit:matching:)` is replaced by `ClipStore.items(matching:)`, which takes a `ClipQuery` value. `ClipQuery` currently holds the search text and the result limit; how a query becomes SQL is kept in `ClipQuery.swift`.
 - The paste flow moved from `AppDelegate` into `Paster` in `PasteMeCore`. `paste(_:as:into:)` takes `.original` or `.plainText` and a target app, and returns `.pasted` or `.copiedOnly` (no accessibility permission). Writing the pasteboard and sending ⌘V are injected adapters, so tests run against in-memory fakes. The app hides the panel before calling it.
-- New `Settings` type in `PasteMeCore`, stored in the `io.github.skjz.PasteMe` defaults domain, with a single switch `showDuringScreenSharing` (off by default) for the upcoming screen-sharing option. Nothing in the app reads it yet.
+- New `Settings` type in `PasteMeCore`, stored in the `io.github.skjz.PasteMe` defaults domain, where every user-facing switch is defined.
