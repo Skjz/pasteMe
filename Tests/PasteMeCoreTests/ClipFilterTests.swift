@@ -139,6 +139,7 @@ import Testing
             ClipQuery(text: "不存在的词"),
             ClipQuery.parse("type:link app:saf example"),
             ClipQuery(createdFrom: Date(timeIntervalSince1970: 9_000)),
+            ClipQuery.parse("wechat app:saf").resolvingAppNames { _ in ["com.tencent.xinWeChat", "com.apple.Safari"] },
         ]
         for query in queries {
             let start = Date()

@@ -7,7 +7,7 @@
 ```text
 PasteMe        可执行文件，只有 main.swift
 └─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、全局快捷键、监听 ⌘V、发送 ⌘V、面板、浮窗、视图
-   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、Recorder、EnrichmentQueue、PasteStack、Paster、Settings、PasteboardCodec、Thumbnailer
+   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、AppNames、Recorder、EnrichmentQueue、PasteStack、Paster、Settings、PasteboardCodec、Thumbnailer
 ```
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
@@ -47,6 +47,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 焦点（`HistoryModel.focus`）是唯一的状态来源，`HistoryView` 把它同步到搜索框的 `@FocusState`。
 - 焦点在卡片上时打字，需要让这次按键直接进入搜索框。本地事件监视器在事件分发之前回调，所以 `PanelController` 在监视器里同步把搜索框设为第一响应者，再把事件放行。搜索框是在视图层级里找到的第一个可编辑 `NSTextField`。
 - 删除时 `ClipStore.delete(id:)` 返回 `DeletedClip`，`HistoryModel` 保存到面板关闭为止，⌘Z 用 `ClipStore.restore(_:)` 按原来的 id、时间和缩略图放回。
+- PasteMe 没有菜单栏，但 `AppDelegate.setUpMainMenu()` 设了一个不显示的主菜单：输入框的 ⌘X、⌘C、⌘V、⌘A、⌘Z 和 ⌘W 关闭窗口都要靠菜单项的快捷键才能用。
 
 ## 卡片外观
 
@@ -90,6 +91,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 | Seam | 生产实现 | 测试替身 |
 | --- | --- | --- |
 | `TextRecognizing` | `VisionTextRecognizer`（Core） | `FakeRecognizer`（`TextRecognitionTests.swift`） |
+| `AppNames(systemNames:)` | `AppBundleNames.names(ofBundleID:)`（Core，读已安装应用的本地化名字） | 固定的字典（`AppNamesTests`、`AppAliasesTests`） |
 | `PasteboardWriting` | `GeneralPasteboard`（Core，`PasteboardCodec` 写 `NSPasteboard.general`） | `FakePasteboard`（`PasterTests.swift`） |
 | `PasteKeystrokeSending` | `CGEventPasteKeystroke`（App） | `FakeKeystroke`（`PasterTests.swift`） |
 | `ClipStore(path:)` | `ClipStore.defaultPath()` | `ClipStore(path: ":memory:")` |
@@ -102,12 +104,13 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 - **查询条件**：新的筛选字段加在 `ClipQuery` 上，转成 SQL 的代码也写在 `ClipQuery.swift` 的 `filter` 里，`ClipStore.items(matching:)` 不需要改。每个条件生成一段带括号的子句，多个条件用 AND 连接。搜索继续用 LIKE（ADR 0004），10,000 条条目时查询要在 50ms 以内（ADR 0003），`ClipFilterTests` 里有对应的测试。
 - **筛选的两个来源**：面板上的按钮和菜单改 `HistoryModel.filters`（`PanelFilters`）；搜索框里的 `type:`、`app:` 由 `ClipQuery.parse` 解析，不回写到按钮上。`HistoryModel.currentQuery` 把两者合起来，类型取交集（`ClipQuery.kinds` 为空集合时什么都不返回）。`query` 和 `filters` 改动后立即重新查询；`didShow` 一次清空两者，只查询一次，因为它在呼出动画的第一帧之前运行。
 - **来源应用菜单**：用 AppKit 的 `NSMenu`，点开时才调用 `ClipStore.sourceApps()`，不在呼出面板时查询。
+- **按应用的其他名字搜索**：条目只记了复制时的应用名（中文系统下是「访达」）。`HistoryModel.currentQuery` 最后调用 `ClipQuery.resolvingAppNames`，由 `AppNames` 找出名字、其他语言的名字（`AppBundleNames`，只读用户语言和英文）或应用别名（`Settings.appAliases`）包含搜索文字的应用，SQL 里加 `OR source_bundle_id IN (…)`。从应用包读名字一个应用要一两毫秒，所以启动 3 秒后 `AppNames.prefetch()` 在后台读完历史里的应用；应用列表在每次呼出面板时（`historyChanged()`）作废，第一次搜索时重新查。别名在 `AppAliasesWindow` 里编辑，输入时就保存，不需要通知 `AppNames`。
 - **数据库迁移**：`ClipStore.migrate()` 按 `user_version` 逐级升级，每一级一个 `if` 块，最后设新的版本号。改表结构时加一级，并在 `ClipStoreMigrationTests` 里用上一版的表结构建库，确认旧数据还在。
 - **设置项**：所有开关都定义在 `Settings` 上，键名放在 `Settings.Key` 里。每个开关都写默认值测试和读写测试，参照 `SettingsTests`。
 
 ## 线程
 
-`ClipStore` 只在主线程使用（ADR 0003）。用到它的类型（`AppDelegate`、`HistoryModel`、`ClipboardMonitor`、`Paster`）都标了 `@MainActor`，测试这些类型的 suite 也要标 `@MainActor`。
+`ClipStore` 只在主线程使用（ADR 0003）。`AppNames.prefetch()` 只把读应用包这一步放到后台（只用 Foundation 和 LaunchServices），结果回到主线程存进缓存。用到它的类型（`AppDelegate`、`HistoryModel`、`ClipboardMonitor`、`Paster`）都标了 `@MainActor`，测试这些类型的 suite 也要标 `@MainActor`。
 
 ## 在真实应用里验证
 
@@ -115,13 +118,14 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 
 1. 用 `pgrep -fl PasteMe` 检查用户是否已经开着 PasteMe。两个实例会争抢全局快捷键（⇧⌘V、⌃⇧⌘V、⌃⇧⌘C），需要先和用户确认能否退出。
 2. 运行 `scripts/bundle.sh` 打包。用 Apple Development 证书签名时，辅助功能权限在重新打包后仍然有效。
-3. 把 home 指向临时目录再启动，这样不会碰到用户真实的历史和设置：
+3. 把 home 指向临时目录再启动，这样不会碰到用户真实的历史：
 
    ```bash
    open --env CFFIXED_USER_HOME="$TMPDIR/pasteme-home" build/PasteMe.app
    ```
 
    历史数据库在 `$TMPDIR/pasteme-home/Library/Application Support/PasteMe/history.sqlite`，可以用 `sqlite3` 直接查。
+   设置不隔离：偏好设置由 cfprefsd 按真实用户读写，不认 `CFFIXED_USER_HOME`。在测试实例的菜单里改开关、在别名窗口里加别名，改的都是用户真实的设置（`defaults read io.github.skjz.PasteMe` 可以查看）。请用户这样试之前先说明，试完提醒改回去。
 4. 用 `pbcopy` 造测试数据时加上 `LANG=en_US.UTF-8`。不设 `LANG` 时，含中文的内容会被写成空字符串，PasteMe 会直接跳过它。
 5. 用截图检查时，面板可能不出现在截图里（例如 computer-use 只截授权应用的窗口）。这时看操作结果：目标应用里粘贴出的文字，以及数据库里条目的增删和顺序。
 6. 验证完在仓库根目录用完整路径退出测试实例，以免误关用户自己的 PasteMe：`pkill -f "$PWD/build/PasteMe.app/Contents/MacOS/PasteMe"`。然后删除临时目录。

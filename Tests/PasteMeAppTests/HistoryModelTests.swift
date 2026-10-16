@@ -157,7 +157,7 @@ import PasteMeCore
         model.filters.timeRange = .today
         model.query = "发票 app:微信 type:图片"
 
-        #expect(model.activeConditions == ["类型为图片", "来源应用名包含“微信”", "今天", "包含“发票”"])
+        #expect(model.activeConditions == ["类型为图片", "来源应用的名字或别名包含“微信”", "今天", "包含“发票”"])
     }
 
     @Test func reopeningPanelClearsSearchAndFilters() {

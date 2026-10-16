@@ -37,9 +37,13 @@ final class HistoryModel {
 
     /// 粘贴某个条目。
     @ObservationIgnored var onPaste: (ClipItem, PasteMode) -> Void = { _, _ in }
+    /// 打开应用别名窗口，并定位到这个应用（bundle id）。
+    @ObservationIgnored var onEditAliases: (String) -> Void = { _ in }
 
     @ObservationIgnored private let store: ClipStore
     @ObservationIgnored private let now: () -> Date
+    /// 按应用的其他名字和别名找来源应用。为 nil 时只按记录时的应用名搜索。
+    @ObservationIgnored private let appNames: AppNames?
     /// `didShow` 一次改好搜索词和筛选条件，最后只查询一次。
     @ObservationIgnored private var resetting = false
     /// 本次打开面板后删除的条目，最后删除的在末尾。面板重新打开时清空。
@@ -48,8 +52,9 @@ final class HistoryModel {
     var canUndoDelete: Bool { !deleted.isEmpty }
 
     /// `now` 用于测试时控制“今天”是哪一天。
-    init(store: ClipStore, now: @escaping () -> Date = Date.init) {
+    init(store: ClipStore, appNames: AppNames? = nil, now: @escaping () -> Date = Date.init) {
         self.store = store
+        self.appNames = appNames
         self.now = now
     }
 
@@ -64,6 +69,9 @@ final class HistoryModel {
         }
         query.sourceBundleID = filters.sourceApp?.bundleID
         (query.createdFrom, query.createdBefore) = filters.timeRange.bounds(now: now())
+        if let appNames {
+            query = query.resolvingAppNames { appNames.bundleIDs(matching: $0) }
+        }
         return query
     }
 
@@ -79,7 +87,7 @@ final class HistoryModel {
             conditions.append("来自\(app.name)")
         }
         if let name = query.sourceName {
-            conditions.append("来源应用名包含“\(name)”")
+            conditions.append("来源应用的名字或别名包含“\(name)”")
         }
         if filters.timeRange != .all {
             conditions.append(filters.timeRange.title)
@@ -129,6 +137,8 @@ final class HistoryModel {
         resetting = false
         focus = .search
         deleted = []
+        // 上次打开面板后可能记录了新的来源应用。
+        appNames?.historyChanged()
         reload()
         selectedID = items.first?.id
         showCount += 1

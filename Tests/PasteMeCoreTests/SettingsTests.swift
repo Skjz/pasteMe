@@ -44,4 +44,22 @@ import Testing
         defaults.set("plain", forKey: "cursorStyle")
         #expect(Settings(defaults: defaults).cursorStyle == .breathe)
     }
+
+    @Test func appAliasesAreEmptyByDefault() {
+        #expect(Settings(defaults: defaults).appAliases.isEmpty)
+    }
+
+    @Test func appAliasesPersistPerAppAndDropEmptyOnes() {
+        let settings = Settings(defaults: defaults)
+        settings.setAliases(["wx", " 绿泡泡 ", "", "WX"], for: "com.tencent.xinWeChat")
+        settings.setAliases(["finder"], for: "com.apple.finder")
+
+        #expect(Settings(defaults: defaults).appAliases == [
+            "com.tencent.xinWeChat": ["wx", "绿泡泡"],
+            "com.apple.finder": ["finder"],
+        ])
+
+        settings.setAliases([], for: "com.apple.finder")
+        #expect(Settings(defaults: defaults).appAliases == ["com.tencent.xinWeChat": ["wx", "绿泡泡"]])
+    }
 }

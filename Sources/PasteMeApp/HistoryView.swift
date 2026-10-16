@@ -114,6 +114,9 @@ struct HistoryView: View {
                                 if item.kind == .text {
                                     Button("以纯文本粘贴") { model.paste(item, as: .plainText) }
                                 }
+                                if let bundleID = item.sourceBundleID {
+                                    Button("为“\(item.sourceName ?? bundleID)”设置别名…") { model.onEditAliases(bundleID) }
+                                }
                                 Divider()
                                 Button("删除", role: .destructive) {
                                     model.delete(item)
