@@ -20,9 +20,16 @@ ADR 0002 规划的模块里，有几个要等第一个用到它的工单才建�
 | `Recorder` | `ClipboardMonitor.poll()`：轮询、判断记不记录、入库 | #7 |
 | `HotKeyCenter` | `HotKey`：只能注册一个快捷键 | #7 |
 | `EnrichmentQueue` | 缩略图在 `ClipStore.insert` 里同步生成 | #5 |
-| `PanelKeymap` | `PanelController.handle(_:)` | 第一个改面板按键的工单（#1 或 #2） |
 | Paste Stack | 无 | #6 |
 | `MCPServer`（`PasteMeMCP` target） | 无 | #8 |
+
+## 面板按键
+
+`PanelKeymap.action(for:in:)` 是纯函数：输入按键（`PanelKey`）和面板状态（焦点、搜索词是否为空、能否撤销），输出要执行的面板命令，或者把按键交给搜索框。新的面板快捷键加在这里，并在 `PanelKeymapTests` 里写对应的用例。`PanelController.handle(_:)` 只负责把 `NSEvent` 转成 `PanelKey`、执行命令。
+
+- 焦点（`HistoryModel.focus`）是唯一的状态来源，`HistoryView` 把它同步到搜索框的 `@FocusState`。
+- 焦点在卡片上时打字，需要让这次按键直接进入搜索框。本地事件监视器在事件分发之前回调，所以 `PanelController` 在监视器里同步把搜索框设为第一响应者，再把事件放行。搜索框是在视图层级里找到的第一个可编辑 `NSTextField`。
+- 删除时 `ClipStore.delete(id:)` 返回 `DeletedClip`，`HistoryModel` 保存到面板关闭为止，⌘Z 用 `ClipStore.restore(_:)` 按原来的 id、时间和缩略图放回。
 
 ## 粘贴流程
 

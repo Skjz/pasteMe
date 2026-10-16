@@ -128,8 +128,59 @@ public final class ClipStore {
         try db.run("UPDATE clips SET created_at = ? WHERE id = ?", [.double(date.timeIntervalSince1970), .int(id)])
     }
 
-    public func delete(id: Int64) throws {
-        try db.run("DELETE FROM clips WHERE id = ?", [.int(id)])
+    /// 删除一条记录，返回删除前的完整数据，交给 `restore(_:)` 可以原样恢复。记录不存在时返回 nil。
+    @discardableResult
+    public func delete(id: Int64) throws -> DeletedClip? {
+        let statement = try db.prepare(
+            """
+            DELETE FROM clips WHERE id = ?
+            RETURNING kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at
+            """,
+            [.int(id)]
+        )
+        guard try statement.step() else { return nil }
+        let deleted = DeletedClip(
+            id: id,
+            kind: statement.text(0) ?? "",
+            text: statement.text(1),
+            rtf: statement.blob(2),
+            image: statement.blob(3),
+            thumbnail: statement.blob(4),
+            sourceBundleID: statement.text(5),
+            sourceName: statement.text(6),
+            contentHash: statement.text(7) ?? "",
+            createdAt: statement.double(8)
+        )
+        while try statement.step() {}
+        return deleted
+    }
+
+    /// 撤销删除：用原来的 id、时间和缩略图放回历史。
+    /// 删除之后又复制过相同内容时，保留那条更新的记录，不把它挪回旧的位置。返回恢复后条目的 id。
+    @discardableResult
+    public func restore(_ clip: DeletedClip) throws -> Int64 {
+        try db.run(
+            """
+            INSERT INTO clips (id, kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
+            """,
+            [
+                .int(clip.id),
+                .text(clip.kind),
+                clip.text.sqlValue,
+                clip.rtf.sqlValue,
+                clip.image.sqlValue,
+                clip.thumbnail.sqlValue,
+                clip.sourceBundleID.sqlValue,
+                clip.sourceName.sqlValue,
+                .text(clip.contentHash),
+                .double(clip.createdAt),
+            ]
+        )
+        let statement = try db.prepare("SELECT id FROM clips WHERE content_hash = ?", [.text(clip.contentHash)])
+        guard try statement.step() else { throw SQLiteError(code: -1, message: "恢复后找不到条目") }
+        return statement.int(0)
     }
 
     public func deleteAll() throws {
