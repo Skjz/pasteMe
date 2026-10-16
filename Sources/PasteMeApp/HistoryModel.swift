@@ -11,7 +11,7 @@ final class HistoryModel {
     private(set) var items: [ClipItem] = []
     /// 键盘操作当前作用于搜索框还是卡片列表，视图据此移动键盘焦点。
     var focus: PanelFocus = .search
-    /// 每次面板弹出时加一，视图据此把焦点放回搜索框。
+    /// 每次面板弹出时加一，视图据此把焦点放回搜索框、重新播放卡片出现的动画。
     private(set) var showCount = 0
 
     /// 粘贴某个条目。

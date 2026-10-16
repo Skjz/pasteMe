@@ -5,6 +5,12 @@ import SwiftUI
 struct HistoryView: View {
     @Bindable var model: HistoryModel
     @FocusState private var searchFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 为 false 时前几张卡片处于出现动画的起点（下移、透明）。每次呼出面板先设为 false，再动画到 true。
+    @State private var cardsRevealed = true
+
+    /// 只给前几张卡片做依次出现的动画，屏幕外的卡片直接显示。
+    private static let staggeredCards = 8
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -15,7 +21,13 @@ struct HistoryView: View {
                 cards
             }
         }
-        .onChange(of: model.showCount) { searchFocused = true }
+        .onChange(of: model.showCount) {
+            searchFocused = true
+            cardsRevealed = false
+            DispatchQueue.main.async {
+                withAnimation { cardsRevealed = true }
+            }
+        }
         .onChange(of: model.focus) { _, focus in searchFocused = focus == .search }
         .onChange(of: searchFocused) { _, focused in
             // 用鼠标点进搜索框时，焦点回到搜索框。
@@ -69,6 +81,11 @@ struct HistoryView: View {
                             isSelected: item.id == model.selectedID,
                             cardsFocused: model.focus == .cards
                         )
+                            .modifier(StaggeredAppearance(
+                                index: index,
+                                revealed: cardsRevealed || index >= Self.staggeredCards,
+                                reduceMotion: reduceMotion
+                            ))
                             .id(item.id)
                             .onTapGesture(count: 2) { model.paste(item) }
                             .simultaneousGesture(TapGesture().onEnded {
@@ -97,5 +114,22 @@ struct HistoryView: View {
             }
         }
         .padding(.bottom, 14)
+    }
+}
+
+/// 呼出面板时卡片从左到右依次上浮淡入。
+private struct StaggeredAppearance: ViewModifier {
+    let index: Int
+    let revealed: Bool
+    let reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(revealed ? 1 : 0)
+            .offset(y: revealed || reduceMotion ? 0 : 18)
+            .animation(
+                revealed ? .spring(response: 0.3, dampingFraction: 0.8).delay(Double(index) * 0.025) : nil,
+                value: revealed
+            )
     }
 }

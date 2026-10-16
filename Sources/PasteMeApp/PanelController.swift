@@ -21,31 +21,67 @@ final class ClipPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
-        animationBehavior = .utilityWindow
+        // 呼出和收起的动画由 PanelAnimator 负责，不要系统自带的窗口动画。
+        animationBehavior = .none
     }
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
-/// 管理历史面板的显示、隐藏、位置和键盘操作。
+/// 收起动画用的替身窗口，不接收任何输入。
+///
+/// 面板本身在收起时立即 `orderOut`，把键盘焦点还给目标应用，⌘V 不用等动画结束。
+/// 面板的内容视图在收起期间搬到替身窗口里，由它滑出屏幕。不能让面板留在屏幕上自己滑出去：
+/// 面板交出焦点后再放回屏幕，窗口服务器就不再更新它的位置。
+final class GhostPanel: NSPanel {
+    init() {
+        super.init(
+            contentRect: .zero,
+            styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        level = .statusBar
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        ignoresMouseEvents = true
+        animationBehavior = .none
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// 管理历史面板的显示、隐藏、位置、动画和键盘操作。
 @MainActor
 final class PanelController: NSObject, NSWindowDelegate {
     static let panelHeight: CGFloat = 330
     static let margin: CGFloat = 8
 
     private let panel = ClipPanel()
+    private let ghost = GhostPanel()
+    /// 毛玻璃背景和 SwiftUI 内容。平时在面板里，收起动画期间在替身窗口里。
+    private let content: NSVisualEffectView
     private let model: HistoryModel
     private var keyMonitor: Any?
+    private lazy var animator = PanelAnimator(window: panel)
 
-    var isVisible: Bool { panel.isVisible }
+    private enum Phase {
+        case hidden, showing, shown, hiding
+    }
+
+    private var phase = Phase.hidden
+
+    /// 面板正在呼出或已经就位。收起动画进行中算作不可见，这时再按 ⇧⌘V 会让面板滑回来。
+    var isVisible: Bool { phase == .showing || phase == .shown }
     /// 最近一次呼出面板时的前台应用，粘贴的内容会送到这里。
     private(set) var targetApp: TargetApp?
 
     init(model: HistoryModel) {
         self.model = model
-        super.init()
-
         let effect = NSVisualEffectView()
         effect.material = .popover
         effect.blendingMode = .behindWindow
@@ -53,6 +89,8 @@ final class PanelController: NSObject, NSWindowDelegate {
         effect.wantsLayer = true
         effect.layer?.cornerRadius = 16
         effect.layer?.masksToBounds = true
+        content = effect
+        super.init()
 
         let hosting = NSHostingView(rootView: HistoryView(model: model))
         hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -67,36 +105,78 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.delegate = self
     }
 
+    /// 应用启动后调用一次，提前做好第一次呼出时才会做的准备工作。
+    func prewarm() {
+        animator.prepare()
+    }
+
     func toggle() {
         isVisible ? hide() : show()
     }
 
     func show() {
+        guard !isVisible else { return }
         // 面板不激活 PasteMe，呼出前的前台应用就是目标应用。
         targetApp = NSWorkspace.shared.frontmostApplication.map {
             TargetApp(bundleID: $0.bundleIdentifier, name: $0.localizedName)
         }
 
-        // 出现在鼠标所在的屏幕底部。
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-        let frame = NSRect(
-            x: visible.minX + Self.margin,
-            y: visible.minY + Self.margin,
-            width: visible.width - Self.margin * 2,
-            height: Self.panelHeight
-        )
-        panel.setFrame(frame, display: false)
+        if phase == .hiding {
+            // 收起动画进行到一半时再次呼出：面板接过替身窗口的位置，从那里滑回去，留在原来的屏幕上。
+            panel.setFrame(ghost.frame, display: false)
+            moveContent(to: panel)
+            animator.window = panel
+            ghost.orderOut(nil)
+        } else {
+            moveContent(to: panel)
+            animator.window = panel
+            // 出现在鼠标所在的屏幕底部。
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+            guard let visible = screen?.visibleFrame else { return }
+            let frame = NSRect(
+                x: visible.minX + Self.margin,
+                y: visible.minY + Self.margin,
+                width: visible.width - Self.margin * 2,
+                height: Self.panelHeight
+            )
+            panel.setFrame(frame, display: false)
+            animator.shownFrame = frame
+            animator.jump(to: 0)
+        }
 
+        phase = .showing
         model.didShow()
         panel.makeKeyAndOrderFront(nil)
         installKeyMonitor()
+        animator.animate(to: 1, spring: .show) { [weak self] in
+            self?.phase = .shown
+        }
     }
 
+    /// 收起面板。面板立即离开屏幕、交出键盘焦点，由替身窗口播放收起动画。
     func hide() {
+        guard isVisible else { return }
+        phase = .hiding
         removeKeyMonitor()
+        // orderOut 会触发 windowDidResignKey，此时已是 .hiding，不会重复收起。
         panel.orderOut(nil)
+        ghost.setFrame(panel.frame, display: false)
+        ghost.alphaValue = panel.alphaValue
+        moveContent(to: ghost)
+        ghost.orderFrontRegardless()
+        animator.window = ghost
+        animator.animate(to: 0, spring: .hide) { [weak self] in
+            guard let self else { return }
+            self.ghost.orderOut(nil)
+            self.phase = .hidden
+        }
+    }
+
+    private func moveContent(to window: NSWindow) {
+        guard content.window !== window else { return }
+        content.window?.contentView = NSView()
+        window.contentView = content
     }
 
     #if DEBUG

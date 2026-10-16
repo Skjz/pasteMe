@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The panel slides up from the bottom of the screen with a slight bounce (about 0.3 s) and slides back down when it closes (about 0.17 s). The first cards rise and fade in one after another. Pressing ⇧⌘V again while the panel is closing sends it back up from where it is. With Reduce Motion turned on in System Settings, the panel only fades in and out. Pasting is as fast as before: the panel gives keyboard focus back to the target app as soon as it starts closing. (#2)
+
 - ⌘Z in the panel restores entries deleted since the panel was opened, most recent first. (#1)
 
 - Menu bar app that records everything you copy — text, links, images and files — into a local SQLite history at `~/Library/Application Support/PasteMe/history.sqlite`, with no item limit.
