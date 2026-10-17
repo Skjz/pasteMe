@@ -152,4 +152,51 @@ import Testing
         shifted.characters = "#"
         #expect(action(shifted, Self.onCards) == .run(.pasteAt(index: 2, .plainText)))
     }
+
+    // MARK: 预览、Pinboard、新建（#9 #10）
+
+    static let space = PanelKey(keyCode: kVK_Space, characters: " ")
+
+    @Test func spaceOnCardsOpensThePreviewButTypesInTheSearchField() {
+        #expect(action(Self.space, Self.onCards) == .run(.togglePreview))
+        #expect(action(Self.space, Self.searching) == .passThrough)
+    }
+
+    @Test func spaceAndEscapeCloseThePreview() {
+        var previewing = Self.onCards
+        previewing.previewShown = true
+        let escape = PanelKey(keyCode: kVK_Escape, characters: "\u{1b}")
+        #expect(action(Self.space, previewing) == .run(.closePreview))
+        #expect(action(escape, previewing) == .run(.closePreview))
+        // 预览开着时照常换卡片、粘贴。
+        #expect(action(Self.right, previewing) == .run(.moveSelection(by: 1)))
+        #expect(action(PanelKey(keyCode: kVK_Return, characters: "\r"), previewing) == .run(.paste(.original)))
+
+        // 打字进了搜索框以后，空格是空格，esc 先关预览。
+        var searching = Self.searching
+        searching.previewShown = true
+        #expect(action(Self.space, searching) == .passThrough)
+        #expect(action(escape, searching) == .run(.closePreview))
+    }
+
+    @Test func commandArrowsSwitchTabsLikeArrowsSelectCards() {
+        let commandLeft = PanelKey(keyCode: kVK_LeftArrow, command: true, characters: "\u{F702}")
+        let commandRight = PanelKey(keyCode: kVK_RightArrow, command: true, characters: "\u{F703}")
+        #expect(action(commandLeft, Self.onCards) == .run(.switchTab(by: -1)))
+        #expect(action(commandRight, Self.searchEmpty) == .run(.switchTab(by: 1)))
+        // 搜索框里有文字时，⌘← ⌘→ 把插入点移到行首、行尾。
+        #expect(action(commandLeft, Self.searching) == .passThrough)
+    }
+
+    @Test func commandLettersPinCreateEditAndShowInHistory() {
+        func command(_ code: Int, _ character: String) -> PanelKey {
+            PanelKey(keyCode: code, command: true, characters: character)
+        }
+        for context in [Self.onCards, Self.searching] {
+            #expect(action(command(kVK_ANSI_P, "p"), context) == .run(.pinSelected))
+            #expect(action(command(kVK_ANSI_N, "n"), context) == .run(.newText))
+            #expect(action(command(kVK_ANSI_E, "e"), context) == .run(.editSelected))
+            #expect(action(command(kVK_ANSI_J, "j"), context) == .run(.showInHistory))
+        }
+    }
 }

@@ -46,6 +46,27 @@ public struct Settings {
         }
     }
 
+    /// 原样粘贴图片时也附带一个 PNG 文件（#12），和右键菜单里的「以文件粘贴」一样。默认 false：
+    /// 有些聊天软件收到文件会当作附件发出去，而不是显示成图片。
+    public var pasteImagesAsFiles: Bool {
+        get { defaults.bool(forKey: Key.pasteImagesAsFiles) }
+        nonmutating set { defaults.set(newValue, forKey: Key.pasteImagesAsFiles) }
+    }
+
+    /// 复制链接后获取什么（#11）。默认关闭：获取会向对方网站发请求，要用户自己选；
+    /// 「只取网站图标」不会打开复制的网址，「完整预览」会，一次性的链接在极少数情况下可能因此失效。
+    /// 存的值认不出来时也按关闭处理。
+    public var linkPreviewMode: LinkPreviewMode {
+        get { defaults.string(forKey: Key.linkPreviewMode).flatMap(LinkPreviewMode.init(rawValue:)) ?? .off }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Key.linkPreviewMode) }
+    }
+
+    /// 最近一次固定条目用的 Pinboard，⌘P 固定到这里。没有时为 nil。
+    public var lastPinboardID: Int64? {
+        get { (defaults.object(forKey: Key.lastPinboardID) as? NSNumber)?.int64Value }
+        nonmutating set { defaults.set(newValue.map { NSNumber(value: $0) }, forKey: Key.lastPinboardID) }
+    }
+
     /// 改一个应用的别名，其他应用的不变。
     public func setAliases(_ aliases: [String], for bundleID: String) {
         var all = appAliases
@@ -57,6 +78,9 @@ public struct Settings {
         static let showDuringScreenSharing = "showDuringScreenSharing"
         static let cursorStyle = "cursorStyle"
         static let appAliases = "appAliases"
+        static let pasteImagesAsFiles = "pasteImagesAsFiles"
+        static let linkPreviewMode = "linkPreviewMode"
+        static let lastPinboardID = "lastPinboardID"
     }
 
     /// 在 PasteMe.app 里运行时主 bundle id 就是 `suiteName`，系统不接受把它当 suite 名

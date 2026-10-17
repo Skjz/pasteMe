@@ -20,7 +20,7 @@ public final class Recorder {
     private var resumeTimer: Timer?
 
     /// - Parameters:
-    ///   - enrichment: 记录图片后交给它识别文字。
+    ///   - enrichment: 记录图片、文件和链接后交给它补充附加信息。
     ///   - pasteStack: 开启时，记下的条目依次加进去。
     ///   - now: 用于测试时控制时间。
     public init(
@@ -72,7 +72,7 @@ public final class Recorder {
         }
         guard !isPaused else { return nil }
         let id = try store.insert(content, source: source, at: now())
-        if content.kind == .image || content.kind == .file {
+        if content.kind != .text {
             enrichment?.enqueue(id)
         }
         pasteStack?.push(id)

@@ -33,8 +33,10 @@ struct ClipCardView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(item.kind.title)
+            // 起了标题的条目显示标题，否则显示类型。
+            Text(item.title ?? item.kind.title)
                 .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
             Text(item.createdAt, format: .relative(presentation: .named))
                 .font(.system(size: 11))
                 .opacity(0.85)
@@ -83,17 +85,7 @@ struct ClipCardView: View {
                 .lineLimit(11)
                 .foregroundStyle(.primary)
         case .link:
-            VStack(alignment: .leading, spacing: 6) {
-                if let host = item.preview.flatMap(URL.init(string:))?.host() {
-                    Text(host)
-                        .font(.system(size: 14, weight: .semibold))
-                        .lineLimit(1)
-                }
-                Text(item.preview ?? "")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.accentColor)
-                    .lineLimit(6)
-            }
+            linkCard
         case .image:
             if let data = item.thumbnail, let image = NSImage(data: data) {
                 Image(nsImage: image)
@@ -130,8 +122,17 @@ struct ClipCardView: View {
         }
     }
 
+    private var linkCard: LinkCardContent {
+        LinkCardContent(item: item)
+    }
+
     private var footer: some View {
         HStack(spacing: 4) {
+            // 在历史里看时标出固定过的条目；在 Pinboard 里每张都是固定的，不再标。
+            if !item.pinboardIDs.isEmpty, item.pinOrder == nil {
+                Image(systemName: "pin.fill")
+                    .help("固定在 Pinboard 里")
+            }
             if item.recognizedText?.isEmpty == false {
                 Image(systemName: "text.viewfinder")
                     .help("图片里的文字可以搜索")

@@ -57,17 +57,18 @@ final class PanelSimulator {
     private var pending: (layout: [Int64: CGRect], selected: Int64?, animated: Bool)?
     private var reportedLayout: [Int64: CGRect] = [:]
 
-    /// 历史里放 `count` 条文本，打开面板，焦点放在卡片上。
-    static func make(count: Int = 12) async throws -> PanelSimulator {
+    /// 历史里放 `count` 条文本，打开面板，焦点放在卡片上。`inPinboard` 为 true 时把它们按从旧到新的顺序
+    /// 固定到一个 Pinboard 里、切到这个标签：卡片按固定的位置排列，⌘⌫ 是从 Pinboard 里拿掉。
+    static func make(count: Int = 12, inPinboard: Bool = false) async throws -> PanelSimulator {
         let pipeline = DustPipeline.shared
         pipeline.prepare()
         for _ in 0..<500 where pipeline.state == nil {
             try await Task.sleep(for: .milliseconds(10))
         }
-        return try PanelSimulator(count: count)
+        return try PanelSimulator(count: count, inPinboard: inPinboard)
     }
 
-    private init(count: Int) throws {
+    private init(count: Int, inPinboard: Bool) throws {
         store = try ClipStore(path: ":memory:")
         let apps = [("com.apple.Notes", "备忘录"), ("com.apple.Safari", "Safari"), ("com.apple.Terminal", "终端")]
         for i in 0..<count {
@@ -95,6 +96,14 @@ final class PanelSimulator {
             render(animated: animation != nil)
         }
         model.didShow()
+        if inPinboard {
+            let pinboard = try store.createPinboard(name: "工作", color: .blue)
+            let ids = try store.items().map(\.id).reversed()
+            for id in ids { try store.pin(id, to: pinboard.id) }
+            try store.setOrder(Array(ids), inPinboard: pinboard.id)
+            model.reloadPinboards()
+            model.showTab(pinboard.id)
+        }
         model.focus = .cards
         render(animated: false)
         update()

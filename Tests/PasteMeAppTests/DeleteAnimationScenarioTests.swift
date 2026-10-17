@@ -85,6 +85,52 @@ import Testing
         expectNoProblems(panel)
     }
 
+    /// Pinboard 里按固定的位置排列，不按时间：空位要按位置插回去，撤销时卡片回到原来的格子。
+    @Test func removingAndUndoingInsideAPinboard() async throws {
+        let panel = try await PanelSimulator.make(inPinboard: true)
+        panel.moveSelection(by: 2)
+        for _ in 0..<3 {
+            panel.deleteSelected()
+            panel.wait(0.1)
+        }
+        panel.wait(0.5)
+        for _ in 0..<2 {
+            panel.undo()
+            panel.wait(0.15)
+        }
+        expectNoProblems(panel)
+    }
+
+    @Test(arguments: 0..<UInt64(20))
+    func randomSequencesInsideAPinboard(seed: UInt64) async throws {
+        let panel = try await PanelSimulator.make(count: 10, inPinboard: true)
+        var random = SeededGenerator(seed: seed &+ 10_000)
+        var steps: [String] = []
+        for _ in 0..<20 {
+            switch Int.random(in: 0..<100, using: &random) {
+            case 0..<35:
+                steps.append("拿掉选中")
+                panel.deleteSelected()
+            case 35..<60:
+                steps.append("撤销")
+                panel.undo()
+            case 60..<75:
+                let offset = Bool.random(using: &random) ? 1 : -1
+                steps.append("选中项移动 \(offset)")
+                panel.moveSelection(by: offset)
+            default:
+                let seconds = Double.random(in: 0.02...1.6, using: &random)
+                steps.append(String(format: "等 %.2f 秒", seconds))
+                panel.wait(seconds)
+            }
+        }
+        panel.settle()
+        #expect(
+            panel.problems.isEmpty,
+            "种子 \(seed)：\(steps.joined(separator: "，"))\n\(panel.problems.prefix(5).joined(separator: "\n"))"
+        )
+    }
+
     /// 平时跑 60 个种子，约 3 秒。改了删除动画的逻辑后，用 `PASTEME_FUZZ_SEEDS=2000 swift test --filter randomSequences` 多跑一些。
     nonisolated static let seeds = 0..<(ProcessInfo.processInfo.environment["PASTEME_FUZZ_SEEDS"].flatMap(UInt64.init) ?? 60)
 

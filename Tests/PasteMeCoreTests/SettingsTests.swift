@@ -62,4 +62,28 @@ import Testing
         settings.setAliases([], for: "com.apple.finder")
         #expect(Settings(defaults: defaults).appAliases == ["com.tencent.xinWeChat": ["wx", "绿泡泡"]])
     }
+
+    @Test func imagesAsFilesAndLinkPreviewsAreOffByDefault() {
+        let settings = Settings(defaults: defaults)
+        #expect(!settings.pasteImagesAsFiles)
+        #expect(settings.linkPreviewMode == .off)
+        #expect(settings.lastPinboardID == nil)
+    }
+
+    @Test func newSwitchesPersist() {
+        Settings(defaults: defaults).pasteImagesAsFiles = true
+        Settings(defaults: defaults).linkPreviewMode = .siteIcon
+        Settings(defaults: defaults).lastPinboardID = 3
+        #expect(Settings(defaults: defaults).pasteImagesAsFiles)
+        #expect(Settings(defaults: defaults).linkPreviewMode == .siteIcon)
+        #expect(Settings(defaults: defaults).lastPinboardID == 3)
+
+        Settings(defaults: defaults).lastPinboardID = nil
+        #expect(Settings(defaults: defaults).lastPinboardID == nil)
+    }
+
+    @Test func unknownLinkPreviewModeFallsBackToOff() {
+        defaults.set("everything", forKey: "linkPreviewMode")
+        #expect(Settings(defaults: defaults).linkPreviewMode == .off)
+    }
 }

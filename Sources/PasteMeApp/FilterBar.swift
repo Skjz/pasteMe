@@ -2,7 +2,8 @@ import AppKit
 import PasteMeCore
 import SwiftUI
 
-/// 搜索框右边的筛选控件：四个类型按钮、来源应用菜单、时间菜单，有筛选时再加一个清除按钮。
+/// 搜索框右边的筛选控件：四个类型按钮、来源应用菜单、时间菜单，有 Pinboard 时加一个 Pinboard 菜单，
+/// 有筛选时再加一个清除按钮。
 struct FilterBar: View {
     @Bindable var model: HistoryModel
 
@@ -26,6 +27,14 @@ struct FilterBar: View {
                 isActive: model.filters.timeRange != .all,
                 makeMenu: makeTimeMenu
             )
+            if !model.pinboards.isEmpty {
+                FilterMenuButton(
+                    title: pinboardTitle,
+                    icon: nil,
+                    isActive: !model.filters.pinboardIDs.isEmpty,
+                    makeMenu: makePinboardMenu
+                )
+            }
             if model.filters.isActive {
                 Button {
                     model.filters = PanelFilters()
@@ -53,6 +62,32 @@ struct FilterBar: View {
             }
             item.image = AppIconCache.menuIcon(for: app.bundleID)
             menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// 选了的 Pinboard 的名字，没选时是「所有 Pinboard」。
+    private var pinboardTitle: String {
+        let names = model.pinboards.filter { model.filters.pinboardIDs.contains($0.id) }.map(\.name)
+        return names.isEmpty ? "不限 Pinboard" : names.joined(separator: "、")
+    }
+
+    /// 可以选几个 Pinboard，看固定在其中任意一个里的条目。
+    private func makePinboardMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(ClosureMenuItem("不限 Pinboard", checked: model.filters.pinboardIDs.isEmpty) {
+            model.filters.pinboardIDs = []
+        })
+        menu.addItem(.separator())
+        for pinboard in model.pinboards {
+            let selected = model.filters.pinboardIDs.contains(pinboard.id)
+            menu.addItem(ClosureMenuItem(pinboard.name, checked: selected) {
+                if selected {
+                    model.filters.pinboardIDs.remove(pinboard.id)
+                } else {
+                    model.filters.pinboardIDs.insert(pinboard.id)
+                }
+            })
         }
         return menu
     }

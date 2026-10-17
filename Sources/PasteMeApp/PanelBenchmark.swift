@@ -164,7 +164,8 @@ enum PanelBenchmark {
     }
 
     /// 历史为空时填入约 30 条测试条目：来自本机已安装的几个系统应用，有文本、链接和图片，
-    /// 卡片的标题栏颜色、图标和缩略图都和真实使用时一样需要绘制。
+    /// 卡片的标题栏颜色、图标和缩略图都和真实使用时一样需要绘制。链接带着链接预览（网站图标用来源应用的图标，
+    /// 一半有网页标题），呼出时依次出现的前几张卡片里有两张链接。
     private static func seedIfEmpty(_ store: ClipStore) {
         guard (try? store.count()) == 0 else { return }
         let apps = [
@@ -180,13 +181,25 @@ enum PanelBenchmark {
             let content: ClipContent
             if index % 7 == 3, let image = gradientPNG(hue: Double(index) / 30) {
                 content = ClipContent(kind: .image, image: image)
-            } else if index % 5 == 1 {
+            } else if index % 5 == 1 || index == 28 {
                 content = ClipContent(kind: .link, text: "https://example.com/pasteme/bench/\(index)")
             } else {
                 content = ClipContent(kind: .text, text: "测试条目 \(index)：来自\(app.1)的一段文字，用来填满卡片。")
             }
-            _ = try? store.insert(content, source: ClipSource(bundleID: app.0, name: app.1), at: start.addingTimeInterval(Double(index) * 60))
+            let id = try? store.insert(content, source: ClipSource(bundleID: app.0, name: app.1), at: start.addingTimeInterval(Double(index) * 60))
+            if content.kind == .link, let id, let icon = iconPNG(bundleID: app.0) {
+                let title = index % 2 == 0 ? "测试网页 \(index)：链接预览的标题" : ""
+                try? store.setLinkPreview(LinkPreview(title: title, icon: icon), id: id)
+            }
         }
+    }
+
+    private static func iconPNG(bundleID: String) -> Data? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        var rect = NSRect(x: 0, y: 0, width: 128, height: 128)
+        guard let image = icon.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return nil }
+        return NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
     }
 
     private static func gradientPNG(hue: Double) -> Data? {

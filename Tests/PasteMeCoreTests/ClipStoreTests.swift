@@ -117,7 +117,7 @@ import Testing
         try store.delete(id: id)
         #expect(try store.count() == 1)
 
-        try store.deleteAll()
+        try store.clearHistory()
         #expect(try store.count() == 0)
     }
 

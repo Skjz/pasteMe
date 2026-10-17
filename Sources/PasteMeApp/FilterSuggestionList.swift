@@ -1,7 +1,7 @@
 import PasteMeCore
 import SwiftUI
 
-/// 搜索框里输入 `@` 后弹出的候选列表：名字对得上的类型和来源应用，选中的变成筛选条件。
+/// 搜索框里输入 `@` 后弹出的候选列表：名字对得上的类型、Pinboard 和来源应用，选中的变成筛选条件。
 /// ↑ ↓ 移动高亮、↩ 或 Tab 选中由 `PanelKeymap` 处理，这里只负责显示和点击。
 struct FilterSuggestionList: View {
     let model: HistoryModel
@@ -74,6 +74,10 @@ struct FilterSuggestionList: View {
                 Image(systemName: "app.dashed")
                     .foregroundStyle(.secondary)
             }
+        case .pinboard(let pinboard):
+            Image(systemName: "pin.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(highlighted ? Color.white : pinboard.color.color)
         }
     }
 
@@ -81,6 +85,7 @@ struct FilterSuggestionList: View {
         switch suggestion {
         case .kind(let kind): kind.title
         case .app(let app): app.name
+        case .pinboard(let pinboard): pinboard.name
         }
     }
 
@@ -88,6 +93,7 @@ struct FilterSuggestionList: View {
         switch suggestion {
         case .kind: "类型"
         case .app: "应用"
+        case .pinboard: "Pinboard"
         }
     }
 
@@ -96,6 +102,7 @@ struct FilterSuggestionList: View {
         switch suggestion {
         case .kind(let kind): model.filters.kinds.contains(kind)
         case .app(let app): model.filters.sourceApp?.bundleID == app.bundleID
+        case .pinboard(let pinboard): model.filters.pinboardIDs.contains(pinboard.id)
         }
     }
 }

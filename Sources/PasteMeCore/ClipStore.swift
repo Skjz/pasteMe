@@ -13,6 +13,8 @@ public final class ClipStore {
     public init(path: String) throws {
         db = try SQLiteDatabase(path: path)
         try db.execute("PRAGMA journal_mode = WAL")
+        // Pinboard 删除时，固定在里面的记录（pinboard_items）跟着删除。
+        try db.execute("PRAGMA foreign_keys = ON")
         try migrate()
     }
 
@@ -62,6 +64,54 @@ public final class ClipStore {
                 PRAGMA user_version = 3;
                 """)
         }
+        if try db.userVersion < 4 {
+            // 用户给条目起的标题（#10）。
+            try db.execute("""
+                ALTER TABLE clips ADD COLUMN title TEXT;
+                PRAGMA user_version = 4;
+                """)
+        }
+        if try db.userVersion < 5 {
+            // 链接预览（#11）：网页标题和网站图标，预览图存在 thumbnail 里。
+            // link_title 为 NULL 表示还没获取，空字符串表示获取过但没有拿到，以后不再获取。
+            try db.execute("""
+                ALTER TABLE clips ADD COLUMN link_title TEXT;
+                ALTER TABLE clips ADD COLUMN link_icon BLOB;
+                PRAGMA user_version = 5;
+                """)
+        }
+        if try db.userVersion < 6 {
+            // Pinboard（#9）。sort_order 越小越靠前。
+            try db.execute("""
+                CREATE TABLE pinboards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL
+                );
+                CREATE TABLE pinboard_items (
+                    pinboard_id INTEGER NOT NULL REFERENCES pinboards (id) ON DELETE CASCADE,
+                    clip_id INTEGER NOT NULL REFERENCES clips (id) ON DELETE CASCADE,
+                    sort_order INTEGER NOT NULL,
+                    PRIMARY KEY (pinboard_id, clip_id)
+                );
+                CREATE INDEX pinboard_items_clip_id ON pinboard_items (clip_id);
+                PRAGMA user_version = 6;
+                """)
+        }
+    }
+
+    /// 在一个事务里执行，出错时回滚。
+    private func transaction<T>(_ body: () throws -> T) throws -> T {
+        try db.execute("BEGIN")
+        do {
+            let result = try body()
+            try db.execute("COMMIT")
+            return result
+        } catch {
+            try? db.execute("ROLLBACK")
+            throw error
+        }
     }
 
     /// 保存一次复制。内容已存在时不新增，只把原记录的时间和来源更新为这一次，使其排到最前。
@@ -95,25 +145,33 @@ public final class ClipStore {
         return statement.int(0)
     }
 
-    /// 按时间倒序返回符合 `query` 的条目。
+    /// 返回符合 `query` 的条目：按时间倒序；按 Pinboard 查询时按条目在 Pinboard 里的顺序。
     public func items(matching query: ClipQuery = ClipQuery()) throws -> [ClipItem] {
         var sql = """
-            SELECT id, kind, substr(text, 1, \(Self.previewLength)), length(text), thumbnail,
-                   source_bundle_id, source_name, created_at, substr(ocr_text, 1, \(Self.previewLength))
-            FROM clips
+            SELECT clips.id, kind, substr(text, 1, \(Self.previewLength)), length(text), thumbnail,
+                   source_bundle_id, source_name, created_at, substr(ocr_text, 1, \(Self.previewLength)),
+                   title, link_title, link_icon,
+                   (SELECT group_concat(pinboard_id) FROM pinboard_items WHERE clip_id = clips.id)
             """
         var values: [SQLValue] = []
+        if let pinboardID = query.pinboardID {
+            sql += ", pin.sort_order FROM clips JOIN pinboard_items AS pin ON pin.clip_id = clips.id AND pin.pinboard_id = ?"
+            values.append(.int(pinboardID))
+        } else {
+            sql += ", NULL FROM clips"
+        }
         if let filter = query.filter {
             sql += " WHERE " + filter.clause
             values += filter.values
         }
-        sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        sql += " ORDER BY " + (query.pinboardID == nil ? "" : "pin.sort_order, ") + "created_at DESC, clips.id DESC LIMIT ?"
         values.append(.int(Int64(query.limit)))
 
         let statement = try db.prepare(sql, values)
         var items: [ClipItem] = []
         while try statement.step() {
             guard let kind = statement.text(1).flatMap(ClipKind.init(rawValue:)) else { continue }
+            let pins = statement.text(12)?.split(separator: ",").compactMap { Int64($0) } ?? []
             items.append(ClipItem(
                 id: statement.int(0),
                 kind: kind,
@@ -123,10 +181,33 @@ public final class ClipStore {
                 sourceBundleID: statement.text(5),
                 sourceName: statement.text(6),
                 createdAt: Date(timeIntervalSince1970: statement.double(7)),
-                recognizedText: statement.text(8)
+                recognizedText: statement.text(8),
+                title: statement.text(9),
+                linkTitle: statement.text(10),
+                linkIcon: statement.blob(11),
+                pinboardIDs: Set(pins),
+                pinOrder: statement.isNull(13) ? nil : statement.int(13)
             ))
         }
         return items
+    }
+
+    /// 一个条目，不存在时为 nil。
+    public func item(id: Int64) throws -> ClipItem? {
+        try items(matching: ClipQuery(ids: [id], limit: 1)).first
+    }
+
+    /// 条目在历史里排第几（从 0 开始）：比它新的条目有多少条。不存在时为 nil。
+    public func historyPosition(of id: Int64) throws -> Int? {
+        let statement = try db.prepare(
+            """
+            SELECT count(*) FROM clips, (SELECT created_at AS t FROM clips WHERE id = ?) AS target
+            WHERE created_at > target.t OR (created_at = target.t AND id > ?)
+            """,
+            [.int(id), .int(id)]
+        )
+        guard try item(id: id) != nil, try statement.step() else { return nil }
+        return Int(statement.int(0))
     }
 
     /// 读取一条记录的完整内容，用于粘贴。
@@ -143,61 +224,123 @@ public final class ClipStore {
         try db.run("UPDATE clips SET created_at = ? WHERE id = ?", [.double(date.timeIntervalSince1970), .int(id)])
     }
 
-    /// 删除一条记录，返回删除前的完整数据，交给 `restore(_:)` 可以原样恢复。记录不存在时返回 nil。
+    /// 删除一条记录（也从所有 Pinboard 里去掉），返回删除前的完整数据，交给 `restore(_:)` 可以原样恢复。
+    /// 记录不存在时返回 nil。
     @discardableResult
     public func delete(id: Int64) throws -> DeletedClip? {
-        let statement = try db.prepare(
-            """
-            DELETE FROM clips WHERE id = ?
-            RETURNING kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at, ocr_text
-            """,
-            [.int(id)]
-        )
-        guard try statement.step() else { return nil }
-        let deleted = DeletedClip(
-            id: id,
-            kind: statement.text(0) ?? "",
-            text: statement.text(1),
-            rtf: statement.blob(2),
-            image: statement.blob(3),
-            thumbnail: statement.blob(4),
-            sourceBundleID: statement.text(5),
-            sourceName: statement.text(6),
-            contentHash: statement.text(7) ?? "",
-            createdAt: statement.double(8),
-            recognizedText: statement.text(9)
-        )
-        while try statement.step() {}
-        return deleted
+        try transaction {
+            let statement = try db.prepare("SELECT * FROM clips WHERE id = ?", [.int(id)])
+            guard try statement.step() else { return nil }
+            var row: [String: SQLValue] = [:]
+            for column in 0..<statement.columnCount {
+                row[statement.columnName(column)] = statement.value(column)
+            }
+            let pins = try pinPositions(of: id)
+            try db.run("DELETE FROM pinboard_items WHERE clip_id = ?", [.int(id)])
+            try db.run("DELETE FROM clips WHERE id = ?", [.int(id)])
+            return DeletedClip(id: id, row: row, pins: pins)
+        }
     }
 
-    /// 撤销删除：用原来的 id、时间和缩略图放回历史。
-    /// 删除之后又复制过相同内容时，保留那条更新的记录，不把它挪回旧的位置。返回恢复后条目的 id。
+    /// 撤销删除：用原来的 id、时间、缩略图和其他所有字段放回历史，也放回原来的 Pinboard 和位置
+    /// （Pinboard 已经删掉的除外）。删除之后又复制过相同内容时，保留那条更新的记录，不把它挪回旧的位置。
+    /// 返回恢复后条目的 id。
     @discardableResult
     public func restore(_ clip: DeletedClip) throws -> Int64 {
-        try db.run(
-            """
-            INSERT INTO clips (id, kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at, ocr_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT DO NOTHING
-            """,
-            [
-                .int(clip.id),
-                .text(clip.kind),
-                clip.text.sqlValue,
-                clip.rtf.sqlValue,
-                clip.image.sqlValue,
-                clip.thumbnail.sqlValue,
-                clip.sourceBundleID.sqlValue,
-                clip.sourceName.sqlValue,
-                .text(clip.contentHash),
-                .double(clip.createdAt),
-                clip.recognizedText.sqlValue,
-            ]
+        try transaction {
+            let columns = clip.row.keys.sorted()
+            try db.run(
+                """
+                INSERT INTO clips (\(columns.map { "\"\($0)\"" }.joined(separator: ", ")))
+                VALUES (\(columns.map { _ in "?" }.joined(separator: ", ")))
+                ON CONFLICT DO NOTHING
+                """,
+                columns.map { clip.row[$0] ?? .null }
+            )
+            let statement = try db.prepare(
+                "SELECT id FROM clips WHERE content_hash = ?",
+                [clip.row["content_hash"] ?? .null]
+            )
+            guard try statement.step() else { throw SQLiteError(code: -1, message: "恢复后找不到条目") }
+            let id = statement.int(0)
+            for pin in clip.pins {
+                try restorePin(UnpinnedClip(clipID: id, position: pin))
+            }
+            return id
+        }
+    }
+
+    private func pinPositions(of id: Int64) throws -> [PinPosition] {
+        let statement = try db.prepare(
+            "SELECT pinboard_id, sort_order FROM pinboard_items WHERE clip_id = ?",
+            [.int(id)]
         )
-        let statement = try db.prepare("SELECT id FROM clips WHERE content_hash = ?", [.text(clip.contentHash)])
-        guard try statement.step() else { throw SQLiteError(code: -1, message: "恢复后找不到条目") }
-        return statement.int(0)
+        var pins: [PinPosition] = []
+        while try statement.step() {
+            pins.append(PinPosition(pinboardID: statement.int(0), sortOrder: statement.int(1)))
+        }
+        return pins
+    }
+
+    // MARK: - 编辑
+
+    /// 改条目的文字（#10），只能改文本和链接。`rtf` 是改后的富文本，链接没有富文本。
+    ///
+    /// 改完的内容和另一个条目相同时合并成一条：留下正在改的这条，复制时间取两条中较新的，
+    /// 这条没有标题时用另一条的标题，另一条所在的 Pinboard 也加进来，然后删掉另一条。
+    /// 链接改了网址后，原来的网页标题、图标和预览图都作废，可以重新获取。
+    /// 返回 false 表示没有改：条目不存在、不是文本或链接，或者改后的文字是空的。
+    @discardableResult
+    public func updateText(_ text: String, rtf: Data?, id: Int64) throws -> Bool {
+        guard let current = try content(id: id), current.kind == .text || current.kind == .link,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let edited = current.kind == .link && PasteboardCodec.isWebLink(trimmed)
+            ? ClipContent(kind: .link, text: trimmed)
+            : ClipContent(kind: .text, text: text, rtf: rtf)
+        let hash = edited.contentHash
+        try transaction {
+            let other = try db.prepare(
+                "SELECT id, created_at, title FROM clips WHERE content_hash = ? AND id != ?",
+                [.text(hash), .int(id)]
+            )
+            if try other.step() {
+                let otherID = other.int(0)
+                try db.run(
+                    """
+                    UPDATE pinboard_items SET clip_id = ?
+                    WHERE clip_id = ? AND pinboard_id NOT IN (SELECT pinboard_id FROM pinboard_items WHERE clip_id = ?)
+                    """,
+                    [.int(id), .int(otherID), .int(id)]
+                )
+                try db.run("DELETE FROM pinboard_items WHERE clip_id = ?", [.int(otherID)])
+                try db.run("DELETE FROM clips WHERE id = ?", [.int(otherID)])
+                try db.run(
+                    "UPDATE clips SET created_at = max(created_at, ?), title = coalesce(title, ?) WHERE id = ?",
+                    [.double(other.double(1)), other.text(2).sqlValue, .int(id)]
+                )
+            }
+            let urlChanged = current.kind == .link && current.text != edited.text
+            try db.run(
+                """
+                UPDATE clips SET kind = ?, text = ?, rtf = ?, content_hash = ?\(urlChanged
+                    ? ", link_title = NULL, link_icon = NULL, thumbnail = NULL" : "")
+                WHERE id = ?
+                """,
+                [.text(edited.kind.rawValue), edited.text.sqlValue, edited.rtf.sqlValue, .text(hash), .int(id)]
+            )
+        }
+        return true
+    }
+
+    /// 给条目起标题。去掉首尾空白后为空时去掉标题。
+    public func setTitle(_ title: String?, id: Int64) throws {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        try db.run(
+            "UPDATE clips SET title = ? WHERE id = ?",
+            [trimmed?.isEmpty == false ? .text(trimmed!) : .null, .int(id)]
+        )
     }
 
     // MARK: - 图片中的文字
@@ -262,8 +405,147 @@ public final class ClipStore {
         return apps
     }
 
-    public func deleteAll() throws {
-        try db.run("DELETE FROM clips")
+    // MARK: - 链接预览
+
+    /// 还没获取过预览的链接条目的网址。条目不存在、不是链接或已经获取过时返回 nil。
+    public func linkPreviewURL(id: Int64) throws -> URL? {
+        let statement = try db.prepare(
+            "SELECT text FROM clips WHERE id = ? AND kind = 'link' AND link_title IS NULL",
+            [.int(id)]
+        )
+        guard try statement.step() else { return nil }
+        return statement.text(0).flatMap(URL.init(string:))
+    }
+
+    /// 保存获取到的链接预览。获取失败时传 `LinkPreview.failed`，这个条目以后不再获取。
+    public func setLinkPreview(_ preview: LinkPreview, id: Int64) throws {
+        try db.run(
+            "UPDATE clips SET link_title = ?, link_icon = ?, thumbnail = ? WHERE id = ? AND kind = 'link'",
+            [.text(preview.title), preview.icon.sqlValue, preview.image.sqlValue, .int(id)]
+        )
+    }
+
+    // MARK: - Pinboard
+
+    /// 所有 Pinboard，按标签的顺序排列。
+    public func pinboards() throws -> [Pinboard] {
+        let statement = try db.prepare("SELECT id, name, color FROM pinboards ORDER BY sort_order, id")
+        var pinboards: [Pinboard] = []
+        while try statement.step() {
+            pinboards.append(Pinboard(
+                id: statement.int(0),
+                name: statement.text(1) ?? "",
+                color: statement.text(2).flatMap(PinboardColor.init(rawValue:)) ?? .gray
+            ))
+        }
+        return pinboards
+    }
+
+    /// 新建一个 Pinboard，排在最后。
+    @discardableResult
+    public func createPinboard(name: String, color: PinboardColor) throws -> Pinboard {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let statement = try db.prepare(
+            """
+            INSERT INTO pinboards (name, color, sort_order)
+            VALUES (?, ?, (SELECT coalesce(max(sort_order), 0) + 1 FROM pinboards))
+            RETURNING id
+            """,
+            [.text(name), .text(color.rawValue)]
+        )
+        guard try statement.step() else { throw SQLiteError(code: -1, message: "新建 Pinboard 后没有返回 id") }
+        return Pinboard(id: statement.int(0), name: name, color: color)
+    }
+
+    public func renamePinboard(_ id: Int64, to name: String) throws {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        try db.run("UPDATE pinboards SET name = ? WHERE id = ?", [.text(name), .int(id)])
+    }
+
+    public func setColor(_ color: PinboardColor, ofPinboard id: Int64) throws {
+        try db.run("UPDATE pinboards SET color = ? WHERE id = ?", [.text(color.rawValue), .int(id)])
+    }
+
+    /// 删除一个 Pinboard。里面的条目还在历史里，只是不再固定在这里。
+    public func deletePinboard(_ id: Int64) throws {
+        try transaction {
+            try db.run("DELETE FROM pinboard_items WHERE pinboard_id = ?", [.int(id)])
+            try db.run("DELETE FROM pinboards WHERE id = ?", [.int(id)])
+        }
+    }
+
+    /// 把条目固定到 Pinboard 的最前面。已经在里面时不动它的位置，返回 false。
+    @discardableResult
+    public func pin(_ clipID: Int64, to pinboardID: Int64) throws -> Bool {
+        let statement = try db.prepare(
+            """
+            INSERT INTO pinboard_items (pinboard_id, clip_id, sort_order)
+            SELECT ?, ?, coalesce(min(sort_order), 1) - 1 FROM pinboard_items WHERE pinboard_id = ?
+            ON CONFLICT DO NOTHING
+            RETURNING clip_id
+            """,
+            [.int(pinboardID), .int(clipID), .int(pinboardID)]
+        )
+        guard try statement.step() else { return false }
+        while try statement.step() {}
+        return true
+    }
+
+    /// 把条目从 Pinboard 里拿掉，条目还在历史里。返回原来的位置，交给 `restorePin(_:)` 可以放回去。
+    @discardableResult
+    public func unpin(_ clipID: Int64, from pinboardID: Int64) throws -> UnpinnedClip? {
+        let statement = try db.prepare(
+            "DELETE FROM pinboard_items WHERE pinboard_id = ? AND clip_id = ? RETURNING sort_order",
+            [.int(pinboardID), .int(clipID)]
+        )
+        guard try statement.step() else { return nil }
+        let removed = UnpinnedClip(clipID: clipID, position: PinPosition(pinboardID: pinboardID, sortOrder: statement.int(0)))
+        while try statement.step() {}
+        return removed
+    }
+
+    /// 撤销 `unpin`：放回原来的位置。Pinboard 或条目已经不在时什么也不做。
+    public func restorePin(_ pin: UnpinnedClip) throws {
+        try db.run(
+            """
+            INSERT INTO pinboard_items (pinboard_id, clip_id, sort_order)
+            SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM pinboards WHERE id = ?) AND EXISTS (SELECT 1 FROM clips WHERE id = ?)
+            ON CONFLICT DO NOTHING
+            """,
+            [.int(pin.position.pinboardID), .int(pin.clipID), .int(pin.position.sortOrder),
+             .int(pin.position.pinboardID), .int(pin.clipID)]
+        )
+    }
+
+    /// 按 `clipIDs` 的顺序重排 Pinboard 里的条目。不在列表里的条目排到后面，相对顺序不变。
+    public func setOrder(_ clipIDs: [Int64], inPinboard pinboardID: Int64) throws {
+        try transaction {
+            try db.run(
+                "UPDATE pinboard_items SET sort_order = sort_order + ? WHERE pinboard_id = ?",
+                [.int(Int64(clipIDs.count) + 1_000_000), .int(pinboardID)]
+            )
+            for (index, id) in clipIDs.enumerated() {
+                try db.run(
+                    "UPDATE pinboard_items SET sort_order = ? WHERE pinboard_id = ? AND clip_id = ?",
+                    [.int(Int64(index)), .int(pinboardID), .int(id)]
+                )
+            }
+        }
+    }
+
+    /// 固定在至少一个 Pinboard 里的条目数。
+    public func pinnedCount() throws -> Int {
+        let statement = try db.prepare("SELECT count(DISTINCT clip_id) FROM pinboard_items")
+        _ = try statement.step()
+        return Int(statement.int(0))
+    }
+
+    // MARK: - 清空
+
+    /// 清空历史：删除不在任何 Pinboard 里的条目。固定在 Pinboard 里的条目和 Pinboard 本身都保留。
+    public func clearHistory() throws {
+        try db.run("DELETE FROM clips WHERE id NOT IN (SELECT clip_id FROM pinboard_items)")
         try db.execute("VACUUM")
     }
 

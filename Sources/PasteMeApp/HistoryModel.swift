@@ -32,21 +32,52 @@ struct PanelFilters: Equatable {
     var kinds: Set<ClipKind> = []
     var sourceApp: SourceApp?
     var timeRange = TimeRange.all
+    /// 只看固定在这几个 Pinboard 中任意一个里的条目。空集合表示不限。
+    var pinboardIDs: Set<Int64> = []
 
-    var isActive: Bool { !kinds.isEmpty || sourceApp != nil || timeRange != .all }
+    var isActive: Bool { !kinds.isEmpty || sourceApp != nil || timeRange != .all || !pinboardIDs.isEmpty }
 }
 
 /// 搜索框里输入 `@` 后候选列表里的一项，选中后变成筛选条件。
 enum FilterSuggestion: Equatable, Identifiable {
     case kind(ClipKind)
     case app(SourceApp)
+    case pinboard(Pinboard)
 
     var id: String {
         switch self {
         case .kind(let kind): "kind:\(kind.rawValue)"
         case .app(let app): "app:\(app.bundleID)"
+        case .pinboard(let pinboard): "pinboard:\(pinboard.id)"
         }
     }
+}
+
+/// 面板要打开预览窗口做的事，由 `PanelController` 交给 `PreviewController`（#10）。
+enum PreviewRequest: Equatable {
+    /// 空格：看完整内容。
+    case show(ClipItem)
+    /// 改文字：打开预览，键盘焦点放进正文。
+    case edit(ClipItem)
+    /// 起标题：打开预览，键盘焦点放进标题。
+    case rename(ClipItem)
+    /// ⌘N：新建一条文本，在当前 Pinboard 里时也固定到这里。
+    case newText
+}
+
+/// 要打开 Pinboard 编辑窗口做的事，由 `PanelController` 处理（#9）。
+enum PinboardEditRequest: Equatable {
+    /// 新建 Pinboard，建好后把这个条目固定进去（可以没有）。
+    case create(pinning: ClipItem?)
+    case rename(Pinboard)
+    /// 删除前确认。
+    case delete(Pinboard)
+}
+
+/// 本次打开面板后可以撤销的移除：在历史里删掉条目，或者在 Pinboard 里把条目拿掉。
+enum Removal: Equatable {
+    case deleted(DeletedClip)
+    case unpinned(UnpinnedClip)
 }
 
 /// 面板上卡片列表里的一格：一张卡片，或者删除后消失动画还没播完的空位。
@@ -83,8 +114,18 @@ final class HistoryModel {
     var filters = PanelFilters() {
         didSet { if filters != oldValue { reloadUnlessResetting() } }
     }
-    var selectedID: Int64?
+    var selectedID: Int64? {
+        didSet { if selectedID != oldValue { onSelectionChange() } }
+    }
     private(set) var items: [ClipItem] = []
+    /// 所有 Pinboard，标签按这个顺序排列。每次呼出面板和改动 Pinboard 后重新读取。
+    private(set) var pinboards: [Pinboard] = []
+    /// 当前的标签：nil 是「历史」，否则是这个 Pinboard 的 id。每次呼出面板时回到「历史」。
+    private(set) var pinboardID: Int64?
+    /// 正在从面板上拖出的条目，从拖拽开始到结束。
+    var draggingID: Int64?
+    /// 原样粘贴图片时也附带文件（`Settings.pasteImagesAsFiles`），这时右键菜单不再列出「以文件粘贴」。
+    var pastesImagesAsFiles = false
     /// 光标的样式。初始值和修改都来自 `Settings.cursorStyle`，放在这里是为了让视图随之更新。
     var cursorStyle = CursorStyle.breathe
     /// 面板在屏幕上（包括呼出和收起动画期间）。为 false 时视图停掉一直在跑的动画。
@@ -116,17 +157,40 @@ final class HistoryModel {
     @ObservationIgnored var onPaste: (ClipItem, PasteMode) -> Void = { _, _ in }
     /// 打开应用别名窗口，并定位到这个应用（bundle id）。
     @ObservationIgnored var onEditAliases: (String) -> Void = { _ in }
+    /// 打开预览窗口。
+    @ObservationIgnored var onPreview: (PreviewRequest) -> Void = { _ in }
+    /// 打开 Pinboard 的新建、重命名、删除确认窗口。
+    @ObservationIgnored var onEditPinboard: (PinboardEditRequest) -> Void = { _ in }
+    /// 开始从面板上拖出一张卡片（鼠标按下后移动了一段距离）。
+    @ObservationIgnored var onBeginDrag: (ClipItem) -> Void = { _ in }
+    /// 改了条目的文字：链接改了网址后可以重新获取预览。
+    @ObservationIgnored var onEdited: (Int64) -> Void = { _ in }
+    /// 在屏幕上短暂提示一句话，例如“已固定到「工作」”。参数是文字和 SF Symbol 的名字。
+    @ObservationIgnored var onNotice: (String, String) -> Void = { _, _ in }
+    /// 选中项变了。预览窗口开着时跟着换内容。
+    @ObservationIgnored var onSelectionChange: () -> Void = {}
 
     @ObservationIgnored private let store: ClipStore
+    /// 记住 ⌘P 用的 Pinboard。为 nil 时（测试）只在内存里记。
+    @ObservationIgnored private let settings: PasteMeCore.Settings?
+    @ObservationIgnored private var lastPinboardID: Int64?
     @ObservationIgnored private let now: () -> Date
     /// 按应用的其他名字和别名找来源应用。为 nil 时只按记录时的应用名搜索。
     @ObservationIgnored private let appNames: AppNames?
     /// `didShow` 一次改好搜索词和筛选条件，最后只查询一次。
     @ObservationIgnored private var resetting = false
-    /// 本次打开面板后删除的条目，最后删除的在末尾。面板重新打开时清空。
-    private var deleted: [DeletedClip] = []
+    /// 在历史里最多显示多少条。「在历史里查看」更早的条目时临时加大，读到它后面再多 100 条。
+    @ObservationIgnored private var historyLimit = HistoryModel.defaultLimit
+    private static let defaultLimit = 200
+    /// 拖动排序改了 Pinboard 里的顺序，还没有写进数据库。
+    @ObservationIgnored private var reorderPending = false
+    /// 本次打开面板后、在当前标签里删除或拿掉的条目，最后的在末尾。面板重新打开或切换标签时清空。
+    private var removals: [Removal] = []
 
-    var canUndoDelete: Bool { !deleted.isEmpty }
+    var canUndoDelete: Bool { !removals.isEmpty }
+
+    /// 当前标签对应的 Pinboard，在「历史」里时为 nil。
+    var currentPinboard: Pinboard? { pinboards.first { $0.id == pinboardID } }
 
     /// 面板上显示的一格格：`items` 中间按复制时间插入还没去掉的空位。
     var cards: [PanelCard] {
@@ -139,15 +203,19 @@ final class HistoryModel {
         return cards
     }
 
-    /// 和 `ClipStore.items(matching:)` 一样的顺序：复制时间从新到旧，同一时间时 id 大的在前。
+    /// 和 `ClipStore.items(matching:)` 一样的顺序：Pinboard 里按固定的位置，其余按复制时间从新到旧，
+    /// 同一时间时 id 大的在前。
     private static func comesBefore(_ a: ClipItem, _ b: ClipItem) -> Bool {
-        a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.id > b.id
+        if let x = a.pinOrder, let y = b.pinOrder, x != y { return x < y }
+        return a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.id > b.id
     }
 
     /// `now` 用于测试时控制“今天”是哪一天。
-    init(store: ClipStore, appNames: AppNames? = nil, now: @escaping () -> Date = Date.init) {
+    init(store: ClipStore, appNames: AppNames? = nil, settings: PasteMeCore.Settings? = nil, now: @escaping () -> Date = Date.init) {
         self.store = store
         self.appNames = appNames
+        self.settings = settings
+        self.lastPinboardID = settings?.lastPinboardID
         self.now = now
     }
 
@@ -159,7 +227,12 @@ final class HistoryModel {
 
     /// 搜索框里的文字和面板上的筛选条件合起来的查询条件。
     var currentQuery: ClipQuery {
-        var query = ClipQuery.parse(searchInput)
+        // Pinboard 不会太大，全部列出来；拖动排序也要看到全部条目才能写回顺序。
+        var query = ClipQuery.parse(searchInput, limit: pinboardID == nil ? historyLimit : 2_000)
+        query.pinboardID = pinboardID
+        if !filters.pinboardIDs.isEmpty {
+            query.inPinboards = filters.pinboardIDs
+        }
         if !filters.kinds.isEmpty {
             query = query.restricting(to: filters.kinds)
         }
@@ -194,6 +267,10 @@ final class HistoryModel {
         }
         if filters.timeRange != .all {
             conditions.append(filters.timeRange.title)
+        }
+        let boards = pinboards.filter { filters.pinboardIDs.contains($0.id) }.map { "「\($0.name)」" }
+        if !boards.isEmpty {
+            conditions.append("固定在" + boards.joined(separator: "或") + "里")
         }
         let text = query.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
@@ -234,11 +311,15 @@ final class HistoryModel {
         }
     }
 
-    /// 名字以 `text` 开头的类型，以及名字或别名包含 `text` 的来源应用。`text` 为空时列出全部。
+    /// 名字以 `text` 开头的类型，名字包含 `text` 的 Pinboard，以及名字或别名包含 `text` 的来源应用。
+    /// `text` 为空时列出全部。
     private func suggestions(matching text: String) -> [FilterSuggestion] {
         let apps = appNames?.apps(matching: text)
             ?? sourceApps().filter { text.isEmpty || $0.name.localizedCaseInsensitiveContains(text) }
-        return ClipKind.matching(text).map(FilterSuggestion.kind) + apps.map(FilterSuggestion.app)
+        let boards = pinboards.filter { text.isEmpty || $0.name.localizedCaseInsensitiveContains(text) }
+        return ClipKind.matching(text).map(FilterSuggestion.kind)
+            + boards.map(FilterSuggestion.pinboard)
+            + apps.map(FilterSuggestion.app)
     }
 
     /// ↑ ↓：在候选列表里移动高亮，到头时停住。
@@ -256,6 +337,7 @@ final class HistoryModel {
         switch chosen {
         case .kind(let kind): filters.kinds.insert(kind)
         case .app(let app): filters.sourceApp = app
+        case .pinboard(let pinboard): filters.pinboardIDs.insert(pinboard.id)
         }
         resetting = false
         reloadUnlessResetting()
@@ -289,16 +371,26 @@ final class HistoryModel {
         filters = PanelFilters()
         resetting = false
         focus = .cards
-        deleted = []
+        pinboardID = nil
+        historyLimit = Self.defaultLimit
+        draggingID = nil
+        reorderPending = false
+        forgetRemovals()
+        // 上次打开面板后可能记录了新的来源应用。
+        appNames?.historyChanged()
+        reloadPinboards()
+        reload()
+        selectedID = items.first?.id
+        showCount += 1
+    }
+
+    /// 撤销记录、动画和空位都作废：重新打开面板，或者换了标签。
+    private func forgetRemovals() {
+        removals = []
         removalEffect?.cancelAll()
         hiddenIDs = []
         gaps = []
         finishedGaps = []
-        // 上次打开面板后可能记录了新的来源应用。
-        appNames?.historyChanged()
-        reload()
-        selectedID = items.first?.id
-        showCount += 1
     }
 
     /// 搜索条件变了：列表整个换掉，空位不再对应原来的卡片，一起去掉。
@@ -321,12 +413,262 @@ final class HistoryModel {
         }
     }
 
+    func reloadPinboards() {
+        do {
+            pinboards = try store.pinboards()
+        } catch {
+            NSLog("PasteMe: 读取 Pinboard 失败：\(error)")
+            pinboards = []
+        }
+        if let pinboardID, !pinboards.contains(where: { $0.id == pinboardID }) {
+            showTab(nil)
+        }
+        filters.pinboardIDs.formIntersection(pinboards.map(\.id))
+    }
+
     func moveSelection(by offset: Int) {
         guard !items.isEmpty else { return }
         let current = items.firstIndex { $0.id == selectedID } ?? 0
         let next = min(max(current + offset, 0), items.count - 1)
         selectedID = items[next].id
     }
+
+    // MARK: - 标签和 Pinboard
+
+    /// 切换到「历史」（nil）或某个 Pinboard。搜索词和筛选条件保留，在新的标签里接着搜索；撤销记录清空。
+    func showTab(_ pinboardID: Int64?) {
+        guard pinboardID != self.pinboardID else { return }
+        finishReordering()
+        self.pinboardID = pinboardID
+        historyLimit = Self.defaultLimit
+        forgetRemovals()
+        reload()
+        selectedID = items.first?.id
+    }
+
+    /// ⌘← ⌘→，或面板开着时再按 ⇧⌘V：在「历史」和各个 Pinboard 之间切换，到头后从另一头接着。
+    func cycleTab(by offset: Int) {
+        let tabs: [Int64?] = [nil] + pinboards.map(\.id)
+        let current = tabs.firstIndex(of: pinboardID) ?? 0
+        let count = tabs.count
+        showTab(tabs[((current + offset) % count + count) % count])
+    }
+
+    /// 把条目（默认是选中的）固定到 Pinboard，并记下这个 Pinboard 给 ⌘P 用。
+    func pin(_ item: ClipItem? = nil, to pinboard: Pinboard) {
+        guard let item = item ?? selectedItem else { return }
+        do {
+            let added = try store.pin(item.id, to: pinboard.id)
+            remember(pinboard)
+            onNotice(added ? "已固定到「\(pinboard.name)」" : "已经在「\(pinboard.name)」里了", "pin")
+        } catch {
+            NSLog("PasteMe: 固定失败：\(error)")
+        }
+        reload()
+    }
+
+    /// 右键菜单「固定到」里的勾：勾上就固定，去掉勾就从那个 Pinboard 拿掉。正在看的就是那个 Pinboard 时，
+    /// 和 ⌘⌫ 一样播放动画、可以撤销。
+    func setPinned(_ pinned: Bool, _ item: ClipItem, in pinboard: Pinboard) {
+        if pinned {
+            pin(item, to: pinboard)
+        } else if pinboardID == pinboard.id {
+            delete(item)
+        } else {
+            do {
+                try store.unpin(item.id, from: pinboard.id)
+            } catch {
+                NSLog("PasteMe: 取消固定失败：\(error)")
+            }
+            reload()
+        }
+    }
+
+    /// ⌘P：固定到最近用过的 Pinboard。还没有 Pinboard 时先新建一个。
+    func pinToRecentPinboard() {
+        guard let item = selectedItem else { return }
+        if let pinboard = pinboards.first(where: { $0.id == lastPinboardID }) ?? pinboards.first {
+            pin(item, to: pinboard)
+        } else {
+            onEditPinboard(.create(pinning: item))
+        }
+    }
+
+    private func remember(_ pinboard: Pinboard) {
+        lastPinboardID = pinboard.id
+        settings?.lastPinboardID = pinboard.id
+    }
+
+    /// 新建 Pinboard，`item` 不为 nil 时把它固定进去。名字是空的时不建。
+    @discardableResult
+    func createPinboard(named name: String, color: PinboardColor, pinning item: ClipItem? = nil) -> Pinboard? {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        do {
+            let pinboard = try store.createPinboard(name: name, color: color)
+            reloadPinboards()
+            if let item {
+                pin(item, to: pinboard)
+            }
+            return pinboard
+        } catch {
+            NSLog("PasteMe: 新建 Pinboard 失败：\(error)")
+            return nil
+        }
+    }
+
+    func renamePinboard(_ pinboard: Pinboard, to name: String, color: PinboardColor) {
+        do {
+            try store.renamePinboard(pinboard.id, to: name)
+            try store.setColor(color, ofPinboard: pinboard.id)
+        } catch {
+            NSLog("PasteMe: 修改 Pinboard 失败：\(error)")
+        }
+        reloadPinboards()
+    }
+
+    func setColor(_ color: PinboardColor, of pinboard: Pinboard) {
+        renamePinboard(pinboard, to: pinboard.name, color: color)
+    }
+
+    /// 删除 Pinboard。里面的条目还在历史里。正在看这个 Pinboard 时回到「历史」。
+    func deletePinboard(_ pinboard: Pinboard) {
+        do {
+            try store.deletePinboard(pinboard.id)
+        } catch {
+            NSLog("PasteMe: 删除 Pinboard 失败：\(error)")
+        }
+        reloadPinboards()
+        reload()
+    }
+
+    /// 这个 Pinboard 里有多少个条目，删除前提示用。
+    func itemCount(of pinboard: Pinboard) -> Int {
+        (try? store.items(matching: ClipQuery(pinboardID: pinboard.id, limit: 100_000)).count) ?? 0
+    }
+
+    // MARK: - 拖动
+
+    func beginDrag(_ item: ClipItem) {
+        onBeginDrag(item)
+    }
+
+    /// 能不能拖动卡片改顺序：在 Pinboard 里、没有搜索和筛选（看到的是全部条目），也没有正在播放的删除动画。
+    var canReorder: Bool { pinboardID != nil && searchIsEmpty && gaps.isEmpty && hiddenIDs.isEmpty }
+
+    /// 拖动排序：正在拖的卡片挪到 `target` 现在的位置，其他卡片让开。松手后 `finishReordering()` 写进数据库。
+    func moveDraggedCard(to target: ClipItem) {
+        guard canReorder, let dragged = draggingID, dragged != target.id,
+              let from = items.firstIndex(where: { $0.id == dragged }),
+              let to = items.firstIndex(where: { $0.id == target.id })
+        else { return }
+        animate(SpringCurve.slide.animation) {
+            items.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
+        }
+        reorderPending = true
+    }
+
+    /// 拖拽结束（放下、取消或拖到面板外）：拖动排序改过顺序时写进数据库。
+    func endDrag() {
+        draggingID = nil
+        finishReordering()
+    }
+
+    private func finishReordering() {
+        guard reorderPending, let pinboardID else { return }
+        reorderPending = false
+        do {
+            try store.setOrder(items.map(\.id), inPinboard: pinboardID)
+        } catch {
+            NSLog("PasteMe: 保存 Pinboard 的顺序失败：\(error)")
+        }
+        reload()
+    }
+
+    /// 把拖着的卡片放到某个 Pinboard 的标签上：固定进去。
+    func dropDraggedCard(on pinboard: Pinboard) -> Bool {
+        guard let id = draggingID, let item = items.first(where: { $0.id == id }) else { return false }
+        pin(item, to: pinboard)
+        return true
+    }
+
+    // MARK: - 在历史里查看
+
+    /// 能不能「在历史里查看」：在搜索、筛选或 Pinboard 里，选中的条目在历史里的位置看不到。
+    var canShowInHistory: Bool { pinboardID != nil || !searchIsEmpty }
+
+    /// 在历史里查看：清空搜索和筛选，回到「历史」，选中这个条目，前后是和它挨着复制的内容。
+    func showInHistory(_ item: ClipItem? = nil) {
+        guard let item = item ?? selectedItem else { return }
+        let position = (try? store.historyPosition(of: item.id)) ?? 0
+        finishReordering()
+        resetting = true
+        query = ""
+        filters = PanelFilters()
+        resetting = false
+        pinboardID = nil
+        forgetRemovals()
+        historyLimit = max(Self.defaultLimit, position + 100)
+        reload()
+        selectedID = item.id
+        focus = .cards
+    }
+
+    // MARK: - 预览和编辑
+
+    func preview(_ item: ClipItem? = nil) {
+        guard let item = item ?? selectedItem else { return }
+        onPreview(.show(item))
+    }
+
+    func edit(_ item: ClipItem? = nil) {
+        guard let item = item ?? selectedItem, item.kind == .text || item.kind == .link else { return }
+        onPreview(.edit(item))
+    }
+
+    func rename(_ item: ClipItem? = nil) {
+        guard let item = item ?? selectedItem else { return }
+        onPreview(.rename(item))
+    }
+
+    func newText() {
+        onPreview(.newText)
+    }
+
+    /// 完整内容，预览用。
+    func content(of id: Int64) -> ClipContent? {
+        try? store.content(id: id)
+    }
+
+    /// 保存预览里改过的文字和标题。`text` 为 nil 时不改文字。和其他条目内容相同时合并（见 `ClipStore.updateText`）。
+    func saveEdits(of id: Int64, text: String?, rtf: Data?, title: String?) {
+        do {
+            if let text, try store.updateText(text, rtf: rtf, id: id) {
+                onEdited(id)
+            }
+            try store.setTitle(title, id: id)
+        } catch {
+            NSLog("PasteMe: 保存修改失败：\(error)")
+        }
+        reload()
+    }
+
+    /// ⌘N 写好的新文本：存进历史并排在最前，在 Pinboard 里时也固定到这里，然后选中它。空的不存。
+    func addText(_ text: String, rtf: Data?, title: String?) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        do {
+            let id = try store.insert(ClipContent(kind: .text, text: text, rtf: rtf), source: nil, at: now())
+            try store.setTitle(title, id: id)
+            if let pinboardID {
+                try store.pin(id, to: pinboardID)
+            }
+            reload()
+            selectedID = id
+        } catch {
+            NSLog("PasteMe: 新建文本失败：\(error)")
+        }
+    }
+
+    // MARK: - 粘贴
 
     func paste(_ item: ClipItem? = nil, as mode: PasteMode = .original) {
         guard let item = item ?? selectedItem else { return }
@@ -339,22 +681,27 @@ final class HistoryModel {
         onPaste(items[index], mode)
     }
 
-    /// 删除一个条目，默认是选中的那个。之后选中原来位置上的下一个。
+    /// 删除一个条目，默认是选中的那个。在 Pinboard 里只是把条目从这个 Pinboard 拿掉，条目还在历史里。
+    /// 之后选中原来位置上的下一个。
     ///
     /// 条目马上从 `items` 里去掉，紧接着的按键作用于新的列表。有 `removalEffect` 时卡片碎成颗粒飘散，
     /// 原来的地方留一个空位，颗粒散完后空位才去掉、右边的卡片补上来。
     func delete(_ item: ClipItem? = nil) {
         guard let item = item ?? selectedItem else { return }
         let index = items.firstIndex { $0.id == item.id }
-        let clip: DeletedClip?
+        let removal: Removal?
         do {
-            clip = try store.delete(id: item.id)
+            if let pinboardID {
+                removal = try store.unpin(item.id, from: pinboardID).map(Removal.unpinned)
+            } else {
+                removal = try store.delete(id: item.id).map(Removal.deleted)
+            }
         } catch {
             NSLog("PasteMe: 删除失败：\(error)")
-            clip = nil
+            removal = nil
         }
-        guard let clip else { return }
-        deleted.append(clip)
+        guard let removal else { return }
+        removals.append(removal)
 
         let played = index.map { index in
             removalEffect?.playDisappear(
@@ -395,12 +742,18 @@ final class HistoryModel {
         finishedGaps = []
     }
 
-    /// ⌘Z：恢复最近删除的一条，并选中它。有 `removalEffect` 时颗粒飘回来拼成卡片，拼好之前卡片不显示。
+    /// ⌘Z：恢复最近删除（或从 Pinboard 拿掉）的一条，并选中它。有 `removalEffect` 时颗粒飘回来拼成卡片，拼好之前卡片不显示。
     func undoDelete() {
-        guard let clip = deleted.popLast() else { return }
+        guard let removal = removals.popLast() else { return }
         let id: Int64
         do {
-            id = try store.restore(clip)
+            switch removal {
+            case .deleted(let clip):
+                id = try store.restore(clip)
+            case .unpinned(let pin):
+                try store.restorePin(pin)
+                id = pin.clipID
+            }
         } catch {
             NSLog("PasteMe: 恢复失败：\(error)")
             return
