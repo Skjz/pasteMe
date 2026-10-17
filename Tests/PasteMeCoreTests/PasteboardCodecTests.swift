@@ -53,6 +53,41 @@ import Testing
         #expect(content?.fileURLs.map(\.path) == ["/tmp/a.txt", "/tmp/b.txt"])
     }
 
+    @Test func screenshotWithItsSavedFileIsImage() throws {
+        // CleanShot 拷贝截图：同一项里先是存下的 PNG 文件的地址，再是和这个文件一模一样的 PNG 数据。
+        let png = try #require(ClipStoreTests.makePNG(width: 4, height: 3))
+        let file = try Self.temporaryFile(png, name: "CleanShot 2026-10-17 at 11.06.41@2x.png")
+        let item = NSPasteboardItem()
+        item.setString(file.absoluteString, forType: .fileURL)
+        item.setData(png, forType: .png)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+
+        #expect(PasteboardCodec.read(pasteboard) == ClipContent(kind: .image, image: png))
+    }
+
+    @Test func imageFileWithADifferentPictureIsFile() throws {
+        // 访达拷贝图片文件时带的是文件图标，不是文件本身。
+        let png = try #require(ClipStoreTests.makePNG(width: 4, height: 3))
+        let icon = try #require(ClipStoreTests.makePNG(width: 2, height: 2))
+        let file = try Self.temporaryFile(png, name: "photo.png")
+        let item = NSPasteboardItem()
+        item.setString(file.absoluteString, forType: .fileURL)
+        item.setData(icon, forType: .png)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+
+        #expect(PasteboardCodec.read(pasteboard)?.kind == .file)
+    }
+
+    static func temporaryFile(_ data: Data, name: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent(name)
+        try data.write(to: file)
+        return file
+    }
+
     @Test func concealedContentIsIgnored() {
         pasteboard.clearContents()
         pasteboard.setString("secret", forType: .string)

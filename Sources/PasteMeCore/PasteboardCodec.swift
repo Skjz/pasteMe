@@ -23,12 +23,16 @@ public enum PasteboardCodec {
     }
 
     /// 读取剪贴板当前内容。优先级：文件 > 文本（含链接）> 图片。
-    /// 例外：同时有图片和一条链接时（如浏览器里“拷贝图片”）按图片处理。
+    /// 例外：同时有图片和一条链接时（如浏览器里“拷贝图片”）按图片处理；
+    /// 只有一个文件、而剪贴板里的图片数据就是这个文件时（如 CleanShot 拷贝截图）也按图片处理。
     public static func read(_ pasteboard: NSPasteboard) -> ClipContent? {
         if let urls = pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL], !urls.isEmpty {
+            if urls.count == 1, let image = imageSaved(as: urls[0], on: pasteboard) {
+                return ClipContent(kind: .image, image: image)
+            }
             return ClipContent(kind: .file, text: urls.map(\.path).joined(separator: "\n"))
         }
 
@@ -92,6 +96,23 @@ public enum PasteboardCodec {
             break
         }
         return [item]
+    }
+
+    /// 截图工具拷贝截图时，会把存下的图片文件和图片数据放在同一项里，图片数据和文件一字不差。
+    /// 访达拷贝图片文件时带的是文件图标，和文件不一样，所以还是文件。
+    /// 只看这一项自己写进来的格式：系统还会按需转换出别的格式（比如由 PNG 转成 TIFF），取的时候要现场转换。
+    /// 文件大小对上了才读文件比较。
+    static func imageSaved(as file: URL, on pasteboard: NSPasteboard) -> Data? {
+        guard let item = pasteboard.pasteboardItems?.first,
+              let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        else { return nil }
+        for type in [NSPasteboard.PasteboardType.png, .tiff] where item.types.contains(type) {
+            guard let data = item.data(forType: type), data.count == size,
+                  let saved = try? Data(contentsOf: file, options: .mappedIfSafe), saved == data
+            else { continue }
+            return type == .png ? data : NSBitmapImageRep(data: data)?.representation(using: .png, properties: [:])
+        }
+        return nil
     }
 
     static func readImage(_ pasteboard: NSPasteboard) -> Data? {
