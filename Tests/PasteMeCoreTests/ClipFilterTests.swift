@@ -194,12 +194,45 @@ import Testing
             """)
 
         let store = try ClipStore(path: path)
-        #expect(try old.userVersion == 3)
+        #expect(try old.userVersion == 6)
         #expect(try store.items().map(\.preview) == ["old entry"])
         #expect(try store.items(matching: ClipQuery(sourceBundleID: "com.apple.Notes")).count == 1)
         // 迁移加上的 ocr_text 列为 NULL，旧条目照常能搜到。
         #expect(try store.items().first?.recognizedText == nil)
         #expect(try store.items(matching: ClipQuery(text: "old")).count == 1)
         #expect(try store.insert(ClipContent(kind: .text, text: "new"), source: nil) > 1)
+    }
+
+    @Test func versionThreeDatabaseGainsTitlesLinkPreviewsAndPinboards() throws {
+        let dir = try ClipStoreTests.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("history.sqlite").path
+
+        // #5 之后的表结构（user_version = 3）。
+        let old = try SQLiteDatabase(path: path)
+        try old.execute("""
+            CREATE TABLE clips (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, text TEXT, rtf BLOB, image BLOB,
+                thumbnail BLOB, source_bundle_id TEXT, source_name TEXT, content_hash TEXT NOT NULL UNIQUE,
+                created_at REAL NOT NULL, ocr_text TEXT
+            );
+            CREATE INDEX clips_created_at ON clips (created_at DESC);
+            CREATE INDEX clips_source_bundle_id ON clips (source_bundle_id);
+            INSERT INTO clips (kind, text, content_hash, created_at, ocr_text)
+                VALUES ('link', 'https://example.com', 'hash-1', 1, NULL);
+            PRAGMA user_version = 3;
+            """)
+
+        let store = try ClipStore(path: path)
+        #expect(try old.userVersion == 6)
+        let item = try #require(try store.items().first)
+        #expect(item.preview == "https://example.com")
+        #expect(item.title == nil && item.linkTitle == nil && item.pinboardIDs.isEmpty)
+        #expect(try store.linkPreviewURL(id: item.id) == URL(string: "https://example.com"))
+
+        let board = try store.createPinboard(name: "工作", color: .blue)
+        try store.pin(item.id, to: board.id)
+        try store.setTitle("示例网站", id: item.id)
+        #expect(try store.items(matching: ClipQuery(pinboardID: board.id)).map(\.title) == ["示例网站"])
     }
 }

@@ -68,4 +68,27 @@ import Testing
         #expect(PasteboardCodec.isOwnWrite(pasteboard))
         #expect(PasteboardCodec.read(pasteboard) == content)
     }
+
+    @Test func imageWrittenWithAFileOffersBothAndIsMarkedAsOwn() throws {
+        let png = try #require(ClipStoreTests.makePNG(width: 2, height: 2))
+        let file = URL(fileURLWithPath: "/tmp/PasteMe 2026-10-16 14.41.55.png")
+
+        PasteboardCodec.write(ClipContent(kind: .image, image: png), attachingFile: file, to: pasteboard)
+
+        let types = pasteboard.types ?? []
+        #expect(types.contains(.png) && types.contains(.tiff) && types.contains(.fileURL))
+        #expect(pasteboard.string(forType: .fileURL) == file.absoluteString)
+        #expect(PasteboardCodec.isOwnWrite(pasteboard))
+    }
+
+    @Test func writtenTextAndFilesAreStillMarkedAsOwn() {
+        PasteboardCodec.write(ClipContent(kind: .text, text: "hi", rtf: Data("{\\rtf1 hi}".utf8)), to: pasteboard)
+        #expect(pasteboard.string(forType: .string) == "hi")
+        #expect(pasteboard.data(forType: .rtf) != nil)
+        #expect(PasteboardCodec.isOwnWrite(pasteboard))
+
+        PasteboardCodec.write(ClipContent(kind: .file, text: "/tmp/a\n/tmp/b"), to: pasteboard)
+        #expect(pasteboard.pasteboardItems?.count == 2)
+        #expect(PasteboardCodec.isOwnWrite(pasteboard))
+    }
 }

@@ -66,6 +66,16 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
     public var createdAt: Date
     /// 从图片里识别出的文字（前若干字符）。nil 表示还没识别，空字符串表示识别过但没有文字。
     public var recognizedText: String?
+    /// 用户给条目起的标题。没有起时为 nil。
+    public var title: String?
+    /// 链接的网页标题。nil 表示还没获取，空字符串表示获取过但没有拿到。
+    public var linkTitle: String?
+    /// 链接所在网站的图标（PNG）。
+    public var linkIcon: Data?
+    /// 条目固定在哪些 Pinboard 里。
+    public var pinboardIDs: Set<Int64>
+    /// 在 Pinboard 里的位置，只有按 Pinboard 查询（`ClipQuery.pinboardID`）时才有，越小越靠前。
+    public var pinOrder: Int64?
 
     public init(
         id: Int64,
@@ -76,7 +86,12 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
         sourceBundleID: String?,
         sourceName: String?,
         createdAt: Date,
-        recognizedText: String? = nil
+        recognizedText: String? = nil,
+        title: String? = nil,
+        linkTitle: String? = nil,
+        linkIcon: Data? = nil,
+        pinboardIDs: Set<Int64> = [],
+        pinOrder: Int64? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -87,6 +102,11 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
         self.sourceName = sourceName
         self.createdAt = createdAt
         self.recognizedText = recognizedText
+        self.title = title
+        self.linkTitle = linkTitle
+        self.linkIcon = linkIcon
+        self.pinboardIDs = pinboardIDs
+        self.pinOrder = pinOrder
     }
 
     public var filePaths: [String] {
@@ -124,14 +144,44 @@ public struct SourceApp: Sendable, Equatable, Identifiable {
 /// 被删除条目的完整数据，由 `ClipStore.delete(id:)` 返回，用于撤销删除。
 public struct DeletedClip: Sendable, Equatable {
     public let id: Int64
-    let kind: String
-    let text: String?
-    let rtf: Data?
-    let image: Data?
-    let thumbnail: Data?
-    let sourceBundleID: String?
-    let sourceName: String?
-    let contentHash: String
-    let createdAt: Double
-    let recognizedText: String?
+    /// 删除前的整行，按列名保存。以后给表加列时这里不用改。
+    let row: [String: SQLValue]
+    /// 删除前固定在哪些 Pinboard 里、排在什么位置。
+    let pins: [PinPosition]
+}
+
+/// 条目在一个 Pinboard 里的位置。
+public struct PinPosition: Sendable, Equatable {
+    public var pinboardID: Int64
+    public var sortOrder: Int64
+}
+
+/// 从 Pinboard 里移除的条目，由 `ClipStore.unpin(_:from:)` 返回，用于撤销。
+public struct UnpinnedClip: Sendable, Equatable {
+    public let clipID: Int64
+    public let position: PinPosition
+}
+
+/// 用户自建、有名字的条目分组。固定在里面的条目清空历史时也会保留。
+public struct Pinboard: Identifiable, Sendable, Equatable {
+    public let id: Int64
+    public var name: String
+    public var color: PinboardColor
+
+    public init(id: Int64, name: String, color: PinboardColor) {
+        self.id = id
+        self.name = name
+        self.color = color
+    }
+}
+
+/// Pinboard 的颜色，标签和卡片上的小圆点用它。存的是名字，界面决定具体的颜色值。
+public enum PinboardColor: String, CaseIterable, Sendable {
+    case red, orange, yellow, green, teal, blue, purple, pink, gray
+
+    /// 新建 Pinboard 时依次使用的颜色，第 n 个 Pinboard 用第 n 种。
+    public static func next(after existing: [Pinboard]) -> PinboardColor {
+        let palette = allCases.filter { $0 != .gray }
+        return palette[existing.count % palette.count]
+    }
 }

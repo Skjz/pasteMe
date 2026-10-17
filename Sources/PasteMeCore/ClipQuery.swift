@@ -5,7 +5,7 @@ import Foundation
 /// 怎样把条件变成 SQL（搜索哪些列、如何转义）都在这个文件里；以后增加筛选条件只改这里。
 /// 所有条件同时满足的条目才会返回。
 public struct ClipQuery: Sendable, Equatable {
-    /// 只返回文本、图片中的文字或来源应用名包含这段文字的条目（子串匹配，不区分 ASCII 大小写），
+    /// 只返回文本、图片中的文字、标题、网页标题或来源应用名包含这段文字的条目（子串匹配，不区分 ASCII 大小写），
     /// 以及来自 `appsMatchingText` 里的应用的条目。去掉首尾空白后为空时不按文字筛选。
     public var text: String
     /// 只返回这几种类型的条目。nil 表示不限类型；空集合表示什么都不返回（例如两个类型条件没有交集）。
@@ -25,12 +25,18 @@ public struct ClipQuery: Sendable, Equatable {
     public var createdBefore: Date?
     /// 只返回这些 id 的条目，例如 Paste Stack 里的条目。
     public var ids: [Int64]?
+    /// 只返回这个 Pinboard 里的条目，并按它们在 Pinboard 里的顺序排列（面板上的 Pinboard 标签）。nil 表示整个历史。
+    public var pinboardID: Int64?
+    /// 只返回固定在这几个 Pinboard 中任意一个里的条目（筛选）。nil 表示不限；空集合不会出现。
+    public var inPinboards: Set<Int64>?
     /// 最多返回多少条。
     public var limit: Int
 
     public init(
         text: String = "",
         ids: [Int64]? = nil,
+        pinboardID: Int64? = nil,
+        inPinboards: Set<Int64>? = nil,
         kinds: Set<ClipKind>? = nil,
         sourceBundleID: String? = nil,
         sourceName: String? = nil,
@@ -40,6 +46,8 @@ public struct ClipQuery: Sendable, Equatable {
     ) {
         self.text = text
         self.ids = ids
+        self.pinboardID = pinboardID
+        self.inPinboards = inPinboards
         self.kinds = kinds
         self.sourceBundleID = sourceBundleID
         self.sourceName = sourceName
@@ -185,13 +193,22 @@ extension ClipQuery {
             let pattern = SQLValue.text("%" + Self.escapeLike(trimmed) + "%")
             clauses.append(
                 "(text LIKE ? ESCAPE '\\' OR ocr_text LIKE ? ESCAPE '\\' OR source_name LIKE ? ESCAPE '\\'"
+                    + " OR title LIKE ? ESCAPE '\\' OR link_title LIKE ? ESCAPE '\\'"
                     + Self.orSourceIn(appsMatchingText) + ")"
             )
-            values += [pattern, pattern, pattern] + appsMatchingText.map(SQLValue.text)
+            values += Array(repeating: pattern, count: 5) + appsMatchingText.map(SQLValue.text)
         }
         if let ids {
             clauses.append("(id IN (\(ids.map { _ in "?" }.joined(separator: ", "))))")
             values += ids.map(SQLValue.int)
+        }
+        if let inPinboards, !inPinboards.isEmpty {
+            let sorted = inPinboards.sorted()
+            clauses.append(
+                "(id IN (SELECT clip_id FROM pinboard_items WHERE pinboard_id IN ("
+                    + sorted.map { _ in "?" }.joined(separator: ", ") + ")))"
+            )
+            values += sorted.map(SQLValue.int)
         }
         if let kinds {
             if kinds.isEmpty {

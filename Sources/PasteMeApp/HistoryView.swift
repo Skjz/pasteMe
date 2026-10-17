@@ -1,5 +1,6 @@
 import PasteMeCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 面板内容：顶部搜索栏，下方横向排列的卡片。
 struct HistoryView: View {
@@ -61,9 +62,13 @@ struct HistoryView: View {
 
     private var searchBar: some View {
         HStack(spacing: 8) {
+            PinboardTabs(model: model)
+                // 标签多了先截掉提示，再缩搜索框，标签本身不截。
+                .fixedSize()
+            Divider().frame(height: 16).padding(.horizontal, 4)
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("搜索，或输入 @ 按类型、应用筛选", text: $model.query)
+            TextField("搜索，或输入 @ 按类型、应用、Pinboard 筛选", text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
                 .focused($searchFocused)
@@ -95,15 +100,22 @@ struct HistoryView: View {
         if model.showsSuggestions { return "↑ ↓ 选择   ↩ 筛选   esc 取消" }
         switch model.focus {
         case .search: return "← → 选择   ↓ 操作卡片   ↩ 粘贴   ⇧↩ 纯文本   esc 关闭"
-        case .cards: return "← → 选择   ↩ 粘贴   ⌘⌫ 删除   ⌘Z 撤销删除   直接打字搜索   esc 关闭"
+        case .cards:
+            let remove = model.pinboardID == nil ? "⌘⌫ 删除" : "⌘⌫ 移出   拖动排序"
+            return "空格 预览   ↩ 粘贴   ⌘P 固定   \(remove)   ⌘Z 撤销   ⌘← ⌘→ 切换标签   直接打字搜索"
         }
     }
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: model.searchIsEmpty ? "doc.on.clipboard" : "magnifyingglass")
+            Image(systemName: !model.searchIsEmpty ? "magnifyingglass" : model.pinboardID == nil ? "doc.on.clipboard" : "pin")
                 .font(.system(size: 36))
-            if model.searchIsEmpty {
+            if model.searchIsEmpty, let pinboard = model.currentPinboard {
+                Text("「\(pinboard.name)」里还没有条目")
+                Text("在历史里选中卡片按 ⌘P，或者把卡片拖到这个标签上")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } else if model.searchIsEmpty {
                 Text("还没有记录，复制点什么试试")
             } else {
                 Text("没有符合条件的记录")
@@ -174,20 +186,11 @@ struct HistoryView: View {
                 model.selectedID = item.id
                 model.focus = .cards
             })
-            .contextMenu {
-                Button("粘贴") { model.paste(item) }
-                if item.kind == .text {
-                    Button("以纯文本粘贴") { model.paste(item, as: .plainText) }
-                }
-                if let bundleID = item.sourceBundleID {
-                    Button("为“\(item.sourceName ?? bundleID)”设置别名…") { model.onEditAliases(bundleID) }
-                }
-                Divider()
-                Button("删除", role: .destructive) {
-                    model.delete(item)
-                    model.focus = .cards
-                }
-            }
+            // 拖出卡片（#12）：交给 AppKit 的拖拽，见 `PanelController.beginDrag`。
+            .simultaneousGesture(DragGesture(minimumDistance: 6).onChanged { _ in model.beginDrag(item) })
+            // 在 Pinboard 里拖到别的卡片上时换位置。
+            .onDrop(of: [.item], delegate: ReorderDropDelegate(item: item, model: model))
+            .contextMenu { CardContextMenu(item: item, model: model) }
     }
 
     private func scale(selected: Bool) -> CGFloat {
@@ -222,6 +225,72 @@ struct HistoryView: View {
             .opacity(cardsRevealed ? 1 : 0)
             .animation(cardsRevealed ? .easeOut(duration: 0.25).delay(0.1) : nil, value: cardsRevealed)
         }
+    }
+}
+
+/// 卡片的右键菜单。单独做成一个视图：写在卡片的 body 里时，SwiftUI 每次画卡片都会把整个菜单
+/// （连同「固定到」里每个 Pinboard 的勾）建一遍，呼出面板时 `show()` 多花 7 ms 左右。
+private struct CardContextMenu: View {
+    let item: ClipItem
+    let model: HistoryModel
+
+    var body: some View {
+        Button("粘贴") { model.paste(item) }
+        if item.kind == .text {
+            Button("以纯文本粘贴") { model.paste(item, as: .plainText) }
+        }
+        if item.kind == .image, !model.pastesImagesAsFiles {
+            Button("以文件粘贴") { model.paste(item, as: .file) }
+        }
+        Divider()
+        Button("预览") { model.preview(item) }
+        if item.kind == .text || item.kind == .link {
+            Button("编辑…") { model.edit(item) }
+        }
+        Button(item.title == nil ? "添加标题…" : "修改标题…") { model.rename(item) }
+        Menu("固定到") {
+            ForEach(model.pinboards) { pinboard in
+                Toggle(pinboard.name, isOn: Binding(
+                    get: { item.pinboardIDs.contains(pinboard.id) },
+                    set: { model.setPinned($0, item, in: pinboard) }
+                ))
+            }
+            if !model.pinboards.isEmpty { Divider() }
+            Button("新建 Pinboard…") { model.onEditPinboard(.create(pinning: item)) }
+        }
+        if model.canShowInHistory {
+            Button("在历史里查看") { model.showInHistory(item) }
+        }
+        if let bundleID = item.sourceBundleID {
+            Button("为“\(item.sourceName ?? bundleID)”设置别名…") { model.onEditAliases(bundleID) }
+        }
+        Divider()
+        Button(model.currentPinboard.map { "从「\($0.name)」移出" } ?? "删除", role: .destructive) {
+            model.delete(item)
+            model.focus = .cards
+        }
+    }
+}
+
+/// Pinboard 里拖动排序：拖着的卡片经过别的卡片时换到它的位置，松手时写进数据库（`HistoryModel.endDrag`）。
+private struct ReorderDropDelegate: DropDelegate {
+    let item: ClipItem
+    let model: HistoryModel
+
+    func validateDrop(info: DropInfo) -> Bool {
+        model.canReorder && model.draggingID != nil
+    }
+
+    func dropEntered(info: DropInfo) {
+        model.moveDraggedCard(to: item)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        true
     }
 }
 

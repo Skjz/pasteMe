@@ -24,6 +24,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private let pasteStackItem = NSMenuItem(title: "Paste Stack", action: #selector(togglePasteStack), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private let screenSharingItem = NSMenuItem(title: "共享屏幕时显示面板", action: #selector(toggleShowDuringScreenSharing), keyEquivalent: "")
+    private let imagesAsFilesItem = NSMenuItem(title: "图片以文件粘贴", action: #selector(togglePasteImagesAsFiles), keyEquivalent: "")
+    private let linkPreviewsItem = NSMenuItem(title: "链接预览", action: nil, keyEquivalent: "")
+    /// 定期删除以文件粘贴、拖出图片时生成的临时文件。
+    private var cleanupTimer: Timer?
+    private var temporaryFiles: TemporaryFiles?
     private let accessibilityItem = NSMenuItem(title: "", action: #selector(openAccessibilitySettings), keyEquivalent: "")
     private let cursorStyleItem = NSMenuItem(title: "光标样式", action: nil, keyEquivalent: "")
     private let settings = Settings()
@@ -44,18 +49,34 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             return
         }
 
-        paster = Paster(store: store, pasteboard: GeneralPasteboard(), keystroke: CGEventPasteKeystroke())
+        temporaryFiles = (try? TemporaryFiles.defaultDirectory()).map(TemporaryFiles.init(directory:))
+        let settings = settings
+        paster = Paster(
+            store: store,
+            pasteboard: GeneralPasteboard(),
+            keystroke: CGEventPasteKeystroke(),
+            files: temporaryFiles,
+            imagesAsFiles: { settings.pasteImagesAsFiles }
+        )
         appNames = AppNames(store: store, settings: settings)
         aliasesWindow = AppAliasesWindow(appNames: appNames, settings: settings)
-        model = HistoryModel(store: store, appNames: appNames)
+        model = HistoryModel(store: store, appNames: appNames, settings: settings)
         model.cursorStyle = settings.cursorStyle
+        model.pastesImagesAsFiles = settings.pasteImagesAsFiles
         panel = PanelController(model: model)
         panel.showsDuringScreenSharing = settings.showDuringScreenSharing
+        panel.draggingWriters = { [paster] item in try paster!.draggingWriters(for: item.id) }
         model.onPaste = { [weak self] item, mode in self?.paste(item, as: mode) }
         model.onEditAliases = { [weak self] bundleID in self?.showAliases(focusing: bundleID) }
+        model.onNotice = { [weak self] message, symbol in self?.toast.show(message, symbol: symbol) }
 
-        enrichment = EnrichmentQueue(store: store, recognizer: VisionTextRecognizer())
+        enrichment = EnrichmentQueue(store: store, enrichers: [
+            TextRecognitionEnricher(recognizer: VisionTextRecognizer()),
+            // 每次都读设置：在菜单里关掉后，排着队的链接也不再获取。
+            LinkPreviewEnricher(fetcher: HTMLPreviewFetcher()) { Settings().linkPreviewMode },
+        ])
         enrichment.onEnriched = { [weak self] _ in self?.reloadPanelIfVisible() }
+        model.onEdited = { [weak self] id in self?.enrichment.enqueue(id) }
         let stack = PasteStack()
         recorder = Recorder(store: store, enrichment: enrichment, pasteStack: stack)
         recorder.onRecord = { [weak self] _ in self?.reloadPanelIfVisible() }
@@ -96,7 +117,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.enrichment.backfill()
             Task { await self?.appNames.prefetch() }
+            self?.removeExpiredFiles()
         }
+        // 以文件粘贴、拖出图片时生成的临时文件，过一天删掉。
+        let timer = Timer(timeInterval: 60 * 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.removeExpiredFiles() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        cleanupTimer = timer
+    }
+
+    private func removeExpiredFiles() {
+        guard let files = temporaryFiles else { return }
+        Task.detached { files.removeExpired() }
     }
 
     private func reloadPanelIfVisible() {
@@ -110,9 +143,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// 和打字时一样；输入 `@` 可以检查候选列表。
     /// 加上 `PASTEME_SNAPSHOT_DELETE=1` 时删除选中的卡片，0.1 秒后再渲染：颗粒动画还在播放，
     /// 可以确认被删的卡片变成了空位、其他卡片没有移动（颗粒画在 Metal 图层上，不在渲染结果里）。
+    /// 加上 `PASTEME_SNAPSHOT_TAB=n` 时切到第 n 个 Pinboard 的标签。
+    /// 加上 `PASTEME_SNAPSHOT_PREVIEW=1` 时打开选中卡片的预览，`PASTEME_SNAPSHOT_EDITOR=1` 时打开新建 Pinboard 的窗口，
+    /// 这两个窗口另存为 `<文件名>-preview.png`、`<文件名>-editor.png`。
+    /// 加上 `PASTEME_SNAPSHOT_APPEARANCE=light` 或 `dark` 时不管系统设置，按浅色或深色外观画。
     private func writeSnapshot(to path: String) {
         let environment = ProcessInfo.processInfo.environment
+        switch environment["PASTEME_SNAPSHOT_APPEARANCE"] {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: break
+        }
         panel.show()
+        if let tab = environment["PASTEME_SNAPSHOT_TAB"].flatMap(Int.init) {
+            model.cycleTab(by: tab)
+        }
+        if environment["PASTEME_SNAPSHOT_PREVIEW"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.model.preview() }
+        }
+        if environment["PASTEME_SNAPSHOT_EDITOR"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.model.onEditPinboard(.create(pinning: nil)) }
+        }
         if let query = environment["PASTEME_SNAPSHOT_QUERY"] {
             model.focus = .search
             model.query = query
@@ -126,6 +177,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
             if let data = self.panel.snapshotPNG() {
                 try? data.write(to: URL(fileURLWithPath: path))
+            }
+            let base = (path as NSString).deletingPathExtension
+            for (window, suffix) in [(PanelController.SnapshotWindow.preview, "preview"), (.pinboardEditor, "editor")] {
+                if let data = self.panel.snapshotPNG(of: window) {
+                    try? data.write(to: URL(fileURLWithPath: "\(base)-\(suffix).png"))
+                }
             }
             NSApp.terminate(nil)
         }
@@ -164,12 +221,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         menu.addItem(pasteStackItem)
         menu.addItem(loginItem)
         menu.addItem(screenSharingItem)
+        menu.addItem(imagesAsFilesItem)
+        menu.addItem(linkPreviewsItem)
+        linkPreviewsItem.submenu = makeLinkPreviewMenu()
         menu.addItem(accessibilityItem)
         menu.addItem(cursorStyleItem)
         cursorStyleItem.submenu = makeCursorStyleMenu()
         menu.addItem(NSMenuItem(title: "应用别名…", action: #selector(showAliasesFromMenu), keyEquivalent: ""))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "清空历史…", action: #selector(clearHistory), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "清空历史（保留 Pinboard）…", action: #selector(clearHistory), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 PasteMe", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -225,6 +285,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         pasteStackItem.state = pasteStack.stack.isActive ? .on : .off
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         screenSharingItem.state = settings.showDuringScreenSharing ? .on : .off
+        imagesAsFilesItem.state = settings.pasteImagesAsFiles ? .on : .off
+        for item in linkPreviewsItem.submenu?.items ?? [] {
+            item.state = item.representedObject as? String == settings.linkPreviewMode.rawValue ? .on : .off
+        }
         for item in cursorStyleItem.submenu?.items ?? [] {
             item.state = item.representedObject as? String == model.cursorStyle.rawValue ? .on : .off
         }
@@ -336,6 +400,52 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         pasteStack.showsDuringScreenSharing = settings.showDuringScreenSharing
     }
 
+    @objc private func togglePasteImagesAsFiles() {
+        settings.pasteImagesAsFiles.toggle()
+        model.pastesImagesAsFiles = settings.pasteImagesAsFiles
+    }
+
+    private func makeLinkPreviewMenu() -> NSMenu {
+        let menu = NSMenu()
+        for mode in LinkPreviewMode.allCases {
+            let item = NSMenuItem(title: mode.title, action: #selector(chooseLinkPreviewMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// 换到会发更多请求的档位前说明会请求什么：关闭 → 任何一档，只取网站图标 → 完整预览。
+    @objc private func chooseLinkPreviewMode(_ sender: NSMenuItem) {
+        guard let mode = (sender.representedObject as? String).flatMap(LinkPreviewMode.init(rawValue:)) else { return }
+        let current = settings.linkPreviewMode
+        let asksFirst = (current == .off && mode != .off) || (current == .siteIcon && mode == .full)
+        if asksFirst {
+            NSApp.activate()
+            let alert = NSAlert()
+            alert.messageText = mode == .full ? "打开完整的链接预览？" : "只取网站图标？"
+            alert.informativeText = (mode == .full ? Self.fullPreviewExplanation : Self.siteIconExplanation)
+                + "\n\n本机和内网的地址不会请求，以前复制的链接也不会补做。"
+            alert.addButton(withTitle: "打开")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        settings.linkPreviewMode = mode
+    }
+
+    private static let siteIconExplanation = """
+        复制网页链接后，PasteMe 只打开这个网站的首页，取得网站图标，显示在卡片上。你复制的网址本身不会被打开，\
+        所以不会让一次性的登录链接、重置密码的链接失效。对方网站会看到有人访问了它的首页。
+        """
+
+    private static let fullPreviewExplanation = """
+        复制网页链接后，PasteMe 会打开这个网址，取得网页标题、预览图和网站图标，显示在卡片上，搜索时也能搜到网页标题。\
+        只下载网页本身，不执行网页里的脚本，也不带你的登录信息（Cookie）。\
+        看起来像一次性的链接（网址里有 token、reset、verify 这类词，或者一长串随机字符）只取网站图标。\
+        仍有极少数一次性链接认不出来，被打开一次就可能失效；在意的话请选「只取网站图标」。
+        """
+
     @objc private func toggleLaunchAtLogin() {
         do {
             if SMAppService.mainApp.status == .enabled {
@@ -355,17 +465,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     @objc private func clearHistory() {
         NSApp.activate()
+        let pinned = (try? store.pinnedCount()) ?? 0
         let alert = NSAlert()
-        alert.messageText = "清空全部剪贴板历史？"
-        alert.informativeText = "此操作无法撤销。"
+        alert.messageText = "清空剪贴板历史？"
+        alert.informativeText = pinned == 0
+            ? "所有条目都会被删除。此操作无法撤销。"
+            : "固定在 Pinboard 里的 \(pinned) 个条目会保留，其他条目都会被删除。此操作无法撤销。"
         alert.addButton(withTitle: "清空")
         alert.addButton(withTitle: "取消")
         alert.buttons.first?.hasDestructiveAction = true
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
-            try store.deleteAll()
+            try store.clearHistory()
         } catch {
             NSLog("PasteMe: 清空历史失败：\(error)")
+        }
+    }
+}
+
+extension LinkPreviewMode {
+    var title: String {
+        switch self {
+        case .off: "关闭"
+        case .siteIcon: "只取网站图标"
+        case .full: "完整预览"
         }
     }
 }

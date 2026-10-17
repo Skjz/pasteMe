@@ -6,6 +6,9 @@ public enum PasteMode: Sendable {
     case original
     /// 纯文本粘贴：去掉格式，只粘贴文字。
     case plainText
+    /// 以文件粘贴：图片同时附带一个 PNG 文件（`TemporaryFiles`），访达、网页上传框这类只收文件的地方也能粘贴。
+    /// 其他类型和 `.original` 一样。
+    case file
 }
 
 /// 一次粘贴的结果。
@@ -19,6 +22,8 @@ public enum PasteOutcome: Sendable, Equatable {
 public enum PasteError: Error, Equatable {
     /// 要粘贴的条目已经不在历史里。
     case clipNotFound(id: Int64)
+    /// 文件条目里的文件都已经不在原来的地方了。
+    case filesMissing
 }
 
 /// 呼出面板时位于前台、接收粘贴的应用。
@@ -35,7 +40,8 @@ public struct TargetApp: Sendable, Equatable {
 /// 把内容写到系统剪贴板。
 @MainActor
 public protocol PasteboardWriting {
-    func write(_ content: ClipContent)
+    /// `file` 是图片另存成的 PNG 文件，以文件粘贴时才有。
+    func write(_ content: ClipContent, attachingFile file: URL?)
 }
 
 /// 向目标应用发送 ⌘V。
@@ -50,8 +56,8 @@ public protocol PasteKeystrokeSending {
 public struct GeneralPasteboard: PasteboardWriting {
     public init() {}
 
-    public func write(_ content: ClipContent) {
-        PasteboardCodec.write(content, to: .general)
+    public func write(_ content: ClipContent, attachingFile file: URL?) {
+        PasteboardCodec.write(content, attachingFile: file, to: .general)
     }
 }
 
@@ -63,11 +69,23 @@ public final class Paster {
     private let store: ClipStore
     private let pasteboard: any PasteboardWriting
     private let keystroke: any PasteKeystrokeSending
+    private let files: TemporaryFiles?
+    /// 为 true 时，原样粘贴图片也附带 PNG 文件，和 `.file` 一样（设置里的「图片以文件粘贴」）。
+    private let imagesAsFiles: () -> Bool
 
-    public init(store: ClipStore, pasteboard: any PasteboardWriting, keystroke: any PasteKeystrokeSending) {
+    /// - Parameter files: 以文件粘贴、拖出图片时，图片存到这里。为 nil 时只给图片数据。
+    public init(
+        store: ClipStore,
+        pasteboard: any PasteboardWriting,
+        keystroke: any PasteKeystrokeSending,
+        files: TemporaryFiles? = nil,
+        imagesAsFiles: @escaping () -> Bool = { false }
+    ) {
         self.store = store
         self.pasteboard = pasteboard
         self.keystroke = keystroke
+        self.files = files
+        self.imagesAsFiles = imagesAsFiles
     }
 
     public func paste(_ id: Int64, as mode: PasteMode = .original, into target: TargetApp?) throws -> PasteOutcome {
@@ -83,9 +101,34 @@ public final class Paster {
     public func copyToPasteboard(_ id: Int64, as mode: PasteMode = .original) throws {
         guard var content = try store.content(id: id) else { throw PasteError.clipNotFound(id: id) }
         if mode == .plainText { content = content.plainTextOnly }
+        let attachesFile = mode == .file || (mode == .original && imagesAsFiles())
 
-        pasteboard.write(content)
+        pasteboard.write(content, attachingFile: attachesFile ? imageFile(for: content, id: id) : nil)
         // 内容已经在剪贴板里，排序没更新不影响这次粘贴。
         try? store.touch(id: id)
+    }
+
+    /// 从面板上拖出条目时交给拖拽的内容（#12）：和粘贴时写进剪贴板的一样，图片总是附带 PNG 文件。
+    /// 文件条目只给还在的文件，一个都不在时抛出 `PasteError.filesMissing`。
+    public func draggingWriters(for id: Int64) throws -> [NSPasteboardWriting] {
+        guard var content = try store.content(id: id) else { throw PasteError.clipNotFound(id: id) }
+        if content.kind == .file {
+            let existing = content.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+            guard !existing.isEmpty else { throw PasteError.filesMissing }
+            content.text = existing.map(\.path).joined(separator: "\n")
+        }
+        return PasteboardCodec.writers(for: content, attachingFile: imageFile(for: content, id: id))
+    }
+
+    /// 图片存成的 PNG 文件。不是图片、没有设置 `files` 或写文件失败时为 nil，这时只给图片数据。
+    private func imageFile(for content: ClipContent, id: Int64) -> URL? {
+        guard content.kind == .image, let png = content.image, let files else { return nil }
+        do {
+            let copiedAt = try store.item(id: id)?.createdAt ?? Date()
+            return try files.imageFile(png, id: id, copiedAt: copiedAt)
+        } catch {
+            NSLog("PasteMe: 保存图片文件失败：\(error)")
+            return nil
+        }
     }
 }

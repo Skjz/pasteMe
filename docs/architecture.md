@@ -7,7 +7,7 @@
 ```text
 PasteMe        可执行文件，只有 main.swift
 └─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、全局快捷键、监听 ⌘V、发送 ⌘V、面板、浮窗、视图
-   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、AppNames、Recorder、EnrichmentQueue、PasteStack、Paster、Settings、PasteboardCodec、Thumbnailer
+   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、AppNames、Recorder、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、Settings、PasteboardCodec、Thumbnailer
 ```
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
@@ -34,11 +34,37 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 
 ## 附加信息
 
-- 图片中的文字由 `EnrichmentQueue` 补充：`Recorder` 记下图片或图片文件后调用 `enqueue(id)`，启动 3 秒后 `AppDelegate` 调用 `backfill()` 补做旧条目。队列一次只处理一个条目，新复制的排在前面，补做的每条之间停 0.5 秒。
-- 线程：在主线程用 `ClipStore.textRecognitionInput(id:)` 读出图片（`Sendable` 的 `TextRecognitionInput`），在后台识别，回到主线程用 `setRecognizedText(_:id:)` 写回（ADR 0003）。`VisionTextRecognizer` 自己用 `Task.detached` 切到后台，不依赖调用方。
-- `ocr_text` 为 NULL 表示还没识别，空字符串表示识别过但没有文字或识别失败，以后不再识别。图片文件识别原文件，原文件不在了识别缩略图（缩略图只有 480 像素，效果差一些）。
+- `EnrichmentQueue` 依次运行一组 `Enricher`：图片中的文字（`TextRecognitionEnricher`）和链接预览（`LinkPreviewEnricher`）。每个 `Enricher` 在主线程从 `ClipStore` 读出输入（不需要处理时返回 nil），在后台算出结果，回到主线程写库（ADR 0003）。`Recorder` 记下图片、文件和链接后调用 `enqueue(id)`，改过网址的链接由 `HistoryModel.onEdited` 再交给它。启动 3 秒后 `AppDelegate` 调用 `backfill()` 补做旧图片的文字识别。队列一次只处理一个条目，新复制的排在前面，补做的每条之间停 0.5 秒。
+- 图片中的文字：`VisionTextRecognizer` 自己用 `Task.detached` 切到后台。`ocr_text` 为 NULL 表示还没识别，空字符串表示识别过但没有文字或识别失败，以后不再识别。图片文件识别原文件，原文件不在了识别缩略图（缩略图只有 480 像素，效果差一些）。测试用 `FakeRecognizer`（`TextRecognitionTests.swift`），另有一个测试真的调用 Vision 识别画出来的中英文。
+- 链接预览（#11）是 PasteMe 唯一联网的地方，默认关闭，分「只取网站图标」和「完整预览」两档（`Settings.linkPreviewMode`，`LinkPreviewEnricher` 每次读输入时重新读）。请求哪个网址由 `LinkPreviewPolicy.request(for:mode:)` 决定，先去掉分享时附带的跟踪参数（`withoutTracking`，否则 `si`、`share_id` 这类随机字符会被当成令牌）：本机、内网后缀、私有网段和 100.64.0.0/10、IPv6 字面地址、没有点的主机名都不请求；「只取网站图标」和看起来像一次性的网址（`looksSingleUse`：路径里的登录、重置、验证类词，像令牌的参数名，16 个以上字母数字混合的连续字符或 UUID）只请求网站首页。关闭和内网这两种情况都不做标记，打开后再复制一次就会获取。判断宁可多认：认错只少了网页标题，漏认可能让链接失效。
+- 获取用 `HTMLPreviewFetcher`，不用 LinkPresentation：`LPMetadataProvider` 用 WebKit 加载整个网页，会加载页面上的资源、可能执行脚本。`HTMLPreviewFetcher` 用不带 Cookie、不缓存的 `URLSession` 只读 HTML，读到 `</head>` 为止（最多 2 MB），从 `og:title`、`twitter:title`、`<title>` 取标题，从 `og:image` 取预览图，从 `<link rel="apple-touch-icon"/"icon">` 和 `/favicon.ico` 取图标。不是网页的链接只看响应头不下载，图片链接用图片本身。每次请求带一个 `RedirectGuard`：重定向到内网地址不跟；打开复制的网址时，重定向到像一次性的网址也不跟（短链接跳到重置密码的链接），退回只取网站图标。只读 HTML 拿不到信息的网站在 `KnownSite` 里单独处理：Reddit 的网页要执行脚本才出内容，有的网络还整个被拦，帖子标题改从 oEmbed 接口取，其他页面从网址读出版块名，图标用固定地址。预览图缩成 480 像素存进 `thumbnail`，图标缩成 128 像素存进 `link_icon`（候选里有 `fluid-icon` 和惯例的 `/apple-touch-icon.png`，尽量拿到大图标）；只取网站图标时不存首页的标题，免得卡片把它当成这个链接的标题。`link_title` 和 `ocr_text` 的约定一样：NULL 是还没获取，空字符串是获取过（失败、没有标题或只取了图标），以后不再重试。旧链接不补做，免得打开开关后一下子发出很多请求。测试：`FakeLinkFetcher`（`LinkPreviewTests.swift`）测档位和规则，`StubURLProtocol`（`HTMLPreviewFetcherTests.swift`）给 `HTMLPreviewFetcher` 一个假的网络，测 Cookie、重定向、大小上限、编码和 Reddit 的 oEmbed。
+- 有预览的链接卡片是海报样式（`LinkCardContent`）：居中的衬线标题（`EditorialFont`：New York，中文换成宋体，按字号缓存）和夹在细线中间的网站名，上面是预览图或带光晕的网站图标。没有网页标题时由 `LinkText` 从网址读出标题。图标的主色（`IconColor.dominant`）、四角是否透明由 `LinkIconCache` 按条目算一次；光晕不在运行时画，`LinkIconCache.posterIcon` 把圆角、白底、描边和光晕画成一张比图标大一圈的图，原因和标题栏图标一样（见「卡片外观」）。预览窗口里的小图（`LinkBanner`）用图标主色铺底。截图检查浅色外观时用 `PASTEME_SNAPSHOT_APPEARANCE=light`。
 - 缩略图仍在 `ClipStore.insert` 里同步生成，没有移进队列：复制图片后卡片要马上能显示缩略图。
-- 测试用 `FakeRecognizer`（`TextRecognitionTests.swift`），另有一个测试真的调用 Vision 识别画出来的中英文。
+
+## Pinboard
+
+- 数据：`pinboards`（名字、颜色、标签顺序）和 `pinboard_items`（Pinboard、条目、位置，`sort_order` 越小越靠前，新固定的放在最前）。固定的条目同时还是历史里的条目（为什么不另存一份见 ADR 0007），「历史」标签照常显示它（卡片底部有图钉）。再次复制已固定的条目只更新 `clips` 的时间，不动它在 Pinboard 里的位置。
+- 查询：`ClipQuery.pinboardID` 是标签，`ClipStore.items(matching:)` 这时 JOIN `pinboard_items`、按位置排序，`ClipItem.pinOrder` 带着位置；`ClipQuery.inPinboards` 是筛选，只限定条目、不改排序。`HistoryModel.comesBefore` 按 `pinOrder` 排空位，所以删除动画在 Pinboard 里也把空位放回原来的格子（`DeleteAnimationScenarioTests` 里有 Pinboard 的场景和随机序列）。
+- 删除：「历史」里 ⌘⌫ 删除条目，也从所有 Pinboard 里去掉；Pinboard 里 ⌘⌫ 只是移出（`ClipStore.unpin`）。两种都进 `HistoryModel.removals`，⌘Z 用 `restore` / `restorePin` 放回原来的位置。切换标签时撤销记录清空：撤销放回的卡片要在当前列表里才能播放聚拢的动画。
+- `ClipStore.delete(id:)` 把整行按列名存进 `DeletedClip`，连同它在各个 Pinboard 里的位置，`restore` 原样插回去。以后给 `clips` 加列，撤销删除不用改。
+- 清空历史（`ClipStore.clearHistory()`）只删除不在任何 Pinboard 里的条目。
+- 标签：`HistoryModel.pinboardID` 为 nil 是「历史」，每次呼出面板回到「历史」。⌘← ⌘→（`PanelKeymap`，规则和 ← → 一样）和面板开着时的 ⇧⌘V（`PanelController.toggle`，没有 Pinboard 时仍是收起）循环切换。⌘P 固定到 `Settings.lastPinboardID`，没有 Pinboard 时请求新建。
+- 新建、重命名、删除确认都在 `PinboardEditorController` 的小窗口里（见下一节），不用系统提示框：`NSAlert` 要激活 PasteMe，目标应用就不在前台了，关掉面板后 ⌘V 会落空。
+
+## 预览和附属窗口
+
+- 预览窗口（`PreviewController`，#10）和 Pinboard 编辑窗口（`PinboardEditorController`）都是 `AuxiliaryPanel`：和面板一样不激活 PasteMe、层级相同、`sharingType` 跟着面板（`PanelController.showsDuringScreenSharing`）。
+- 键盘焦点：面板失去 key 时以前直接收起。现在附属窗口也会成为 key（输入标题、改正文），所以 `PanelController.keyMovedAway` 等这次切换做完（下一轮事件循环）再看 `NSApp.keyWindow`：还是面板或附属窗口就不收起，是 nil（去了别的应用）才收起。附属窗口关掉后 `takeKeyBack` 把 key 还给面板。
+- 预览打开时不取得 key（`becomesKeyOnlyIfNeeded`，点图片和按钮不抢焦点，点进正文或标题才抢），所以面板上的空格、esc、← → 和 ↩ 照常起作用，预览跟着选中项换内容（`HistoryModel.onSelectionChange`）。窗口第一次上屏时 AppKit 会让标题框成为第一响应者，`PreviewController.open` 把它清掉，否则标题看起来是选中的。
+- 预览是 key 时，按键由同一个本地事件监视器按 `event.window` 分给 `PreviewController.handle`（esc 关闭，输入法组字时除外），其余交给正文或标题。
+- 修改在预览关闭、换内容或面板收起时保存（`PreviewState.markSaved` 先记下已保存，保存引起的重新查询再回来时不会存第二次）。正文是 `NSTextView`，有 RTF 的文本按富文本编辑、画在白底上（富文本常带黑色文字），其他按纯文本编辑；关掉了引号、破折号替换和拼写纠正。`ClipStore.updateText` 改完内容哈希会变，和另一条相同时合并（规则见它的注释和 `ClipEditingTests`）。
+- 截图模式里 `PASTEME_SNAPSHOT_PREVIEW=1` / `PASTEME_SNAPSHOT_EDITOR=1` 把这两个窗口另存成图片。
+
+## 拖出卡片
+
+- 卡片上的 `DragGesture` 第一次变化时调用 `HistoryModel.beginDrag`，`PanelController.beginDrag` 取 `NSApp.currentEvent`（这时是 leftMouseDragged）调用面板 `NSHostingView` 的 `beginDraggingSession`，之后鼠标交给 AppKit 的拖拽。用 AppKit 而不是 SwiftUI 的 `onDrag`：`onDrag` 只能给一个 `NSItemProvider`，几个文件的条目拖不出去。
+- 拖的内容由 `Paster.draggingWriters(for:)` 生成，和粘贴时写进剪贴板的一样（`PasteboardCodec.writers`），图片总是附带 PNG 文件。
+- 拖出面板时（`draggingSession(_:movedTo:)`）面板收起；在面板里时可以拖到 Pinboard 的标签上固定（`PinboardTabs` 的 `onDrop`），在 Pinboard 里拖到别的卡片上换位置（`ReorderDropDelegate` → `HistoryModel.moveDraggedCard`，拖拽结束时 `endDrag` 写进数据库）。这几处 `onDrop` 都只认 `HistoryModel.draggingID`，不解析拖拽的内容。
 
 ## 面板按键
 
@@ -47,7 +73,8 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 焦点（`HistoryModel.focus`）是唯一的状态来源，`HistoryView` 把它同步到搜索框的 `@FocusState`。呼出面板时焦点在卡片列表上。窗口第一次成为 key 时 AppKit 会自动让搜索框成为第一响应者，SwiftUI 随之把 `focus` 改成搜索框，所以 `PanelController.show()` 在 `makeKeyAndOrderFront` 之后把第一响应者交还给窗口本身。
 - 焦点在卡片上时打字，需要让这次按键直接进入搜索框。本地事件监视器在事件分发之前回调，所以 `PanelController` 在监视器里同步把搜索框设为第一响应者，再把事件放行。搜索框是在视图层级里找到的第一个可编辑 `NSTextField`。
 - 输入法组字时（搜索框的字段编辑器 `hasMarkedText()`），所有按键都交给输入法：↩、方向键和 esc 是用来选字和取消的。
-- 删除时 `ClipStore.delete(id:)` 返回 `DeletedClip`，`HistoryModel` 保存到面板关闭为止，⌘Z 用 `ClipStore.restore(_:)` 按原来的 id、时间和缩略图放回。删除和撤销的动画见「删除动画」。
+- 删除时 `ClipStore.delete(id:)` 返回 `DeletedClip`（Pinboard 里是 `unpin` 返回 `UnpinnedClip`），`HistoryModel` 保存到面板关闭或切换标签为止，⌘Z 放回原来的 id、时间、缩略图和 Pinboard 里的位置。删除和撤销的动画见「删除动画」。
+- 焦点在卡片上时空格打开、关闭预览（预览开着时 esc 也关闭它），⌘P、⌘N、⌘E、⌘J 在两种焦点下都起作用。
 - PasteMe 没有菜单栏，但 `AppDelegate.setUpMainMenu()` 设了一个不显示的主菜单：输入框的 ⌘X、⌘C、⌘V、⌘A、⌘Z 和 ⌘W 关闭窗口都要靠菜单项的快捷键才能用。
 
 ## 卡片外观
@@ -108,7 +135,8 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
    ├─ Paster.paste(id, as: mode, into: panel.targetApp)
    │  ├─ ClipStore.content(id:)         # 条目已不存在 → 抛 PasteError.clipNotFound
    │  ├─ .plainText 时去掉 RTF
-   │  ├─ PasteboardWriting.write
+   │  ├─ .file（或设置了「图片以文件粘贴」）时 TemporaryFiles.imageFile 把图片存成 PNG
+   │  ├─ PasteboardWriting.write(content, attachingFile:)
    │  ├─ ClipStore.touch(id:)           # 移到历史最前；失败不影响这次粘贴
    │  └─ PasteKeystrokeSending.isTrusted ? sendPaste(to:) → .pasted : .copiedOnly
    └─ .copiedOnly 时 Accessibility.requestTrust()
@@ -116,6 +144,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 
 - 发送 ⌘V 前的 0.08 秒延迟（等面板收起、键盘焦点回到目标应用）放在 `CGEventPasteKeystroke` 里，`Paster.paste` 本身是同步的，测试不需要等待。
 - 有没有辅助功能权限，由按键 adapter 的 `isTrusted` 判断；弹出系统授权提示是应用层的事（`Accessibility`）。
+- 以文件粘贴和拖出图片生成的 PNG 放在 `~/Library/Caches/PasteMe/Files/<条目 id>/`，文件名用复制时间。再次用到时只更新修改时间；`AppDelegate` 在启动 3 秒后和之后每小时调用 `TemporaryFiles.removeExpired()`，删除一天没用过的。
 - `TargetApp` 在 `PanelController.show()` 时从前台应用取得。面板不激活 PasteMe，所以生产环境里 ⌘V 直接发给前台应用，用不到这个值。它是为 #13 的粘贴事件（记录粘贴到了哪个应用）准备的。
 
 ## Seam 和测试替身
@@ -129,6 +158,9 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 | `AppNames(systemNames:)` | `AppBundleNames.names(ofBundleID:)`（Core，读已安装应用的本地化名字） | 固定的字典（`AppNamesTests`、`AppAliasesTests`） |
 | `PasteboardWriting` | `GeneralPasteboard`（Core，`PasteboardCodec` 写 `NSPasteboard.general`） | `FakePasteboard`（`PasterTests.swift`） |
 | `PasteKeystrokeSending` | `CGEventPasteKeystroke`（App） | `FakeKeystroke`（`PasterTests.swift`） |
+| `LinkPreviewFetching` | `HTMLPreviewFetcher`（Core） | `FakeLinkFetcher`（`LinkPreviewTests.swift`） |
+| `HTMLPreviewFetcher(configuration:)` | `HTMLPreviewFetcher.defaultConfiguration()` | 加上 `StubURLProtocol` 的配置（`HTMLPreviewFetcherTests.swift`） |
+| `TemporaryFiles(directory:)` | `TemporaryFiles.defaultDirectory()` | 每个测试一个临时目录（`TemporaryFilesTests`） |
 | `ClipStore(path:)` | `ClipStore.defaultPath()` | `ClipStore(path: ":memory:")` |
 | `Settings(defaults:)` | 偏好域 `io.github.skjz.PasteMe`，取法见 ADR 0006 | 每个测试一个随机名字的 suite，结束时删除 |
 
@@ -137,10 +169,10 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 ## 扩展查询和设置
 
 - **查询条件**：新的筛选字段加在 `ClipQuery` 上，转成 SQL 的代码也写在 `ClipQuery.swift` 的 `filter` 里，`ClipStore.items(matching:)` 不需要改。每个条件生成一段带括号的子句，多个条件用 AND 连接。搜索继续用 LIKE（ADR 0004），10,000 条条目时查询要在 50ms 以内（ADR 0003），`ClipFilterTests` 里有对应的测试。
-- **筛选的来源**：面板上的按钮和菜单改 `HistoryModel.filters`（`PanelFilters`）；搜索框里的 `type:`、`app:` 由 `ClipQuery.parse` 解析，不回写到按钮上。搜索框末尾的 `@词`（`FilterMention`）弹出候选列表（`HistoryModel.suggestions`：`ClipKind.matching` 加上 `AppNames.apps(matching:)`），选中后从搜索框里去掉这个词、写进 `filters`，所以显示在按钮上。有候选项时这个词不参与搜索；没有候选项或按 esc 关掉列表后，它按普通文字搜索。`HistoryModel.currentQuery` 把两者合起来，类型取交集（`ClipQuery.kinds` 为空集合时什么都不返回）。`query` 和 `filters` 改动后立即重新查询；`didShow` 一次清空两者，只查询一次，因为它在呼出动画的第一帧之前运行。
+- **筛选的来源**：面板上的按钮和菜单改 `HistoryModel.filters`（`PanelFilters`）；搜索框里的 `type:`、`app:` 由 `ClipQuery.parse` 解析，不回写到按钮上。搜索框末尾的 `@词`（`FilterMention`）弹出候选列表（`HistoryModel.suggestions`：`ClipKind.matching`、名字包含这段文字的 Pinboard，再加上 `AppNames.apps(matching:)`），选中后从搜索框里去掉这个词、写进 `filters`，所以显示在按钮上。有候选项时这个词不参与搜索；没有候选项或按 esc 关掉列表后，它按普通文字搜索。`HistoryModel.currentQuery` 把两者合起来，类型取交集（`ClipQuery.kinds` 为空集合时什么都不返回）。`query` 和 `filters` 改动后立即重新查询；`didShow` 一次清空两者，只查询一次，因为它在呼出动画的第一帧之前运行。
 - **来源应用菜单**：用 AppKit 的 `NSMenu`，点开时才调用 `ClipStore.sourceApps()`，不在呼出面板时查询。
 - **按应用的其他名字搜索**：条目只记了复制时的应用名（中文系统下是「访达」）。`HistoryModel.currentQuery` 最后调用 `ClipQuery.resolvingAppNames`，由 `AppNames` 找出名字、其他语言的名字（`AppBundleNames`，只读用户语言和英文）或应用别名（`Settings.appAliases`）包含搜索文字的应用，SQL 里加 `OR source_bundle_id IN (…)`。从应用包读名字一个应用要一两毫秒，所以启动 3 秒后 `AppNames.prefetch()` 在后台读完历史里的应用；应用列表在每次呼出面板时（`historyChanged()`）作废，第一次搜索时重新查。别名在 `AppAliasesWindow` 里编辑，输入时就保存，不需要通知 `AppNames`。
-- **数据库迁移**：`ClipStore.migrate()` 按 `user_version` 逐级升级，每一级一个 `if` 块，最后设新的版本号。改表结构时加一级，并在 `ClipStoreMigrationTests` 里用上一版的表结构建库，确认旧数据还在。
+- **数据库迁移**：`ClipStore.migrate()` 按 `user_version` 逐级升级，每一级一个 `if` 块，最后设新的版本号。改表结构时加一级，并在 `ClipStoreMigrationTests` 里用上一版的表结构建库，确认旧数据还在。现在是第 6 级：4 加标题，5 加链接预览，6 加 Pinboard。外键在每次打开数据库时用 `PRAGMA foreign_keys = ON` 打开，但删除条目和 Pinboard 时仍然显式删掉 `pinboard_items` 里的行，不只靠级联。
 - **设置项**：所有开关都定义在 `Settings` 上，键名放在 `Settings.Key` 里。每个开关都写默认值测试和读写测试，参照 `SettingsTests`。
 
 ## 线程

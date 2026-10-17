@@ -8,7 +8,7 @@ public struct SQLiteError: Error, CustomStringConvertible {
     public var description: String { "SQLite error \(code): \(message)" }
 }
 
-enum SQLValue {
+enum SQLValue: Sendable, Equatable {
     case null
     case int(Int64)
     case double(Double)
@@ -115,6 +115,23 @@ final class SQLiteStatement {
         }
     }
 
+    var columnCount: Int32 { sqlite3_column_count(stmt) }
+
+    func columnName(_ column: Int32) -> String {
+        String(cString: sqlite3_column_name(stmt, column))
+    }
+
+    /// 按这一列实际存的类型读出值，用于原样保存和放回整行。
+    func value(_ column: Int32) -> SQLValue {
+        switch sqlite3_column_type(stmt, column) {
+        case SQLITE_INTEGER: .int(int(column))
+        case SQLITE_FLOAT: .double(double(column))
+        case SQLITE_TEXT: text(column).map(SQLValue.text) ?? .null
+        case SQLITE_BLOB: .blob(blob(column) ?? Data())
+        default: .null
+        }
+    }
+
     func isNull(_ column: Int32) -> Bool {
         sqlite3_column_type(stmt, column) == SQLITE_NULL
     }
@@ -144,4 +161,8 @@ extension Optional where Wrapped == String {
 
 extension Optional where Wrapped == Data {
     var sqlValue: SQLValue { map(SQLValue.blob) ?? .null }
+}
+
+extension Optional where Wrapped == Int64 {
+    var sqlValue: SQLValue { map(SQLValue.int) ?? .null }
 }

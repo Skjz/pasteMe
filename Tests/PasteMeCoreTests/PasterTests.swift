@@ -79,9 +79,12 @@ import Testing
 @MainActor
 final class FakePasteboard: PasteboardWriting {
     private(set) var written: [ClipContent] = []
+    /// 每次写入时附带的文件，和 `written` 一一对应。
+    private(set) var files: [URL?] = []
 
-    func write(_ content: ClipContent) {
+    func write(_ content: ClipContent, attachingFile file: URL?) {
         written.append(content)
+        files.append(file)
     }
 }
 

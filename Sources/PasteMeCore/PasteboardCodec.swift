@@ -52,30 +52,46 @@ public enum PasteboardCodec {
         return nil
     }
 
-    /// 把内容写回剪贴板，并打上 `ownMarker`。
-    public static func write(_ content: ClipContent, to pasteboard: NSPasteboard) {
+    /// 把内容写回剪贴板，并打上 `ownMarker`。`file` 是图片另存成的 PNG 文件，有的话一起写进去。
+    public static func write(_ content: ClipContent, attachingFile file: URL? = nil, to pasteboard: NSPasteboard) {
         pasteboard.clearContents()
+        pasteboard.writeObjects(writers(for: content, attachingFile: file))
+        pasteboard.setData(Data(), forType: ownMarker)
+    }
+
+    /// 写进剪贴板或拖拽的内容。文件是每个文件一项；其他类型是一项，带上它的几种写法，接收方自己挑。
+    ///
+    /// 图片给了 `file` 时，同一项里既有图片数据也有文件地址：访达、网页上传框这类只收文件的地方用文件，
+    /// 其他应用照常用图片数据。
+    public static func writers(for content: ClipContent, attachingFile file: URL? = nil) -> [NSPasteboardWriting] {
+        if content.kind == .file {
+            return content.fileURLs as [NSURL]
+        }
+        let item = NSPasteboardItem()
         switch content.kind {
         case .text:
-            if let rtf = content.rtf { pasteboard.setData(rtf, forType: .rtf) }
-            if let text = content.text { pasteboard.setString(text, forType: .string) }
+            if let rtf = content.rtf { item.setData(rtf, forType: .rtf) }
+            if let text = content.text { item.setString(text, forType: .string) }
         case .link:
             if let text = content.text {
-                pasteboard.setString(text, forType: .string)
-                pasteboard.setString(text, forType: .URL)
+                item.setString(text, forType: .string)
+                item.setString(text, forType: .URL)
             }
         case .image:
             if let png = content.image {
-                pasteboard.setData(png, forType: .png)
+                item.setData(png, forType: .png)
                 // 有些应用只认 TIFF。
                 if let tiff = NSBitmapImageRep(data: png)?.tiffRepresentation {
-                    pasteboard.setData(tiff, forType: .tiff)
+                    item.setData(tiff, forType: .tiff)
                 }
             }
+            if let file {
+                item.setString(file.absoluteString, forType: .fileURL)
+            }
         case .file:
-            pasteboard.writeObjects(content.fileURLs as [NSURL])
+            break
         }
-        pasteboard.setData(Data(), forType: ownMarker)
+        return [item]
     }
 
     static func readImage(_ pasteboard: NSPasteboard) -> Data? {
