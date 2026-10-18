@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Screenshots copied from CleanShot X are recorded as images, not as files. CleanShot puts the screenshot on the clipboard both as picture data and as the PNG file it saved, so PasteMe kept only the file. Now, when the clipboard holds a single file and its picture data is exactly that file, PasteMe records the picture, which gets a thumbnail and text recognition like any other image. Copying an image file in Finder still records the file. Screenshots copied before this change stay file entries.
 - Return, the arrow keys and esc pressed while an input method is composing text in the search field (for example Pinyin before a candidate is chosen) go to the input method instead of pasting the selected card, moving the selection or clearing the search.
 - Opening and closing the panel no longer stutters. After the card color and cursor changes, about a third of the frames while the panel slid up missed the 120 Hz deadline: every card clipped its enlarged header icon at run time, so each card had to be recomposited on every frame of its entrance animation. The cropped icon with its shadow is now drawn once per app as an image that fits the header. Closing also no longer blocks for 30–50 ms moving the panel's content into a separate window for the slide-out; the panel slides out itself.
 
