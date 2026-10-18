@@ -37,6 +37,14 @@ import PasteMeCore
         #expect(LinkIconCache.posterIcon(for: 4, icon: data, style: style, size: 50) === image)
     }
 
+    @Test func iconBitmapsAreSharpOnRetinaEvenWhenOnlyA1xScreenWasConnected() {
+        // 位图画好后一直缓存：只接着 1x 显示器时也按 2x 画，之后接上 Retina 屏不发虚（#19）。
+        #expect(AppIconCache.bitmapScale(screenScales: [1]) == 2)
+        #expect(AppIconCache.bitmapScale(screenScales: []) == 2)
+        #expect(AppIconCache.bitmapScale(screenScales: [1, 2]) == 2)
+        #expect(AppIconCache.bitmapScale(screenScales: [3]) == 3)
+    }
+
     private func headline(_ link: String) -> String? {
         LinkText.headline(from: URL(string: link)!)
     }

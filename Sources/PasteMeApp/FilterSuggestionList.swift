@@ -67,6 +67,10 @@ struct FilterSuggestionList: View {
             Image(systemName: kind.symbolName)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(highlighted ? Color.white : kind.color)
+        case .subtype(let subtype):
+            Image(systemName: subtype.symbolName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(highlighted ? Color.white : ClipKind.text.color)
         case .app(let app):
             if let icon = AppIconCache.menuIcon(for: app.bundleID) {
                 Image(nsImage: icon)
@@ -84,6 +88,7 @@ struct FilterSuggestionList: View {
     private func title(_ suggestion: FilterSuggestion) -> String {
         switch suggestion {
         case .kind(let kind): kind.title
+        case .subtype(let subtype): subtype.title
         case .app(let app): app.name
         case .pinboard(let pinboard): pinboard.name
         }
@@ -92,6 +97,7 @@ struct FilterSuggestionList: View {
     private func category(_ suggestion: FilterSuggestion) -> String {
         switch suggestion {
         case .kind: "类型"
+        case .subtype: "文本子类型"
         case .app: "应用"
         case .pinboard: "Pinboard"
         }
@@ -101,6 +107,7 @@ struct FilterSuggestionList: View {
     private func isActive(_ suggestion: FilterSuggestion) -> Bool {
         switch suggestion {
         case .kind(let kind): model.filters.kinds.contains(kind)
+        case .subtype(let subtype): model.filters.subtypes.contains(subtype)
         case .app(let app): model.filters.sourceApp?.bundleID == app.bundleID
         case .pinboard(let pinboard): model.filters.pinboardIDs.contains(pinboard.id)
         }
@@ -114,6 +121,19 @@ extension ClipKind {
         case .link: "link"
         case .image: "photo"
         case .file: "doc"
+        }
+    }
+}
+
+extension TextSubtype.Category {
+    var symbolName: String {
+        switch self {
+        case .color: "paintpalette"
+        case .timestamp: "clock"
+        case .hexdump: "tablecells"
+        case .hex: "number"
+        case .base64: "lock.doc"
+        case .code: "chevron.left.forwardslash.chevron.right"
         }
     }
 }

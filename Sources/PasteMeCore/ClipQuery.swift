@@ -10,6 +10,8 @@ public struct ClipQuery: Sendable, Equatable {
     public var text: String
     /// 只返回这几种类型的条目。nil 表示不限类型；空集合表示什么都不返回（例如两个类型条件没有交集）。
     public var kinds: Set<ClipKind>?
+    /// 只返回这几种文本子类型的文本条目（#26），`.code` 包含所有语言。nil 表示不限；空集合表示什么都不返回。
+    public var textSubtypes: Set<TextSubtype.Category>?
     /// 只返回来自这个应用（bundle id）的条目。
     public var sourceBundleID: String?
     /// 只返回来源应用名包含这段文字、或者来自 `appsMatchingSourceName` 里的应用的条目，来自搜索框里的 `app:`。
@@ -38,6 +40,7 @@ public struct ClipQuery: Sendable, Equatable {
         pinboardID: Int64? = nil,
         inPinboards: Set<Int64>? = nil,
         kinds: Set<ClipKind>? = nil,
+        textSubtypes: Set<TextSubtype.Category>? = nil,
         sourceBundleID: String? = nil,
         sourceName: String? = nil,
         createdFrom: Date? = nil,
@@ -49,6 +52,7 @@ public struct ClipQuery: Sendable, Equatable {
         self.pinboardID = pinboardID
         self.inPinboards = inPinboards
         self.kinds = kinds
+        self.textSubtypes = textSubtypes
         self.sourceBundleID = sourceBundleID
         self.sourceName = sourceName
         self.createdFrom = createdFrom
@@ -64,6 +68,14 @@ public struct ClipQuery: Sendable, Equatable {
         return query
     }
 
+    /// 再加一个文本子类型条件，结果是两个条件的交集。
+    public func restricting(toSubtypes subtypes: Set<TextSubtype.Category>?) -> ClipQuery {
+        guard let subtypes else { return self }
+        var query = self
+        query.textSubtypes = self.textSubtypes.map { $0.intersection(subtypes) } ?? subtypes
+        return query
+    }
+
     /// 按应用的其他名字和别名找出 `text`、`sourceName` 对应的来源应用。`lookup` 返回名字包含这段文字的应用。
     public func resolvingAppNames(_ lookup: (String) -> [String]) -> ClipQuery {
         var query = self
@@ -76,13 +88,14 @@ public struct ClipQuery: Sendable, Equatable {
     /// 解析搜索框里的文字：`type:图片`、`app:微信` 这样的词变成筛选条件，其余的词作为搜索文字。
     ///
     /// - `type:`（或 `类型:`）后面写类型的中文或英文名，只写开头几个字母也可以，比如 `type:im`。
-    ///   写了几个时取并集；认不出来的词按普通文字搜索。
+    ///   也可以写文本子类型，比如 `type:base64`、`type:时间戳`。写了几个时取并集；认不出来的词按普通文字搜索。
     /// - `app:`（或 `应用:`）后面写来源应用名的一部分。
     /// - 冒号用全角的“：”也可以，中文输入法下不用切换。
     public static func parse(_ input: String, limit: Int = 200) -> ClipQuery {
         var query = ClipQuery(limit: limit)
         var words: [Substring] = []
         var kinds: Set<ClipKind> = []
+        var subtypes: Set<TextSubtype.Category> = []
         var apps: [String] = []
 
         for word in input.split(whereSeparator: \.isWhitespace) {
@@ -97,7 +110,10 @@ public struct ClipQuery: Sendable, Equatable {
                 // 还没写值时（刚输入完冒号）先不筛选，也不按文字搜索。
                 guard !value.isEmpty else { continue }
                 let matched = ClipKind.allCases.filter { $0.matchesSearchName(value) }
-                if matched.isEmpty { words.append(word) } else { kinds.formUnion(matched) }
+                let matchedSubtypes = TextSubtype.Category.matching(value)
+                if matched.isEmpty, matchedSubtypes.isEmpty { words.append(word) }
+                kinds.formUnion(matched)
+                subtypes.formUnion(matchedSubtypes)
             case "app", "应用":
                 if !value.isEmpty { apps.append(value) }
             default:
@@ -106,6 +122,8 @@ public struct ClipQuery: Sendable, Equatable {
         }
 
         query.text = words.joined(separator: " ")
+        // 子类型都是文本，和类型取并集时只剩类型，所以对得上类型时只按类型筛选（`type:t` 对得上文本和时间戳，按文本算）。
+        if !subtypes.isEmpty, kinds.isEmpty { query.textSubtypes = subtypes }
         if !kinds.isEmpty { query.kinds = kinds }
         // 写了几个 app: 时只用最后一个：同一条目不可能来自两个应用。
         query.sourceName = apps.last
@@ -218,6 +236,13 @@ extension ClipQuery {
                 clauses.append("(kind IN (\(sorted.map { _ in "?" }.joined(separator: ", "))))")
                 values += sorted.map(SQLValue.text)
             }
+        }
+        if let textSubtypes {
+            let exact = textSubtypes.filter { $0 != .code }.map(\.rawValue).sorted()
+            var parts = exact.isEmpty ? [] : ["text_subtype IN (\(exact.map { _ in "?" }.joined(separator: ", ")))"]
+            if textSubtypes.contains(.code) { parts.append("text_subtype LIKE 'code:%'") }
+            clauses.append(parts.isEmpty ? "(0)" : "(kind = 'text' AND (" + parts.joined(separator: " OR ") + "))")
+            values += exact.map(SQLValue.text)
         }
         if let sourceBundleID {
             clauses.append("(source_bundle_id = ?)")

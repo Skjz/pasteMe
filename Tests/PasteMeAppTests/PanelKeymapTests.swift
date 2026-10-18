@@ -188,7 +188,7 @@ import Testing
         #expect(action(commandLeft, Self.searching) == .passThrough)
     }
 
-    @Test func commandLettersPinCreateEditAndShowInHistory() {
+    @Test func commandLettersPinCreateEditShowInHistoryAndConvert() {
         func command(_ code: Int, _ character: String) -> PanelKey {
             PanelKey(keyCode: code, command: true, characters: character)
         }
@@ -197,6 +197,7 @@ import Testing
             #expect(action(command(kVK_ANSI_N, "n"), context) == .run(.newText))
             #expect(action(command(kVK_ANSI_E, "e"), context) == .run(.editSelected))
             #expect(action(command(kVK_ANSI_J, "j"), context) == .run(.showInHistory))
+            #expect(action(command(kVK_ANSI_T, "t"), context) == .run(.showConversions))
         }
     }
 }

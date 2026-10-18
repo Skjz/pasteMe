@@ -7,7 +7,7 @@
 ```text
 PasteMe        可执行文件，只有 main.swift
 └─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、全局快捷键、监听 ⌘V、发送 ⌘V、面板、浮窗、视图
-   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、AppNames、Recorder、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、Settings、PasteboardCodec、Thumbnailer
+   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、AppNames、Recorder、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、SyntaxHighlighter
 ```
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
@@ -40,6 +40,15 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 获取用 `HTMLPreviewFetcher`，不用 LinkPresentation：`LPMetadataProvider` 用 WebKit 加载整个网页，会加载页面上的资源、可能执行脚本。`HTMLPreviewFetcher` 用不带 Cookie、不缓存的 `URLSession` 只读 HTML，读到 `</head>` 为止（最多 2 MB），从 `og:title`、`twitter:title`、`<title>` 取标题，从 `og:image` 取预览图，从 `<link rel="apple-touch-icon"/"icon">` 和 `/favicon.ico` 取图标。不是网页的链接只看响应头不下载，图片链接用图片本身。每次请求带一个 `RedirectGuard`：重定向到内网地址不跟；打开复制的网址时，重定向到像一次性的网址也不跟（短链接跳到重置密码的链接），退回只取网站图标。只读 HTML 拿不到信息的网站在 `KnownSite` 里单独处理：Reddit 的网页要执行脚本才出内容，有的网络还整个被拦，帖子标题改从 oEmbed 接口取，其他页面从网址读出版块名，图标用固定地址。预览图缩成 480 像素存进 `thumbnail`，图标缩成 128 像素存进 `link_icon`（候选里有 `fluid-icon` 和惯例的 `/apple-touch-icon.png`，尽量拿到大图标）；只取网站图标时不存首页的标题，免得卡片把它当成这个链接的标题。`link_title` 和 `ocr_text` 的约定一样：NULL 是还没获取，空字符串是获取过（失败、没有标题或只取了图标），以后不再重试。旧链接不补做，免得打开开关后一下子发出很多请求。测试：`FakeLinkFetcher`（`LinkPreviewTests.swift`）测档位和规则，`StubURLProtocol`（`HTMLPreviewFetcherTests.swift`）给 `HTMLPreviewFetcher` 一个假的网络，测 Cookie、重定向、大小上限、编码和 Reddit 的 oEmbed。
 - 有预览的链接卡片是海报样式（`LinkCardContent`）：居中的衬线标题（`EditorialFont`：New York，中文换成宋体，按字号缓存）和夹在细线中间的网站名，上面是预览图或带光晕的网站图标。没有网页标题时由 `LinkText` 从网址读出标题。图标的主色（`IconColor.dominant`）、四角是否透明由 `LinkIconCache` 按条目算一次；光晕不在运行时画，`LinkIconCache.posterIcon` 把圆角、白底、描边和光晕画成一张比图标大一圈的图，原因和标题栏图标一样（见「卡片外观」）。预览窗口里的小图（`LinkBanner`）用图标主色铺底。截图检查浅色外观时用 `PASTEME_SNAPSHOT_APPEARANCE=light`。
 - 缩略图仍在 `ClipStore.insert` 里同步生成，没有移进队列：复制图片后卡片要马上能显示缩略图。
+
+## 文本子类型、转换和代码着色
+
+- **识别**（#26、#28）：`TextSubtype.detect(_:sourceBundleID:)` 是纯函数，只看整段内容（去掉首尾空白），按 颜色 > 时间戳 > hexdump > hex > Base64 > 代码 取第一个，超过 1 MB 不识别。各种写法的解析在 `TextFormats.swift`（`ColorValue`、`UnixTimestamp`、`ByteText`），识别和转换共用。容易误认的地方都有规则和反例测试（`TextSubtypeTests`）：纯十进制数字和 `cafe` 这样只有字母的词不是 hex，`12:30:45` 不是按字节分隔的 hex，驼峰命名的标识符和路径不是 Base64（`looksCamelCase`）。改规则时先加反例。
+- **存储**：`clips.text_subtype`（第 7 级迁移，为什么不是新的类型见 ADR 0008）存 `TextSubtype.rawValue`（`base64`、`code:swift`），只有文本条目有：NULL 是还没识别，空字符串是识别过、不是任何子类型。`ClipStore.insert` 记录时算，`updateText` 改完重算；再次复制相同内容时，新的结果为空就保留原来的（同一段代码从编辑器复制时认得出语言，从别处复制时可能认不出）。升级前的文本条目由 `AppDelegate.backfillTextSubtypes` 在启动 3 秒后每批 100 条、间隔 0.2 秒补算（`ClipStore.backfillTextSubtypes`），不在迁移里算，免得历史很多时启动变慢。
+- **筛选**：`ClipQuery.textSubtypes`（`.code` 用 `LIKE 'code:%'` 包含所有语言），`PanelFilters.subtypes`，`FilterSuggestion.subtype`。子类型没有常驻的按钮，从 `@` 选了才在类型按钮后面出现（`SubtypeChip`）。搜索框里的 `type:` 对得上类型时只按类型筛选，子类型都是文本，取并集只剩类型。
+- **转换**（#27）：`TextConverter.options(for:subtype:)` 按子类型列出转换（做不了的带原因，菜单里照样列出），`convert` 做转换，都是纯函数（`TextConversionTests` 用本机 `hexdump -C`、`xxd -i` 的真实输出做期望值）。`HistoryModel.convert` 把结果当成 ⌘N 新建的文本那样记录（不记来源应用），再用 `showInHistory` 回到没有筛选的「历史」选中它，所以在 Pinboard 里或有筛选时也看得到。右键菜单里的「转换」是单独的视图（`ConversionMenuItems`），列出转换要读完整内容，只在菜单打开时做；⌘T 弹出同样内容的 `NSMenu`（`PanelController.showConversionMenu`），位置取 `CardDust` 记下的卡片布局，它的视图盖在卡片列表上，坐标一致。
+- **识别代码**（#28）：`CodeDetector` 只看前 4000 个字符、80 行，逐行比较字节，不用正则（release 下 15 行代码约 80 µs，一段散文约 13 µs）。顺序：确定的标记（shebang、`<?php`、`<?xml`、能解析的 JSON）→ 排除散文和 Markdown → HTML/XML、YAML → 按 `CodeSignals.swift` 的表给各语言打分。注释行不打分；C++、Objective-C 的分加在 C 上，TypeScript 加在 JavaScript 上；最高分要过门槛（编辑器 3、终端 4、其他 6）并且比第二名多 2 分。加一种语言：在 `CodeLanguage` 加一项（`rawValue` 存进数据库，不能改），在 `CodeSignals` 写只有它才有的写法，在 `LexerRules` 和 `Keywords` 写词法，再在 `CodeDetectorTests` 加正例和会混淆的反例。改规则后最好拿一批真实文字检查误认：例如把仓库里的文档按段落、源码按 15 行切开跑一遍，文档段落一条都不应该认成代码。
+- **着色**：`SyntaxHighlighter.segments(of:language:)` 返回覆盖整段文字的片段。多数语言用 C 风格的 `Lexer`，只换 `LexerRules`；HTML/XML、CSS、JSON、YAML 各有自己的扫描。卡片只着色显示的部分：`CodeSnippet.displayText` 取前 11 行、tab 换成 4 个空格、去掉共同的缩进，`CodeSnippet.truncating` 把超出卡片宽度的部分截掉换成「…」（中日韩文字算两列）。不让文字超出卡片再靠圆角裁掉，原因和标题栏图标一样（见「卡片外观」）。`CodeHighlightCache` 按条目、预览文字、语言和深浅外观缓存 `AttributedString`；视图读 `colorScheme`，外观换了就取另一份。单张代码卡片从创建到画出来和普通文本卡片一样（release 下都约 8 ms，主要花在创建视图上）。
 
 ## Pinboard
 
@@ -74,7 +83,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 焦点在卡片上时打字，需要让这次按键直接进入搜索框。本地事件监视器在事件分发之前回调，所以 `PanelController` 在监视器里同步把搜索框设为第一响应者，再把事件放行。搜索框是在视图层级里找到的第一个可编辑 `NSTextField`。
 - 输入法组字时（搜索框的字段编辑器 `hasMarkedText()`），所有按键都交给输入法：↩、方向键和 esc 是用来选字和取消的。
 - 删除时 `ClipStore.delete(id:)` 返回 `DeletedClip`（Pinboard 里是 `unpin` 返回 `UnpinnedClip`），`HistoryModel` 保存到面板关闭或切换标签为止，⌘Z 放回原来的 id、时间、缩略图和 Pinboard 里的位置。删除和撤销的动画见「删除动画」。
-- 焦点在卡片上时空格打开、关闭预览（预览开着时 esc 也关闭它），⌘P、⌘N、⌘E、⌘J 在两种焦点下都起作用。
+- 焦点在卡片上时空格打开、关闭预览（预览开着时 esc 也关闭它），⌘P、⌘N、⌘E、⌘J、⌘T 在两种焦点下都起作用。
 - PasteMe 没有菜单栏，但 `AppDelegate.setUpMainMenu()` 设了一个不显示的主菜单：输入框的 ⌘X、⌘C、⌘V、⌘A、⌘Z 和 ⌘W 关闭窗口都要靠菜单项的快捷键才能用。
 
 ## 卡片外观
@@ -172,7 +181,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 - **筛选的来源**：面板上的按钮和菜单改 `HistoryModel.filters`（`PanelFilters`）；搜索框里的 `type:`、`app:` 由 `ClipQuery.parse` 解析，不回写到按钮上。搜索框末尾的 `@词`（`FilterMention`）弹出候选列表（`HistoryModel.suggestions`：`ClipKind.matching`、名字包含这段文字的 Pinboard，再加上 `AppNames.apps(matching:)`），选中后从搜索框里去掉这个词、写进 `filters`，所以显示在按钮上。有候选项时这个词不参与搜索；没有候选项或按 esc 关掉列表后，它按普通文字搜索。`HistoryModel.currentQuery` 把两者合起来，类型取交集（`ClipQuery.kinds` 为空集合时什么都不返回）。`query` 和 `filters` 改动后立即重新查询；`didShow` 一次清空两者，只查询一次，因为它在呼出动画的第一帧之前运行。
 - **来源应用菜单**：用 AppKit 的 `NSMenu`，点开时才调用 `ClipStore.sourceApps()`，不在呼出面板时查询。
 - **按应用的其他名字搜索**：条目只记了复制时的应用名（中文系统下是「访达」）。`HistoryModel.currentQuery` 最后调用 `ClipQuery.resolvingAppNames`，由 `AppNames` 找出名字、其他语言的名字（`AppBundleNames`，只读用户语言和英文）或应用别名（`Settings.appAliases`）包含搜索文字的应用，SQL 里加 `OR source_bundle_id IN (…)`。从应用包读名字一个应用要一两毫秒，所以启动 3 秒后 `AppNames.prefetch()` 在后台读完历史里的应用；应用列表在每次呼出面板时（`historyChanged()`）作废，第一次搜索时重新查。别名在 `AppAliasesWindow` 里编辑，输入时就保存，不需要通知 `AppNames`。
-- **数据库迁移**：`ClipStore.migrate()` 按 `user_version` 逐级升级，每一级一个 `if` 块，最后设新的版本号。改表结构时加一级，并在 `ClipStoreMigrationTests` 里用上一版的表结构建库，确认旧数据还在。现在是第 6 级：4 加标题，5 加链接预览，6 加 Pinboard。外键在每次打开数据库时用 `PRAGMA foreign_keys = ON` 打开，但删除条目和 Pinboard 时仍然显式删掉 `pinboard_items` 里的行，不只靠级联。
+- **数据库迁移**：`ClipStore.migrate()` 按 `user_version` 逐级升级，每一级一个 `if` 块，最后设新的版本号。改表结构时加一级，并在 `ClipStoreMigrationTests` 里用上一版的表结构建库，确认旧数据还在。现在是第 7 级：4 加标题，5 加链接预览，6 加 Pinboard，7 加文本子类型。外键在每次打开数据库时用 `PRAGMA foreign_keys = ON` 打开，但删除条目和 Pinboard 时仍然显式删掉 `pinboard_items` 里的行，不只靠级联。
 - **设置项**：所有开关都定义在 `Settings` 上，键名放在 `Settings.Key` 里。每个开关都写默认值测试和读写测试，参照 `SettingsTests`。
 
 ## 线程
