@@ -99,6 +99,14 @@ public final class ClipStore {
                 PRAGMA user_version = 6;
                 """)
         }
+        if try db.userVersion < 7 {
+            // 文本子类型（#26、#28），只有文本条目有。NULL 表示还没识别，空字符串表示识别过、不是任何子类型。
+            // 已有的文本条目由 `backfillTextSubtypes` 分批补算，不在这里算，免得历史很多时启动变慢。
+            try db.execute("""
+                ALTER TABLE clips ADD COLUMN text_subtype TEXT;
+                PRAGMA user_version = 7;
+                """)
+        }
     }
 
     /// 在一个事务里执行，出错时回滚。
@@ -120,13 +128,17 @@ public final class ClipStore {
     public func insert(_ content: ClipContent, source: ClipSource?, at date: Date = Date()) throws -> Int64 {
         let statement = try db.prepare(
             """
-            INSERT INTO clips (kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO clips (
+                kind, text, rtf, image, thumbnail, source_bundle_id, source_name, content_hash, created_at, text_subtype
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (content_hash) DO UPDATE SET
                 thumbnail = coalesce(clips.thumbnail, excluded.thumbnail),
                 created_at = excluded.created_at,
                 source_bundle_id = excluded.source_bundle_id,
-                source_name = excluded.source_name
+                source_name = excluded.source_name,
+                -- 同一段代码从编辑器复制时认得出语言，从别处再复制一次时可能认不出，保留认出来的那次。
+                text_subtype = coalesce(nullif(excluded.text_subtype, ''), clips.text_subtype, excluded.text_subtype)
             RETURNING id
             """,
             [
@@ -139,6 +151,7 @@ public final class ClipStore {
                 source?.name.sqlValue ?? .null,
                 .text(content.contentHash),
                 .double(date.timeIntervalSince1970),
+                Self.textSubtypeValue(for: content, sourceBundleID: source?.bundleID),
             ]
         )
         guard try statement.step() else { throw SQLiteError(code: -1, message: "插入后没有返回 id") }
@@ -151,7 +164,8 @@ public final class ClipStore {
             SELECT clips.id, kind, substr(text, 1, \(Self.previewLength)), length(text), thumbnail,
                    source_bundle_id, source_name, created_at, substr(ocr_text, 1, \(Self.previewLength)),
                    title, link_title, link_icon,
-                   (SELECT group_concat(pinboard_id) FROM pinboard_items WHERE clip_id = clips.id)
+                   (SELECT group_concat(pinboard_id) FROM pinboard_items WHERE clip_id = clips.id),
+                   text_subtype
             """
         var values: [SQLValue] = []
         if let pinboardID = query.pinboardID {
@@ -186,7 +200,8 @@ public final class ClipStore {
                 linkTitle: statement.text(10),
                 linkIcon: statement.blob(11),
                 pinboardIDs: Set(pins),
-                pinOrder: statement.isNull(13) ? nil : statement.int(13)
+                pinOrder: statement.isNull(14) ? nil : statement.int(14),
+                textSubtype: statement.text(13).flatMap(TextSubtype.init(rawValue:))
             ))
         }
         return items
@@ -322,13 +337,18 @@ public final class ClipStore {
                 )
             }
             let urlChanged = current.kind == .link && current.text != edited.text
+            let source = try db.prepare("SELECT source_bundle_id FROM clips WHERE id = ?", [.int(id)])
+            let sourceBundleID = try source.step() ? source.text(0) : nil
             try db.run(
                 """
-                UPDATE clips SET kind = ?, text = ?, rtf = ?, content_hash = ?\(urlChanged
+                UPDATE clips SET kind = ?, text = ?, rtf = ?, content_hash = ?, text_subtype = ?\(urlChanged
                     ? ", link_title = NULL, link_icon = NULL, thumbnail = NULL" : "")
                 WHERE id = ?
                 """,
-                [.text(edited.kind.rawValue), edited.text.sqlValue, edited.rtf.sqlValue, .text(hash), .int(id)]
+                [
+                    .text(edited.kind.rawValue), edited.text.sqlValue, edited.rtf.sqlValue, .text(hash),
+                    Self.textSubtypeValue(for: edited, sourceBundleID: sourceBundleID), .int(id),
+                ]
             )
         }
         return true
@@ -553,6 +573,38 @@ public final class ClipStore {
         let statement = try db.prepare("SELECT count(*) FROM clips")
         _ = try statement.step()
         return Int(statement.int(0))
+    }
+
+    // MARK: - 文本子类型
+
+    /// 给还没识别过子类型的文本条目补算（升级到第 7 版以前记下的），新的在前，一次最多 `limit` 条。
+    /// 返回这次补算了几条，0 表示都算完了。
+    @discardableResult
+    public func backfillTextSubtypes(limit: Int = 500) throws -> Int {
+        let statement = try db.prepare(
+            """
+            SELECT id, text, source_bundle_id FROM clips
+            WHERE kind = 'text' AND text_subtype IS NULL ORDER BY created_at DESC LIMIT ?
+            """,
+            [.int(Int64(limit))]
+        )
+        var results: [(Int64, SQLValue)] = []
+        while try statement.step() {
+            let content = ClipContent(kind: .text, text: statement.text(1))
+            results.append((statement.int(0), Self.textSubtypeValue(for: content, sourceBundleID: statement.text(2))))
+        }
+        try transaction {
+            for (id, value) in results {
+                try db.run("UPDATE clips SET text_subtype = ? WHERE id = ?", [value, .int(id)])
+            }
+        }
+        return results.count
+    }
+
+    /// 存进 `text_subtype` 的值：文本是子类型的写法，不是任何子类型时为空字符串；其他类型为 NULL。
+    static func textSubtypeValue(for content: ClipContent, sourceBundleID: String?) -> SQLValue {
+        guard content.kind == .text else { return .null }
+        return .text(content.text.flatMap { TextSubtype.detect($0, sourceBundleID: sourceBundleID) }?.rawValue ?? "")
     }
 
     /// 图片取自身数据；文件取第一个文件（是图片时）。缩略图在复制时生成并入库，

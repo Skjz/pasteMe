@@ -8,7 +8,8 @@ import QuartzCore
 ///
 /// `PASTEME_BENCH=<次数>` 启动时运行：历史为空时先填入测试条目，然后反复呼出、收起面板，
 /// 每次记录两组数据后打印，最后打印中位数并退出。
-/// 再加上 `PASTEME_BENCH_DELETE=1` 时改为呼出面板后反复删除选中的卡片、再撤销，测颗粒动画和补位动画。
+/// 再加上 `PASTEME_BENCH_DELETE=1` 时改为呼出面板后反复删除选中的卡片、再撤销，测颗粒动画和补位动画；
+/// `PASTEME_BENCH_MOVE=1` 时改为呼出面板后像按住方向键一样连续向右、再向左移动光标，测选中项变化时的重画。
 /// - 主线程：display link 回调之间的间隔，以及 `show()` / `hide()` 本身的耗时。
 /// - 实际上屏：面板里一个 2×2 的 Metal 图层每帧提交一次，`presentedTime` 之间的空档就是用户看到的掉帧。
 @MainActor
@@ -30,6 +31,16 @@ enum PanelBenchmark {
         ProcessInfo.processInfo.environment["PASTEME_BENCH_DELETE"] == "1"
     }
 
+    private static var measuresMove: Bool {
+        ProcessInfo.processInfo.environment["PASTEME_BENCH_MOVE"] == "1"
+    }
+
+    /// 按住方向键时一次连发移动几格、间隔多久（系统最快的按键重复约 30 ms 一次）。
+    private static let moveSteps = 8
+    private static let moveInterval = 0.05
+    /// 连发结束后再统计多久：光标和放大的卡片停稳约 0.35 秒。
+    private static var moveWindow: Double { Double(moveSteps) * moveInterval + 0.35 }
+
     private static var recording = false
     /// 测删除时逐帧调用 `frameTick` 的 display link。颗粒动画自己的 display link 在撤销后要等一会儿才开始，
     /// 不能用来计时。
@@ -48,7 +59,7 @@ enum PanelBenchmark {
     static func run(panel: PanelController, model: HistoryModel, store: ClipStore, cycles: Int) {
         seedIfEmpty(store)
         var results: [String: [Sample]] = [:]
-        let phases = measuresDelete ? ["delete", "undo"] : ["show", "hide"]
+        let phases = measuresDelete ? ["delete", "undo"] : measuresMove ? ["right", "left"] : ["show", "hide"]
 
         func measure(
             _ phase: String, for duration: Double = window, _ action: () -> Void,
@@ -93,6 +104,16 @@ enum PanelBenchmark {
                 }
                 return
             }
+            if measuresMove {
+                measure("right", for: moveWindow, { moveBurst(model, by: 1) }) {
+                    after(0.3) {
+                        measure("left", for: moveWindow, { moveBurst(model, by: -1) }) {
+                            after(0.3) { cycle(index + 1) }
+                        }
+                    }
+                }
+                return
+            }
             measure("show", { panel.show() }) {
                 after(0.3) {
                     measure("hide", { panel.hide() }) {
@@ -102,8 +123,8 @@ enum PanelBenchmark {
             }
         }
 
-        // 等启动时的其他工作做完再开始。测删除时先呼出面板，焦点放到卡片上，和按 ⌘⌫ 时一样。
-        if measuresDelete {
+        // 等启动时的其他工作做完再开始。测删除和移动光标时先呼出面板，焦点放到卡片上，和按 ⌘⌫、← → 时一样。
+        if measuresDelete || measuresMove {
             after(1.0) {
                 panel.show()
                 model.focus = .cards
@@ -112,6 +133,14 @@ enum PanelBenchmark {
             }
         } else {
             after(1.0) { cycle(0) }
+        }
+    }
+
+    /// 第一格立刻移动（计入 `call_ms`），其余的按连发的间隔接着移动。
+    private static func moveBurst(_ model: HistoryModel, by offset: Int) {
+        model.moveSelection(by: offset)
+        for step in 1..<moveSteps {
+            after(Double(step) * moveInterval) { model.moveSelection(by: offset) }
         }
     }
 

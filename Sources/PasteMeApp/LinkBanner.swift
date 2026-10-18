@@ -86,7 +86,7 @@ enum LinkIconCache {
         let key = Key(id: id, size: data.count)
         if let cached = posterIcons[key] { return cached }
         let canvas = NSSize(width: size + glow * 2, height: size + glow * 2)
-        let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2
+        let scale = AppIconCache.bitmapScale()
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: Int(canvas.width * scale), pixelsHigh: Int(canvas.height * scale),
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,

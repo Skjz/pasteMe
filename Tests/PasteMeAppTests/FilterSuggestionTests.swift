@@ -35,14 +35,28 @@ import PasteMeCore
 
     var previews: [String?] { model.items.map(\.preview) }
 
-    @Test func typingAtListsEveryKindThenEveryApp() {
+    @Test func typingAtListsEveryKindAndTextSubtypeThenEveryApp() {
         model.query = "@"
 
         #expect(model.suggestions.map(\.id) == [
             "kind:text", "kind:link", "kind:image", "kind:file",
+            "subtype:color", "subtype:timestamp", "subtype:hexdump", "subtype:hex", "subtype:base64", "subtype:code",
             "app:com.tencent.xinWeChat", "app:com.apple.finder",
         ])
         #expect(model.showsSuggestions)
+    }
+
+    @Test func choosingATextSubtypeShowsOnlyThoseEntries() throws {
+        try store.insert(ClipContent(kind: .text, text: "1760688000"), source: nil, at: Date(timeIntervalSince1970: 5))
+        model.reload()
+        model.query = "@时间"
+        #expect(model.suggestions.map(\.id) == ["subtype:timestamp"])
+
+        model.acceptSuggestion()
+        #expect(model.query == "")
+        #expect(model.filters.subtypes == [.timestamp])
+        #expect(previews == ["1760688000"])
+        #expect(model.activeConditions == ["是时间戳"])
     }
 
     @Test func appsAreFoundByTheirOtherNamesAndAliases() {

@@ -76,6 +76,8 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
     public var pinboardIDs: Set<Int64>
     /// 在 Pinboard 里的位置，只有按 Pinboard 查询（`ClipQuery.pinboardID`）时才有，越小越靠前。
     public var pinOrder: Int64?
+    /// 文本的子类型（#26），不是文本、不是任何子类型或者还没识别时为 nil。
+    public var textSubtype: TextSubtype?
 
     public init(
         id: Int64,
@@ -91,7 +93,8 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
         linkTitle: String? = nil,
         linkIcon: Data? = nil,
         pinboardIDs: Set<Int64> = [],
-        pinOrder: Int64? = nil
+        pinOrder: Int64? = nil,
+        textSubtype: TextSubtype? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -107,6 +110,7 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
         self.linkIcon = linkIcon
         self.pinboardIDs = pinboardIDs
         self.pinOrder = pinOrder
+        self.textSubtype = textSubtype
     }
 
     public var filePaths: [String] {

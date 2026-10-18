@@ -244,7 +244,7 @@ private struct PreviewView: View {
     /// 类型、长度、来源和时间。
     private var details: String {
         guard let item = state.item else { return "PasteMe" }
-        var parts = [item.kind.title]
+        var parts = [item.typeTitle]
         if item.kind == .text { parts.append("\(item.textLength) 个字符") }
         if let source = item.sourceName { parts.append("来自\(source)") }
         parts.append(item.createdAt.formatted(.relative(presentation: .named)))

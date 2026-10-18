@@ -248,6 +248,9 @@ private struct CardContextMenu: View {
             Button("编辑…") { model.edit(item) }
         }
         Button(item.title == nil ? "添加标题…" : "修改标题…") { model.rename(item) }
+        if item.kind == .text || item.kind == .link {
+            Menu("转换") { ConversionMenuItems(item: item, model: model) }
+        }
         Menu("固定到") {
             ForEach(model.pinboards) { pinboard in
                 Toggle(pinboard.name, isOn: Binding(
@@ -270,6 +273,35 @@ private struct CardContextMenu: View {
             model.focus = .cards
         }
     }
+}
+
+/// 「转换」子菜单的内容（#27）。单独成一个视图：列出转换要读出完整内容，只在菜单打开时做。
+/// ⌘T 弹出的是同样内容的 `NSMenu`（`PanelController.showConversionMenu`）。
+private struct ConversionMenuItems: View {
+    let item: ClipItem
+    let model: HistoryModel
+
+    var body: some View {
+        let options = model.conversionOptions(for: item)
+        if options.isEmpty {
+            Button(ConversionOption.tooLongNote) {}
+                .disabled(true)
+        }
+        ForEach(Array(options.enumerated()), id: \.element.conversion) { index, option in
+            if index > 0, option.conversion == .encodeBase64 { Divider() }
+            Button(option.menuTitle(for: item.textSubtype)) { model.convert(item, using: option.conversion) }
+                .disabled(option.unavailableReason != nil)
+        }
+    }
+}
+
+extension ConversionOption {
+    /// 菜单项的名字，做不了时在后面注明原因，例如「ASCII 文本（字节不是合法的 UTF-8）」。
+    func menuTitle(for subtype: TextSubtype?) -> String {
+        conversion.title(for: subtype) + (unavailableReason.map { "（\($0)）" } ?? "")
+    }
+
+    static let tooLongNote = "内容超过 1 MB，不能转换"
 }
 
 /// Pinboard 里拖动排序：拖着的卡片经过别的卡片时换到它的位置，松手时写进数据库（`HistoryModel.endDrag`）。

@@ -53,6 +53,7 @@ enum PanelCommand: Equatable {
     case switchTab(by: Int)
     case pinSelected
     case showInHistory
+    case showConversions
 }
 
 /// 按键交给谁处理。
@@ -73,7 +74,7 @@ enum PanelKeyAction: Equatable {
 /// 搜索框下面显示着 `@` 的候选列表时，↑ ↓ 在列表里移动，↩ 和 Tab 选中，esc 关掉列表。
 /// 输入法组字时 ↩、方向键、esc 是用来选字和取消的，所有按键都交给输入法。
 ///
-/// 焦点在卡片上时空格打开预览，预览开着时空格和 esc 关掉它（#10）。⌘← ⌘→ 在「历史」和各个 Pinboard
+/// 焦点在卡片上时空格打开预览，预览开着时空格和 esc 关掉它（#10）。⌘T 在选中的卡片下面弹出「转换」菜单（#27）。⌘← ⌘→ 在「历史」和各个 Pinboard
 /// 之间切换，规则和 ← → 一样：搜索框里有文字时交给搜索框移动插入点（#9）。
 enum PanelKeymap {
     static func action(for key: PanelKey, in context: PanelContext) -> PanelKeyAction {
@@ -105,6 +106,7 @@ enum PanelKeymap {
             case kVK_ANSI_N where !key.shift: return .run(.newText)
             case kVK_ANSI_E where !key.shift: return .run(.editSelected)
             case kVK_ANSI_J where !key.shift: return .run(.showInHistory)
+            case kVK_ANSI_T where !key.shift: return .run(.showConversions)
             default: break
             }
         }

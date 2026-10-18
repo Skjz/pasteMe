@@ -33,8 +33,8 @@ struct ClipCardView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // 起了标题的条目显示标题，否则显示类型。
-            Text(item.title ?? item.kind.title)
+            // 起了标题的条目显示标题，否则显示类型（有文本子类型时带上，例如「文本 · Base64」）。
+            Text(item.title ?? item.typeTitle)
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
             Text(item.createdAt, format: .relative(presentation: .named))
@@ -80,10 +80,7 @@ struct ClipCardView: View {
     private var content: some View {
         switch item.kind {
         case .text:
-            Text(item.preview ?? "")
-                .font(.system(size: 12))
-                .lineLimit(11)
-                .foregroundStyle(.primary)
+            textContent
         case .link:
             linkCard
         case .image:
@@ -119,6 +116,33 @@ struct ClipCardView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// 文本卡片按子类型显示（#26、#28）：颜色是色块，时间戳带上换算出的时间，代码着色，
+    /// hexdump 用等宽字体按行截断，hex 和 Base64 用等宽字体按字符换行。
+    @ViewBuilder
+    private var textContent: some View {
+        let preview = item.preview ?? ""
+        switch item.textSubtype {
+        case .color where ColorValue.parse(preview) != nil:
+            ColorCardContent(value: ColorValue.parse(preview)!, text: preview)
+        case .timestamp where UnixTimestamp.parse(preview) != nil:
+            TimestampCardContent(text: preview, date: UnixTimestamp.parse(preview)!)
+        case .code(let language):
+            CodeCardContent(item: item, language: language)
+        case .hexdump:
+            CodeCardContent(item: item, language: nil)
+        case .hex, .base64:
+            Text(preview)
+                .font(CodeHighlightCache.font)
+                .lineLimit(CodeHighlightCache.maxLines)
+                .foregroundStyle(.primary)
+        default:
+            Text(preview)
+                .font(.system(size: 12))
+                .lineLimit(11)
+                .foregroundStyle(.primary)
         }
     }
 
@@ -201,6 +225,94 @@ extension ClipItem {
     }
 }
 
+extension ClipItem {
+    /// 类型名，有文本子类型时带上，例如「文本 · Base64」「文本 · Swift」。
+    var typeTitle: String {
+        textSubtype.map { "\(kind.title) · \($0.title)" } ?? kind.title
+    }
+}
+
+/// 颜色卡片（#26）：色块，下面是复制的颜色值和它的另一种写法。半透明的颜色垫在棋盘格上。
+struct ColorCardContent: View {
+    let value: ColorValue
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack {
+                if value.alpha < 1 {
+                    Checkerboard(cornerRadius: 8)
+                }
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(.sRGB, red: value.red, green: value.green, blue: value.blue, opacity: value.alpha))
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.primary.opacity(0.12))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text(alternative)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    /// 复制的是 `#` 写法时给出 `rgb()`，否则给出 `#` 写法。
+    private var alternative: String {
+        func byte(_ c: Double) -> Int { Int((c * 255).rounded()) }
+        let (r, g, b) = (byte(value.red), byte(value.green), byte(value.blue))
+        let alpha = value.alpha < 1 ? value.alpha : nil
+        if text.trimmingCharacters(in: .whitespaces).hasPrefix("#") {
+            return alpha.map { "rgb(\(r) \(g) \(b) / \(Int(($0 * 100).rounded()))%)" } ?? "rgb(\(r) \(g) \(b))"
+        }
+        let hex = String(format: "#%02x%02x%02x", r, g, b)
+        return alpha.map { hex + String(format: "%02x", byte($0)) } ?? hex
+    }
+}
+
+/// 时间戳卡片（#27）：时间戳下面直接显示对应的本地时间、时区和相对时间。
+struct TimestampCardContent: View {
+    let text: String
+    let date: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(.secondary)
+            Text(TimestampText.local(date))
+                .font(.system(size: 14, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            Text(date, format: .relative(presentation: .named))
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// 半透明颜色下面的棋盘格，只画在圆角矩形里面。
+private struct Checkerboard: View {
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            context.clip(to: Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: cornerRadius))
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+            let cell: CGFloat = 8
+            var squares = Path()
+            for row in 0..<Int((size.height / cell).rounded(.up)) {
+                for column in 0..<Int((size.width / cell).rounded(.up)) where (row + column).isMultiple(of: 2) {
+                    squares.addRect(CGRect(x: CGFloat(column) * cell, y: CGFloat(row) * cell, width: cell, height: cell))
+                }
+            }
+            context.fill(squares, with: .color(Color(white: 0.85)))
+        }
+    }
+}
+
 extension ClipKind {
     var title: String {
         switch self {
@@ -257,9 +369,15 @@ enum AppIconCache {
         return image
     }
 
+    /// 预先画成位图的图标用的像素密度：至少 2x。位图画好后一直缓存，如果按当时的屏幕画，
+    /// 只接着 1x 显示器时画的图标，之后在 Retina 屏上会发虚，直到重启（#19）。
+    static func bitmapScale(screenScales: [CGFloat] = NSScreen.screens.map(\.backingScaleFactor)) -> CGFloat {
+        max(2, screenScales.max() ?? 2)
+    }
+
     private static func drawHeaderSlice(_ icon: NSImage) -> NSImage {
         let slice = ClipCardView.headerIconSlice
-        let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2
+        let scale = bitmapScale()
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
             pixelsWide: Int(slice.width * scale),

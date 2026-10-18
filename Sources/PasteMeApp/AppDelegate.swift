@@ -116,6 +116,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         // 同时在后台读出来源应用的各种名字，第一次搜索时不用在主线程上读。
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.enrichment.backfill()
+            self?.backfillTextSubtypes()
             Task { await self?.appNames.prefetch() }
             self?.removeExpiredFiles()
         }
@@ -130,6 +131,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func removeExpiredFiles() {
         guard let files = temporaryFiles else { return }
         Task.detached { files.removeExpired() }
+    }
+
+    /// 给升级前记下的文本条目分批补算子类型（#26）。识别在主线程上做（`ClipStore` 只在主线程用），
+    /// 所以每批不多、批与批之间停一下，面板这时照常流畅。
+    private func backfillTextSubtypes() {
+        do {
+            guard try store.backfillTextSubtypes(limit: 100) > 0 else { return }
+            reloadPanelIfVisible()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.backfillTextSubtypes()
+            }
+        } catch {
+            NSLog("PasteMe: 补算文本子类型失败：\(error)")
+        }
     }
 
     private func reloadPanelIfVisible() {

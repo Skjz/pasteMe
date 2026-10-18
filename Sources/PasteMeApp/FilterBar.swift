@@ -2,8 +2,8 @@ import AppKit
 import PasteMeCore
 import SwiftUI
 
-/// 搜索框右边的筛选控件：四个类型按钮、来源应用菜单、时间菜单，有 Pinboard 时加一个 Pinboard 菜单，
-/// 有筛选时再加一个清除按钮。
+/// 搜索框右边的筛选控件：四个类型按钮（从 `@` 选了文本子类型时跟在后面）、来源应用菜单、时间菜单，
+/// 有 Pinboard 时加一个 Pinboard 菜单，有筛选时再加一个清除按钮。
 struct FilterBar: View {
     @Bindable var model: HistoryModel
 
@@ -13,6 +13,10 @@ struct FilterBar: View {
                 KindToggle(kind: kind, isOn: model.filters.kinds.contains(kind)) {
                     model.toggleKind(kind)
                 }
+            }
+            // 文本子类型没有常驻的按钮，从 `@` 候选里选了才出现，点一下去掉。
+            ForEach(TextSubtype.Category.allCases.filter(model.filters.subtypes.contains), id: \.self) { subtype in
+                SubtypeChip(subtype: subtype) { model.filters.subtypes.remove(subtype) }
             }
             Divider().frame(height: 14).padding(.horizontal, 2)
             FilterMenuButton(
@@ -124,6 +128,31 @@ private struct KindToggle: View {
         .buttonStyle(.plain)
         .focusEffectDisabled()
         .help(isOn ? "不再只看\(kind.title)" : "只看\(kind.title)")
+    }
+}
+
+/// 选中的文本子类型筛选，点一下去掉。
+private struct SubtypeChip: View {
+    let subtype: TextSubtype.Category
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Text(subtype.title)
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .font(.system(size: 11, weight: .medium))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .foregroundStyle(Color.white)
+            .background(Capsule().fill(ClipKind.text.color))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help("不再只看\(subtype.title)")
     }
 }
 

@@ -30,23 +30,29 @@ protocol CardRemovalEffect: AnyObject {
 struct PanelFilters: Equatable {
     /// 空集合表示不限类型。
     var kinds: Set<ClipKind> = []
+    /// 只看这几种文本子类型（#26，从 `@` 候选里选）。空集合表示不限。
+    var subtypes: Set<TextSubtype.Category> = []
     var sourceApp: SourceApp?
     var timeRange = TimeRange.all
     /// 只看固定在这几个 Pinboard 中任意一个里的条目。空集合表示不限。
     var pinboardIDs: Set<Int64> = []
 
-    var isActive: Bool { !kinds.isEmpty || sourceApp != nil || timeRange != .all || !pinboardIDs.isEmpty }
+    var isActive: Bool {
+        !kinds.isEmpty || !subtypes.isEmpty || sourceApp != nil || timeRange != .all || !pinboardIDs.isEmpty
+    }
 }
 
 /// 搜索框里输入 `@` 后候选列表里的一项，选中后变成筛选条件。
 enum FilterSuggestion: Equatable, Identifiable {
     case kind(ClipKind)
+    case subtype(TextSubtype.Category)
     case app(SourceApp)
     case pinboard(Pinboard)
 
     var id: String {
         switch self {
         case .kind(let kind): "kind:\(kind.rawValue)"
+        case .subtype(let subtype): "subtype:\(subtype.rawValue)"
         case .app(let app): "app:\(app.bundleID)"
         case .pinboard(let pinboard): "pinboard:\(pinboard.id)"
         }
@@ -236,6 +242,9 @@ final class HistoryModel {
         if !filters.kinds.isEmpty {
             query = query.restricting(to: filters.kinds)
         }
+        if !filters.subtypes.isEmpty {
+            query = query.restricting(toSubtypes: filters.subtypes)
+        }
         query.sourceBundleID = filters.sourceApp?.bundleID
         (query.createdFrom, query.createdBefore) = filters.timeRange.bounds(now: now())
         if let appNames {
@@ -258,6 +267,10 @@ final class HistoryModel {
         if let kinds = query.kinds {
             let names = ClipKind.allCases.filter(kinds.contains).map(\.title)
             conditions.append(names.isEmpty ? "类型条件没有交集" : "类型为" + names.joined(separator: "或"))
+        }
+        if let subtypes = query.textSubtypes {
+            let names = TextSubtype.Category.allCases.filter(subtypes.contains).map(\.title)
+            conditions.append(names.isEmpty ? "子类型条件没有交集" : "是" + names.joined(separator: "或"))
         }
         if let app = filters.sourceApp {
             conditions.append("来自\(app.name)")
@@ -311,13 +324,14 @@ final class HistoryModel {
         }
     }
 
-    /// 名字以 `text` 开头的类型，名字包含 `text` 的 Pinboard，以及名字或别名包含 `text` 的来源应用。
+    /// 名字以 `text` 开头的类型和文本子类型，名字包含 `text` 的 Pinboard，以及名字或别名包含 `text` 的来源应用。
     /// `text` 为空时列出全部。
     private func suggestions(matching text: String) -> [FilterSuggestion] {
         let apps = appNames?.apps(matching: text)
             ?? sourceApps().filter { text.isEmpty || $0.name.localizedCaseInsensitiveContains(text) }
         let boards = pinboards.filter { text.isEmpty || $0.name.localizedCaseInsensitiveContains(text) }
         return ClipKind.matching(text).map(FilterSuggestion.kind)
+            + TextSubtype.Category.matching(text).map(FilterSuggestion.subtype)
             + boards.map(FilterSuggestion.pinboard)
             + apps.map(FilterSuggestion.app)
     }
@@ -336,6 +350,7 @@ final class HistoryModel {
         query = mention.remainder
         switch chosen {
         case .kind(let kind): filters.kinds.insert(kind)
+        case .subtype(let subtype): filters.subtypes.insert(subtype)
         case .app(let app): filters.sourceApp = app
         case .pinboard(let pinboard): filters.pinboardIDs.insert(pinboard.id)
         }
@@ -611,6 +626,41 @@ final class HistoryModel {
         reload()
         selectedID = item.id
         focus = .cards
+    }
+
+    // MARK: - 转换（#27）
+
+    /// 条目可以做的转换。要读出完整内容，只在打开「转换」菜单时调用。
+    func conversionOptions(for item: ClipItem) -> [ConversionOption] {
+        guard item.kind == .text || item.kind == .link,
+              let text = (try? store.content(id: item.id))?.text
+        else { return [] }
+        return TextConverter.options(for: text, subtype: item.textSubtype)
+    }
+
+    /// 转换条目：结果作为新条目记录到历史最前面并选中，原条目不变，按回车就能粘贴。
+    /// 和 ⌘N 新建的文本一样不记来源应用，它不是从别的应用复制来的。结果和已有的条目相同时，按正常规则把那条移到最前面。
+    /// 在 Pinboard 里或者有筛选时，先回到没有筛选的「历史」，否则可能看不到结果。
+    func convert(_ item: ClipItem, using conversion: TextConversion) {
+        do {
+            guard let text = try store.content(id: item.id)?.text,
+                  let result = TextConverter.convert(text, subtype: item.textSubtype, using: conversion)
+            else {
+                onNotice("这一条没法这样转换", "exclamationmark.triangle")
+                return
+            }
+            // 解码出来是一个网址时记成链接，和复制一个网址一样。
+            let isLink = PasteboardCodec.isWebLink(result)
+            let content = isLink
+                ? ClipContent(kind: .link, text: result.trimmingCharacters(in: .whitespacesAndNewlines))
+                : ClipContent(kind: .text, text: result)
+            let id = try store.insert(content, source: nil, at: now())
+            if isLink { onEdited(id) }
+            guard let converted = try store.item(id: id) else { return }
+            showInHistory(converted)
+        } catch {
+            NSLog("PasteMe: 转换失败：\(error)")
+        }
     }
 
     // MARK: - 预览和编辑

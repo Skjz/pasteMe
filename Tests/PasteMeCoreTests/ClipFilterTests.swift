@@ -27,6 +27,32 @@ import Testing
         #expect(try previews(ClipQuery(kinds: nil)).count == 3)
     }
 
+    @Test func textSubtypesKeepOnlyThoseTextEntries() throws {
+        try store.insert(ClipContent(kind: .text, text: "note"), source: nil, at: Date(timeIntervalSince1970: 1))
+        try store.insert(ClipContent(kind: .text, text: "1760688000"), source: nil, at: Date(timeIntervalSince1970: 2))
+        try store.insert(ClipContent(kind: .text, text: "SGVsbG8sIOS4lueVjA=="), source: nil, at: Date(timeIntervalSince1970: 3))
+        try store.insert(ClipContent(kind: .text, text: "#ff8800"), source: nil, at: Date(timeIntervalSince1970: 4))
+        try store.insert(ClipContent(kind: .link, text: "https://example.com"), source: nil, at: Date(timeIntervalSince1970: 5))
+
+        #expect(try previews(ClipQuery(textSubtypes: [.timestamp])) == ["1760688000"])
+        #expect(try previews(ClipQuery(textSubtypes: [.base64, .color])) == ["#ff8800", "SGVsbG8sIOS4lueVjA=="])
+        #expect(try previews(ClipQuery(textSubtypes: [])).isEmpty)
+        // 按「文本」筛选时包含所有子类型。
+        #expect(try previews(ClipQuery(kinds: [.text])).count == 4)
+        #expect(try store.items(matching: ClipQuery(textSubtypes: [.color])).first?.textSubtype == .color)
+        #expect(ClipQuery(textSubtypes: [.hex, .base64]).restricting(toSubtypes: [.hex]).textSubtypes == [.hex])
+    }
+
+    @Test func parseAcceptsTextSubtypesAfterType() {
+        #expect(ClipQuery.parse("type:base64 abc").textSubtypes == [.base64])
+        #expect(ClipQuery.parse("type:base64 abc").text == "abc")
+        #expect(ClipQuery.parse("类型:时间戳").textSubtypes == [.timestamp])
+        #expect(ClipQuery.parse("type:hex").textSubtypes == [.hexdump, .hex])
+        // 同时对得上类型时只按类型筛选：子类型都是文本。
+        #expect(ClipQuery.parse("type:t").kinds == [.text])
+        #expect(ClipQuery.parse("type:t").textSubtypes == nil)
+    }
+
     @Test func sourceAppMatchesBundleIDOrNamePart() throws {
         try store.insert(ClipContent(kind: .text, text: "from notes"), source: Self.notes)
         try store.insert(ClipContent(kind: .text, text: "from wechat"), source: Self.wechat)
@@ -148,7 +174,8 @@ import Testing
         let kinds: [ClipKind] = [.text, .text, .link, .file]
         for i in 0..<10_000 {
             let kind = kinds[i % kinds.count]
-            let text = kind == .link ? "https://example.com/\(i)" : "条目 \(i) 一些用来搜索的文字 invoice-\(i % 97)"
+            var text = kind == .link ? "https://example.com/\(i)" : "条目 \(i) 一些用来搜索的文字 invoice-\(i % 97)"
+            if kind == .text, i % 10 == 0 { text = "\(1_760_000_000 + i)" }
             try store.insert(ClipContent(kind: kind, text: text), source: sources[i % sources.count], at: Date(timeIntervalSince1970: Double(i)))
         }
 
@@ -159,6 +186,8 @@ import Testing
             ClipQuery.parse("type:link app:saf example"),
             ClipQuery(createdFrom: Date(timeIntervalSince1970: 9_000)),
             ClipQuery.parse("wechat app:saf").resolvingAppNames { _ in ["com.tencent.xinWeChat", "com.apple.Safari"] },
+            ClipQuery(textSubtypes: [.timestamp]),
+            ClipQuery(text: "17600", textSubtypes: [.timestamp, .code], sourceBundleID: "com.apple.Notes"),
         ]
         for query in queries {
             let start = Date()
@@ -194,7 +223,7 @@ import Testing
             """)
 
         let store = try ClipStore(path: path)
-        #expect(try old.userVersion == 6)
+        #expect(try old.userVersion == 7)
         #expect(try store.items().map(\.preview) == ["old entry"])
         #expect(try store.items(matching: ClipQuery(sourceBundleID: "com.apple.Notes")).count == 1)
         // 迁移加上的 ocr_text 列为 NULL，旧条目照常能搜到。
@@ -224,7 +253,7 @@ import Testing
             """)
 
         let store = try ClipStore(path: path)
-        #expect(try old.userVersion == 6)
+        #expect(try old.userVersion == 7)
         let item = try #require(try store.items().first)
         #expect(item.preview == "https://example.com")
         #expect(item.title == nil && item.linkTitle == nil && item.pinboardIDs.isEmpty)
@@ -234,5 +263,28 @@ import Testing
         try store.pin(item.id, to: board.id)
         try store.setTitle("示例网站", id: item.id)
         #expect(try store.items(matching: ClipQuery(pinboardID: board.id)).map(\.title) == ["示例网站"])
+    }
+
+    @Test func versionSixDatabaseBackfillsTextSubtypesInBatches() throws {
+        let dir = try ClipStoreTests.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("history.sqlite").path
+
+        let old = try ClipStore(path: path)
+        for (i, text) in ["1760688000", "hello", "#ff8800", "SGVsbG8sIOS4lueVjA=="].enumerated() {
+            try old.insert(ClipContent(kind: .text, text: text), source: nil, at: Date(timeIntervalSince1970: Double(i)))
+        }
+        try old.insert(ClipContent(kind: .link, text: "https://example.com"), source: nil, at: Date(timeIntervalSince1970: 9))
+        // 退回第 6 版：去掉子类型列。
+        let raw = try SQLiteDatabase(path: path)
+        try raw.execute("ALTER TABLE clips DROP COLUMN text_subtype; PRAGMA user_version = 6;")
+
+        let store = try ClipStore(path: path)
+        #expect(try raw.userVersion == 7)
+        #expect(try store.items().allSatisfy { $0.textSubtype == nil })
+        #expect(try store.backfillTextSubtypes(limit: 3) == 3)
+        #expect(try store.backfillTextSubtypes(limit: 3) == 1)
+        #expect(try store.backfillTextSubtypes(limit: 3) == 0)
+        #expect(try store.items(matching: ClipQuery(kinds: [.text])).map(\.textSubtype) == [.base64, .color, nil, .timestamp])
     }
 }

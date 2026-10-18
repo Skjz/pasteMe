@@ -425,7 +425,34 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             model.pinToRecentPinboard()
         case .showInHistory:
             if model.canShowInHistory { model.showInHistory() }
+        case .showConversions:
+            showConversionMenu()
         }
+    }
+
+    /// ⌘T：在选中的卡片标题栏下面弹出「转换」菜单，和右键菜单里的一样（#27）。
+    /// 卡片的位置取删除动画记下的布局（`CardDust` 的视图盖在卡片列表上，坐标和卡片的布局一致）。
+    private func showConversionMenu() {
+        guard let item = model.selectedItem, item.kind == .text || item.kind == .link,
+              let frame = dust.visibleFrame(of: item.id)
+        else { return }
+        let options = model.conversionOptions(for: item)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        if options.isEmpty {
+            let note = NSMenuItem(title: ConversionOption.tooLongNote, action: nil, keyEquivalent: "")
+            note.isEnabled = false
+            menu.addItem(note)
+        }
+        for (index, option) in options.enumerated() {
+            if index > 0, option.conversion == .encodeBase64 { menu.addItem(.separator()) }
+            let entry = ClosureMenuItem(option.menuTitle(for: item.textSubtype)) { [weak self] in
+                self?.model.convert(item, using: option.conversion)
+            }
+            entry.isEnabled = option.unavailableReason == nil
+            menu.addItem(entry)
+        }
+        menu.popUp(positioning: nil, at: CGPoint(x: frame.minX + 10, y: frame.minY + ClipCardView.headerHeight), in: dust.view)
     }
 
     /// SwiftUI 的 `TextField` 在 macOS 上由 `NSTextField` 实现，面板里只有这一个。

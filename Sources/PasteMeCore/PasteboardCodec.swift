@@ -124,7 +124,7 @@ public enum PasteboardCodec {
     }
 
     /// 整段内容是否就是一个 http(s) 链接。
-    static func isWebLink(_ string: String) -> Bool {
+    public static func isWebLink(_ string: String) -> Bool {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.contains(where: \.isWhitespace),
               let url = URL(string: trimmed),
