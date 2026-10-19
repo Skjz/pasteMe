@@ -75,12 +75,44 @@ import Testing
         #expect(ByteText.fromHexdump(xxd) == Array(32..<40).map(UInt8.init) + Array(repeating: 0x41, count: 24))
     }
 
+    @Test func hexdumpWithACharacterColumnWithoutBars() {
+        // 抓包工具拷出来的 TLS 握手：每行 32 个字节，字符栏不带竖线。
+        // 字符栏里有空格（0x20）、有 `|`（0x7c），有一行以空格开头，最后一行不满。
+        let dump = """
+            00000160  14 d9 7a ed 69 8c 82 33 28 7d bb 50 c9 23 38 d7 42 9c 85 f4 4e 6d 4b 08 27 59 83 02 b1 6d 56 f3  ..z.i..3(}.P.#8.B...NmK.'Y...mV.
+            00000180  b8 02 15 7c 3b dc 5f e6 26 00 b8 19 aa 63 cb 89 1e 83 8b 09 67 96 40 d8 cc 16 48 95 d3 e6 17 ff  ...|;._.&....c......g.@...H.....
+            000001a0  c2 27 7f c5 20 1d 59 cf e0 8a b9 c8 22 53 6a cb 84 74 51 78 6d 13 34 5b 4b a8 33 c4 01 8f 39 14  .'.. .Y....."Sj..tQxm.4[K.3...9.
+            """
+        let bytes = ByteText.fromHexdump(dump)
+        #expect(detect(dump) == .hexdump)
+        #expect(bytes?.count == 96)
+        #expect(bytes?.prefix(4) == [0x14, 0xd9, 0x7a, 0xed])
+        #expect(bytes?.suffix(2) == [0x39, 0x14])
+
+        let leadingSpace = """
+            000005e0  20 7f 99 a3 a5 fe f6 a9 36 36 db ca ea 64 00 35 72 24 cd ed 9f 95 e8 50 99 80 9f ad 10 5a 0d 29   .......66...d.5r$.....P.....Z.)
+            """
+        #expect(ByteText.fromHexdump(leadingSpace)?.first == 0x20)
+
+        let shortLastLine = """
+            000006e0  5d 7d 06 f3 7b a9 05 e3 74 5b a3 b6 5a f4 60 91 18 12 a8 00 0a 00 0c 00 0a aa aa 11 ec 00 1d 00  ]}..{...t[..Z.`.................
+            00000700  17 00 18 00 2b 00 07 06 0a 0a 03 04 03 03 00 12 00 00 00 23 00 00 1a 1a 00 01 00                 ....+..............#.......
+            """
+        #expect(ByteText.fromHexdump(shortLastLine)?.count == 59)
+
+        // 字符栏开头像字节（`ab cd`）时也不多算。
+        let wordy = "00000000  61 62 20 63 64 0a  ab cd."
+        #expect(ByteText.fromHexdump(wordy) == Array("ab cd\n".utf8))
+    }
+
     @Test func notHexdump() {
         for text in [
             "20240102  12 30",
             "00000000  48 65\n00000005  6c 6c",  // 偏移量对不上
             "0000000 6548 6c6c 000a",  // 不带 -C 的 hexdump 是按 16 位小端写的，不认
             "1234567  hello world",
+            "00000000  48 65 6c  Hex",  // 字符栏和字节对不上
+            "00000000  48 65  He|",
         ] {
             #expect(detect(text) != .hexdump, "\(text)")
         }
