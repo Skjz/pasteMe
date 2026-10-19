@@ -206,6 +206,7 @@ public enum ByteText {
 
     private enum DumpStyle {
         /// `hexdump -C`：偏移量后两个空格，每个字节两位，右边 `|字符栏|`，最后一行只有总长度。
+        /// 抓包工具等拷出来的同类格式也算：每行字节数不限，字符栏可以不带竖线。
         case canonical
         /// `xxd`：偏移量后是冒号和空格，两个字节一组，右边两个空格后是字符栏。
         case xxd
@@ -264,38 +265,27 @@ public enum ByteText {
             }
 
             let lineStyle: DumpStyle
-            let hexArea: Substring
+            var lineBytes: [UInt8] = []
             if rest.hasPrefix(": ") {
                 lineStyle = .xxd
-                let body = rest.dropFirst(2)
-                if let gap = body.range(of: "  ") {
-                    hexArea = body[..<gap.lowerBound]
+                var hexArea = rest.dropFirst(2)
+                if let gap = hexArea.range(of: "  ") {
+                    hexArea = hexArea[..<gap.lowerBound]
                     sawCharacterColumn = true
-                } else {
-                    hexArea = body
                 }
-            } else if rest.hasPrefix("  ") {
+                for group in hexArea.split(whereSeparator: \.isWhitespace) {
+                    guard let parsed = Self.bytes(fromHexDigits: group.utf8), !parsed.isEmpty else { return nil }
+                    lineBytes += parsed
+                }
+            } else if rest.hasPrefix("  "), let parsed = canonicalLine(rest.dropFirst(2).utf8) {
                 lineStyle = .canonical
-                let body = rest.dropFirst(2)
-                if let bar = body.firstIndex(of: "|") {
-                    guard body.last == "|", body.index(after: bar) < body.endIndex else { return nil }
-                    hexArea = body[..<bar]
-                    sawCharacterColumn = true
-                } else {
-                    hexArea = body
-                }
+                lineBytes = parsed.bytes
+                if parsed.hasCharacterColumn { sawCharacterColumn = true }
             } else {
                 return nil
             }
             guard style == nil || style == lineStyle else { return nil }
             style = lineStyle
-
-            var lineBytes: [UInt8] = []
-            for group in hexArea.split(whereSeparator: \.isWhitespace) {
-                if lineStyle == .canonical { guard group.utf8.count == 2 else { return nil } }
-                guard let parsed = Self.bytes(fromHexDigits: group.utf8), !parsed.isEmpty else { return nil }
-                lineBytes += parsed
-            }
             guard !lineBytes.isEmpty, advance(to: offset) else { return nil }
             if start == nil { start = offset }
             bytes += lineBytes
@@ -303,6 +293,52 @@ public enum ByteText {
         }
         guard !bytes.isEmpty, !repeating, sawCharacterColumn || lineCount >= 2 else { return nil }
         return bytes
+    }
+
+    /// `hexdump -C` 这类的一行在偏移量之后的部分：一个个两位的字节，右边可以有字符栏。
+    /// 字符栏或者用竖线围起来（`|Hello.|`），或者不带竖线、和字节隔开至少两个空格（`Hello.`）。
+    /// 不带竖线时字符栏要和字节一个个对得上；字符栏开头像字节时（比如 `ab cd`），少算几个字节再对。
+    private static func canonicalLine(_ body: Substring.UTF8View) -> (bytes: [UInt8], hasCharacterColumn: Bool)? {
+        let line = Array(body)
+        var bytes: [UInt8] = []
+        var ends: [Int] = []
+        var index = 0
+        while true {
+            var start = index
+            while start < line.count, isSpace(line[start]) { start += 1 }
+            let end = start + 2
+            guard end <= line.count, isHexDigit(line[start]), isHexDigit(line[start + 1]),
+                  end == line.count || isSpace(line[end])
+            else { break }
+            bytes.append(hexValue(line[start]) << 4 | hexValue(line[start + 1]))
+            ends.append(end)
+            index = end
+        }
+        guard !bytes.isEmpty else { return nil }
+        let column = line[index...].drop(while: isSpace)
+        if column.isEmpty { return (bytes, false) }
+        if column.count >= 2, column.first == UInt8(ascii: "|"), column.last == UInt8(ascii: "|") {
+            return (bytes, true)
+        }
+        for count in stride(from: bytes.count, to: 0, by: -1)
+        where characterColumn(line[ends[count - 1]...], shows: bytes[..<count]) {
+            return (Array(bytes[..<count]), true)
+        }
+        return nil
+    }
+
+    private static func isSpace(_ c: UInt8) -> Bool { c == 0x20 || c == 0x09 }
+
+    /// `text` 是字节后面的部分：至少两个空格，然后是字符栏，可打印的 ASCII 原样显示，其他字节显示成 `.`。
+    /// 行尾的空格已经去掉了，所以末尾是 0x20 的字节不比。
+    private static func characterColumn(_ text: ArraySlice<UInt8>, shows bytes: ArraySlice<UInt8>) -> Bool {
+        var shown = bytes
+        while shown.last == 0x20 { shown.removeLast() }
+        let gap = text.count - shown.count
+        guard gap >= 2, text.prefix(gap).allSatisfy(isSpace) else { return false }
+        return zip(text.suffix(shown.count), shown).allSatisfy { character, byte in
+            character == ((0x20...0x7e).contains(byte) ? byte : UInt8(ascii: "."))
+        }
     }
 
     /// `hexdump -C` 的格式：8 位偏移量，每行 16 字节，右边是字符栏，和上一行相同的行用 `*` 省略，最后一行是总长度。
