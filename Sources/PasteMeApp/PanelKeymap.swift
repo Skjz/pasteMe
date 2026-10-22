@@ -42,6 +42,7 @@ enum PanelCommand: Equatable {
     case moveSelection(by: Int)
     case focus(PanelFocus)
     case paste(PasteMode)
+    /// ⌘1…⌘9：`index` 从 0 开始，从第一张完整显示的卡片数起（#39），见 `HistoryModel.paste(at:as:)`。
     case pasteAt(index: Int, PasteMode)
     case deleteSelected
     case undoDelete
@@ -88,6 +89,11 @@ enum PanelKeyAction: Equatable {
 /// 焦点在卡片上时空格打开预览，预览开着时空格和 esc 关掉它（#10）。⌘T 在选中的卡片下面弹出「转换」菜单（#27）。⌘← ⌘→ 在「历史」和各个 Pinboard
 /// 之间切换，规则和 ← → 一样：搜索框里有文字时交给搜索框移动插入点（#9）。
 enum PanelKeymap {
+    /// 按着这些修饰键时卡片上显示 ⌘1…⌘9（#39）：⌘，或者 ⇧⌘（以纯文本粘贴）。还按着 ⌥ 或 ⌃ 时不显示。
+    static func showsShortcutHints(command: Bool, option: Bool, control: Bool) -> Bool {
+        command && !option && !control
+    }
+
     static func action(for key: PanelKey, in context: PanelContext) -> PanelKeyAction {
         guard !context.composing else { return .passThrough }
         let onCards = context.focus == .cards

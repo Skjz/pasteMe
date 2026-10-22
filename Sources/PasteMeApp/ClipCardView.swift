@@ -5,14 +5,14 @@ import SwiftUI
 /// 一张历史卡片：彩色标题栏（类型、时间、来源应用图标）+ 内容预览 + 底部信息。
 struct ClipCardView: View {
     let item: ClipItem
-    /// 1…9，显示 ⌘n 提示；超过 9 条为 nil。
+    /// 1…9，在右下角显示 ⌘n 提示。只在按住 ⌘ 时有（#39），其余时候为 nil。
     let shortcutIndex: Int?
     /// 当前的搜索文字。命中图片里的文字时，卡片底部显示命中的那一段。
     var searchText = ""
     /// 在标题栏里编辑标题时的输入框（#33），放在标题的位置。只有正在编辑的那张卡片有。
     var titleField: AnyView?
 
-    static let size = CGSize(width: 230, height: 240)
+    nonisolated static let size = CGSize(width: 230, height: 240)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -187,9 +187,16 @@ struct ClipCardView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            if let shortcutIndex {
-                Text("⌘\(shortcutIndex)")
+        }
+        // ⌘n 盖在底部右端：出现和消失时底部的文字不用重新排版，只播放提示自己的动画（#39）。
+        .overlay(alignment: .trailing) {
+            Group {
+                if let shortcutIndex {
+                    ShortcutHint(number: shortcutIndex)
+                        .transition(.offset(y: ShortcutHint.outside))
+                }
             }
+            .animation(ShortcutHint.animation(for: shortcutIndex), value: shortcutIndex == nil)
         }
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
@@ -204,6 +211,34 @@ struct ClipCardView: View {
         case .image: item.sourceName ?? ""
         case .file: item.filePaths.count == 1 ? "1 个文件" : "\(item.filePaths.count) 个文件"
         }
+    }
+}
+
+/// 卡片右下角的 ⌘n（#39）。按住 ⌘ 时从卡片下边缘外面滑进来，从左到右依次出现；松开时滑回去。
+/// 底部的文字很长时会伸到它下面，所以左边用卡片的底色渐隐，盖住下面的字。
+private struct ShortcutHint: View {
+    let number: Int
+
+    var body: some View {
+        let background = Color(nsColor: .textBackgroundColor)
+        Text("⌘\(number)")
+            .padding(.leading, 14)
+            .background {
+                LinearGradient(colors: [background.opacity(0), background], startPoint: .leading, endPoint: .center)
+            }
+    }
+
+    /// 起点和终点往下移的距离：底部留白 8 点加上文字的高度，编号整个在卡片下边缘以外，被卡片的圆角裁掉，
+    /// 看起来是从卡片外面进来的。
+    static let outside: CGFloat = 22
+
+    /// 编号出现、消失时用的动画，由 `.animation(_:value:)` 按有没有编号触发：模型不用包 `withAnimation`，
+    /// 滚动时新进入 ⌘1…⌘9 的卡片也会滑进来、离开的滑出去。不能把动画挂在过渡上（`.transition(….animation(…))`），
+    /// 那样只有透明度会动，位移直接跳到终点（`SwiftUIAssumptionTests` 检查）。
+    /// 只有位移，没有淡入和缩放；进来用不回弹的短弹簧，每个编号只晚 0.01 秒，整排 0.3 秒内到位。
+    static func animation(for number: Int?) -> Animation {
+        guard let number else { return .easeIn(duration: 0.1) }
+        return .spring(duration: 0.2, bounce: 0).delay(Double(number - 1) * 0.01)
     }
 }
 

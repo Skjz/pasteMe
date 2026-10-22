@@ -10,16 +10,16 @@ protocol CardRemovalEffect: AnyObject {
     /// 卡片要在这次变化里移动位置（补上空位，或者撤销删除时让位）：返回用的动画。
     /// 实现方据此知道紧接着的布局变化是这个动画，用来算出卡片滑到一半时的位置。
     func slideAnimation() -> Animation?
-    /// 卡片将从列表里删除：开始播放它消失的动画，播完时调用 `completion`。
-    /// 返回 false 表示没有播放（例如开启了「减少动态效果」），也不会调用 `completion`。
+    /// 卡片将从列表里删除：开始播放它消失的动画，播完时调用 `completion`。`shortcut` 是卡片上现在显示的 ⌘n，
+    /// 没有显示时为 nil。返回 false 表示没有播放（例如开启了「减少动态效果」），也不会调用 `completion`。
     func playDisappear(
-        _ item: ClipItem, at index: Int, selected: Bool, searchText: String,
+        _ item: ClipItem, shortcut: Int?, selected: Bool, searchText: String,
         completion: @escaping () -> Void
     ) -> Bool
     /// 卡片已经放回列表、处于隐藏状态：播放它出现的动画，结束时调用 `completion`，这时卡片才应显示。
     /// 返回 false 表示不播放，也不会调用 `completion`。
     func playAppear(
-        _ item: ClipItem, at index: Int, searchText: String,
+        _ item: ClipItem, shortcut: Int?, searchText: String,
         completion: @escaping () -> Void
     ) -> Bool
     /// 停掉所有动画，不调用它们的 `completion`。
@@ -88,7 +88,7 @@ enum Removal: Equatable {
 struct PanelCard: Identifiable, Equatable {
     /// 条目，空位时是被删的条目。卡片变成空位时视图还是同一个，只是不再显示。
     let item: ClipItem
-    /// 在 `HistoryModel.items` 里的位置，⌘1…⌘9 按它算。空位为 nil。
+    /// 在 `HistoryModel.items` 里的位置。空位为 nil。
     let index: Int?
 
     var id: Int64 { item.id }
@@ -144,6 +144,10 @@ final class HistoryModel {
     private(set) var titleEditingID: Int64?
     /// 标题栏输入框里的文字。
     var titleDraft = ""
+    /// 最左边一张完整显示的格子在 `cards` 里的位置，`HistoryView` 滚动时更新。⌘1…⌘9 从这里数起（#39）。
+    var firstVisibleCard = 0
+    /// 按住 ⌘（或 ⇧⌘）已经超过 `shortcutHintDelay`，卡片上显示 ⌘1…⌘9（#39）。
+    private(set) var shortcutKeysHeld = false
     /// 每次面板弹出时加一，视图据此同步焦点、重新播放卡片出现的动画。
     private(set) var showCount = 0
     /// 撤销删除后、出现动画播完之前的卡片。视图不画它们，由动画代替。
@@ -162,6 +166,12 @@ final class HistoryModel {
     /// SwiftUI 进入 `withAnimation` 前会先渲染之前的改动（见 `PanelFlushTests`）。
     @ObservationIgnored var animate: (Animation?, () -> Void) -> Void = { animation, body in
         withAnimation(animation, body)
+    }
+    /// 过一段时间再执行，用来推迟显示 ⌘1…⌘9。测试替换它，自己决定什么时候执行。
+    @ObservationIgnored var schedule: (TimeInterval, @escaping @MainActor () -> Void) -> Void = { delay, action in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            MainActor.assumeIsolated { action() }
+        }
     }
 
     /// 粘贴某个条目。
@@ -201,6 +211,10 @@ final class HistoryModel {
     @ObservationIgnored private var reorderPending = false
     /// 这次打开面板后最后一次 ⌘C 拷贝的条目，面板收起时移到历史最前（#35）。
     @ObservationIgnored private(set) var copiedID: Int64?
+    /// 现在按着 ⌘ 或 ⇧⌘，不管按了多久。
+    @ObservationIgnored private var shortcutKeysDown = false
+    /// 每次按下、松开 ⌘ 时加一，用来认出已经作废的那次推迟显示。
+    @ObservationIgnored private var shortcutKeysGeneration = 0
     /// 本次打开面板后、在当前标签里删除或拿掉的条目，最后的在末尾。面板重新打开或切换标签时清空。
     private var removals: [Removal] = []
 
@@ -399,6 +413,11 @@ final class HistoryModel {
         titleEditingID = nil
         copiedID = nil
         focus = .cards
+        // 卡片从最前面开始显示（`HistoryView` 滚回开头），⌘1 是最新的一条。按着的修饰键由 `PanelController` 接着告诉模型。
+        firstVisibleCard = 0
+        shortcutKeysDown = false
+        shortcutKeysGeneration += 1
+        shortcutKeysHeld = false
         pinboardID = nil
         historyLimit = Self.defaultLimit
         draggingID = nil
@@ -827,7 +846,10 @@ final class HistoryModel {
     }
 
     /// 面板开始收起：保存标题栏里正在输入的标题，把拷贝过的条目移到历史最前。
+    /// 已经显示的 ⌘1…⌘9 跟着面板滑出去，不在收起动画里淡出；还没到时间的不再显示。
     func panelWillHide() {
+        shortcutKeysDown = false
+        shortcutKeysGeneration += 1
         commitTitle()
         if let id = copiedID {
             copiedID = nil
@@ -839,10 +861,59 @@ final class HistoryModel {
         }
     }
 
-    /// ⌘1…⌘9：粘贴当前列表里的第 n 条。
+    /// 收起动画播完、面板已经不在屏幕上：这时才去掉还显示着的 ⌘1…⌘9，下次呼出时不在呼出动画里淡出。
+    func panelDidHide() {
+        if shortcutKeysHeld { shortcutKeysHeld = false }
+    }
+
+    /// ⌘1…⌘9：粘贴从第一张完整显示的卡片数起的第 `index + 1` 条，和卡片上显示的 ⌘n 一致（#39）。
     func paste(at index: Int, as mode: PasteMode = .original) {
+        let index = firstShortcutIndex + index
         guard items.indices.contains(index) else { return }
         onPaste(items[index], mode)
+    }
+
+    // MARK: - ⌘1…⌘9 的提示（#39）
+
+    /// 按住多久才显示 ⌘1…⌘9：快速按 ⌘C、⌘R 这类组合键，或者按 ⇧⌘V 呼出面板后马上松开时，提示不会闪一下。
+    static let shortcutHintDelay: TimeInterval = 0.2
+
+    /// 卡片右下角显示 ⌘1…⌘9。编辑标题时 ⌘数字 交给输入框，不显示。
+    var showsShortcutHints: Bool { shortcutKeysHeld && focus != .title }
+
+    /// ⌘1 对应的条目在 `items` 里的位置：第一张完整显示的卡片，它前面的空位不算。
+    var firstShortcutIndex: Int {
+        guard !gaps.isEmpty else { return min(firstVisibleCard, items.count) }
+        return cards.dropFirst(firstVisibleCard).first { !$0.isGap }?.index ?? items.count
+    }
+
+    /// 卡片上显示的 ⌘n。`index` 是条目在 `items` 里的位置（空位为 nil），`first` 是 `firstShortcutIndex`，
+    /// 不显示提示时传 nil。不在 ⌘1…⌘9 里的为 nil。
+    static func shortcutNumber(forItemAt index: Int?, first: Int?) -> Int? {
+        guard let index, let first, (first..<first + 9).contains(index) else { return nil }
+        return index - first + 1
+    }
+
+    /// `items` 里这个位置的卡片现在显示的 ⌘n，删除和撤销的动画照着画。
+    private func shortcutNumber(forItemAt index: Int) -> Int? {
+        Self.shortcutNumber(forItemAt: index, first: showsShortcutHints ? firstShortcutIndex : nil)
+    }
+
+    /// 面板上按着的修饰键变了。`held` 表示按着 ⌘ 或 ⇧⌘（`PanelKeymap.showsShortcutHints`）：
+    /// 一直按着 `shortcutHintDelay` 才显示提示，松开或者又按了 ⌥、⌃ 时马上隐藏。
+    func shortcutKeysChanged(held: Bool) {
+        guard held != shortcutKeysDown else { return }
+        shortcutKeysDown = held
+        shortcutKeysGeneration += 1
+        guard held else {
+            if shortcutKeysHeld { shortcutKeysHeld = false }
+            return
+        }
+        let generation = shortcutKeysGeneration
+        schedule(Self.shortcutHintDelay) { [weak self] in
+            guard let self, self.shortcutKeysGeneration == generation else { return }
+            self.shortcutKeysHeld = true
+        }
     }
 
     /// 删除一个条目，默认是选中的那个。在 Pinboard 里只是把条目从这个 Pinboard 拿掉，条目还在历史里。
@@ -869,7 +940,8 @@ final class HistoryModel {
 
         let played = index.map { index in
             removalEffect?.playDisappear(
-                item, at: index, selected: item.id == selectedID, searchText: currentQuery.text,
+                item, shortcut: shortcutNumber(forItemAt: index), selected: item.id == selectedID,
+                searchText: currentQuery.text,
                 completion: { [weak self] in self?.closeGap(item.id) }
             ) ?? false
         } ?? false
@@ -931,7 +1003,9 @@ final class HistoryModel {
         }
         finishedGaps.remove(id)
         let played = items.firstIndex { $0.id == id }.map { index in
-            removalEffect?.playAppear(items[index], at: index, searchText: currentQuery.text) { [weak self] in
+            removalEffect?.playAppear(
+                items[index], shortcut: shortcutNumber(forItemAt: index), searchText: currentQuery.text
+            ) { [weak self] in
                 self?.hiddenIDs.remove(id)
                 // 剩下的空位可能在等这张卡片拼好。
                 self?.closeGapsIfAllFinished()

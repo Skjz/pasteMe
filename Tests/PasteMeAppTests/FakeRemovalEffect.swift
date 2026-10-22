@@ -7,7 +7,7 @@ import SwiftUI
 final class FakeRemovalEffect: CardRemovalEffect {
     struct Call {
         var id: Int64
-        var index: Int
+        var shortcut: Int?
         var selected = false
         var searchText: String
     }
@@ -24,19 +24,19 @@ final class FakeRemovalEffect: CardRemovalEffect {
     private var pendingAppear: [Int64: () -> Void] = [:]
 
     func playDisappear(
-        _ item: ClipItem, at index: Int, selected: Bool, searchText: String,
+        _ item: ClipItem, shortcut: Int?, selected: Bool, searchText: String,
         completion: @escaping () -> Void
     ) -> Bool {
         guard playsDisappear else { return false }
-        disappeared.append(Call(id: item.id, index: index, selected: selected, searchText: searchText))
+        disappeared.append(Call(id: item.id, shortcut: shortcut, selected: selected, searchText: searchText))
         pendingAppear[item.id] = nil
         pendingDisappear[item.id] = completion
         return true
     }
 
-    func playAppear(_ item: ClipItem, at index: Int, searchText: String, completion: @escaping () -> Void) -> Bool {
+    func playAppear(_ item: ClipItem, shortcut: Int?, searchText: String, completion: @escaping () -> Void) -> Bool {
         guard playsAppear else { return false }
-        appeared.append(Call(id: item.id, index: index, searchText: searchText))
+        appeared.append(Call(id: item.id, shortcut: shortcut, searchText: searchText))
         pendingDisappear[item.id] = nil
         pendingAppear[item.id] = completion
         return true

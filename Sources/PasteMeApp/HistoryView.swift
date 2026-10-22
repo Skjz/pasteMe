@@ -11,10 +11,12 @@ struct HistoryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// 为 false 时前几张卡片处于出现动画的起点（下移、透明）。每次呼出面板先设为 false，再动画到 true。
     @State private var cardsRevealed = true
+    /// 卡片列表滚到了后面，第一张没有完整显示。下次呼出面板时要滚回最前面。
+    @State private var scrolledPastFirst = false
 
     /// 只给前几张卡片做依次出现的动画，屏幕外的卡片直接显示。
     private static let staggeredCards = 8
-    static let cardSpacing: CGFloat = 18
+    nonisolated static let cardSpacing: CGFloat = 18
     /// 卡片列表左右两端的留白。选中的卡片放大、外面再套一圈光标后，离面板边缘仍有约 20 点。
     private static let sideMargin: CGFloat = 30
     /// 选中的卡片放大到的比例。
@@ -132,10 +134,12 @@ struct HistoryView: View {
     private var cards: some View {
         ScrollViewReader { proxy in
             let searchText = model.currentQuery.text
+            // 没按住 ⌘ 时不读滚动位置，滚动时卡片列表不用重新计算。
+            let firstShortcut = model.showsShortcutHints ? model.firstShortcutIndex : nil
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: Self.cardSpacing) {
                     ForEach(Array(model.cards.enumerated()), id: \.element.id) { position, card in
-                        cardView(card, position: position, searchText: searchText)
+                        cardView(card, position: position, searchText: searchText, firstShortcut: firstShortcut)
                             .transition(Self.cardTransition)
                             .id(card.id)
                     }
@@ -143,7 +147,15 @@ struct HistoryView: View {
                 .padding(.vertical, 10)
                 // 卡片在滚动区域里竖直居中，光标也竖直居中，只按序号算横向位置。
                 .overlay(alignment: .leading) { cursor }
+                // ⌘1…⌘9 从第一张完整显示的卡片数起（#39）。滚动时每帧只算出一个序号，跨过一张卡片时才告诉模型。
+                .onGeometryChange(for: Int.self) { geometry in
+                    Self.firstFullyVisibleCard(contentMinX: geometry.frame(in: .named(Self.scrollSpace)).minX)
+                } action: { first in
+                    model.firstVisibleCard = first
+                    if scrolledPastFirst != (first > 0) { scrolledPastFirst = first > 0 }
+                }
             }
+            .coordinateSpace(.named(Self.scrollSpace))
             // 放大的卡片和光标的光晕会超出滚动区域的上下边，不裁掉。
             .scrollClipDisabled()
             // 左右留白用 contentMargins 而不是 padding：滚动到某张卡片时，scrollTo 也会留出这段距离，
@@ -153,22 +165,38 @@ struct HistoryView: View {
                 guard let id else { return }
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
             }
+            // 呼出面板时从最前面开始显示：上次可能用触控板滚到了后面，而选中项还是第一张，上面的 scrollTo 不会触发。
+            // 已经在最前面时不滚：再滚一次，呼出动画会多缺一帧。
+            .onChange(of: model.showCount) {
+                if scrolledPastFirst, let first = model.cards.first?.id { proxy.scrollTo(first) }
+            }
         }
         .padding(.bottom, 10)
     }
 
-    /// 一张卡片和它的选中效果、手势、右键菜单。`position` 是在 `cards` 里的位置。
+    /// 卡片列表滚动区域的坐标系，用来算出滚动到了哪里。
+    nonisolated private static let scrollSpace = "cardScroll"
+
+    /// 最左边一张完整显示的格子在 `cards` 里的位置（#39）。`contentMinX` 是卡片列表的左边在滚动区域里的位置，
+    /// 往右翻时变成负数。差半个点以内也算完整显示，滚动停在小数位置上时不会少算一张。
+    nonisolated static func firstFullyVisibleCard(contentMinX: CGFloat) -> Int {
+        let pitch = ClipCardView.size.width + cardSpacing
+        return max(0, Int(((-contentMinX - 0.5) / pitch).rounded(.up)))
+    }
+
+    /// 一张卡片和它的选中效果、手势、右键菜单。`position` 是在 `cards` 里的位置，`firstShortcut` 是
+    /// ⌘1 那张卡片在 `items` 里的位置，不显示 ⌘1…⌘9 时为 nil。
     ///
     /// 删除后颗粒还没散完时，卡片变成空位：还是这个视图、占着原来的地方，只是透明、不接收点击，
     /// 所以右边的卡片不动。换成另一种视图的话，正在播放选中动画的卡片会被多留一会儿、多占一格。
-    private func cardView(_ card: PanelCard, position: Int, searchText: String) -> some View {
+    private func cardView(_ card: PanelCard, position: Int, searchText: String, firstShortcut: Int?) -> some View {
         let item = card.item
         let selected = item.id == model.selectedID
         let visible = !card.isGap && !model.hiddenIDs.contains(item.id)
         let editingTitle = item.id == model.titleEditingID
         return ClipCardView(
             item: item,
-            shortcutIndex: card.index.flatMap { $0 < 9 ? $0 + 1 : nil },
+            shortcutIndex: HistoryModel.shortcutNumber(forItemAt: card.index, first: firstShortcut),
             searchText: searchText,
             titleField: editingTitle ? AnyView(CardTitleField(model: model, placeholder: item.typeTitle)) : nil
         )
