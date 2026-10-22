@@ -54,6 +54,9 @@ final class SQLiteDatabase {
         while try statement.step() {}
     }
 
+    /// 上一条 INSERT、UPDATE 或 DELETE 改动的行数。
+    var changes: Int { Int(sqlite3_changes(handle)) }
+
     var userVersion: Int {
         get throws {
             let statement = try prepare("PRAGMA user_version")

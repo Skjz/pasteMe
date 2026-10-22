@@ -248,14 +248,15 @@ import PasteMeCore
     var text: ClipItem { model.items.first { $0.kind == .text }! }
     var image: ClipItem { model.items.first { $0.kind == .image }! }
 
-    @Test func previewEditAndRenameAskForTheRightWindow() {
+    @Test func previewEditAndNewTextAskForTheRightWindow() {
         model.preview()
         model.edit(text)
         model.edit(image)
+        // 起标题在卡片的标题栏里做，不打开预览（#33）。
         model.rename(image)
         model.newText()
 
-        #expect(requests == [.show(image), .edit(text), .rename(image), .newText])
+        #expect(requests == [.show(image), .edit(text), .newText])
     }
 
     @Test func savedEditsShowUpOnTheCard() throws {

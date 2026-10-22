@@ -65,8 +65,6 @@ enum PreviewRequest: Equatable {
     case show(ClipItem)
     /// 改文字：打开预览，键盘焦点放进正文。
     case edit(ClipItem)
-    /// 起标题：打开预览，键盘焦点放进标题。
-    case rename(ClipItem)
     /// ⌘N：新建一条文本，在当前 Pinboard 里时也固定到这里。
     case newText
 }
@@ -138,7 +136,14 @@ final class HistoryModel {
     var isPanelVisible = false
     /// 键盘操作当前作用于搜索框还是卡片列表，视图据此移动键盘焦点。呼出面板时在卡片列表上：
     /// 在卡片上打字也会进入搜索框（`PanelKeymap`），所以一打开就能用方向键、⌘⌫ 操作卡片。
-    var focus: PanelFocus = .cards
+    var focus: PanelFocus = .cards {
+        // 编辑标题时焦点去了别处（点进搜索框、点了别的卡片），按保存处理。
+        didSet { if oldValue == .title, focus != .title { commitTitle() } }
+    }
+    /// 正在卡片标题栏里编辑标题的条目（#33），这时焦点是 `.title`。没有在编辑时为 nil。
+    private(set) var titleEditingID: Int64?
+    /// 标题栏输入框里的文字。
+    var titleDraft = ""
     /// 每次面板弹出时加一，视图据此同步焦点、重新播放卡片出现的动画。
     private(set) var showCount = 0
     /// 撤销删除后、出现动画播完之前的卡片。视图不画它们，由动画代替。
@@ -161,6 +166,8 @@ final class HistoryModel {
 
     /// 粘贴某个条目。
     @ObservationIgnored var onPaste: (ClipItem, PasteMode) -> Void = { _, _ in }
+    /// 把条目写进剪贴板，不粘贴，也不移到历史最前（#35）。
+    @ObservationIgnored var onCopy: (ClipItem) -> Void = { _ in }
     /// 打开应用别名窗口，并定位到这个应用（bundle id）。
     @ObservationIgnored var onEditAliases: (String) -> Void = { _ in }
     /// 打开预览窗口。
@@ -175,6 +182,8 @@ final class HistoryModel {
     @ObservationIgnored var onNotice: (String, String) -> Void = { _, _ in }
     /// 选中项变了。预览窗口开着时跟着换内容。
     @ObservationIgnored var onSelectionChange: () -> Void = {}
+    /// 要在卡片标题栏里编辑标题了：预览开着时先关掉它，免得关闭时把旧标题存回去。
+    @ObservationIgnored var onWillEditTitle: () -> Void = {}
 
     @ObservationIgnored private let store: ClipStore
     /// 记住 ⌘P 用的 Pinboard。为 nil 时（测试）只在内存里记。
@@ -190,6 +199,8 @@ final class HistoryModel {
     private static let defaultLimit = 200
     /// 拖动排序改了 Pinboard 里的顺序，还没有写进数据库。
     @ObservationIgnored private var reorderPending = false
+    /// 这次打开面板后最后一次 ⌘C 拷贝的条目，面板收起时移到历史最前（#35）。
+    @ObservationIgnored private(set) var copiedID: Int64?
     /// 本次打开面板后、在当前标签里删除或拿掉的条目，最后的在末尾。面板重新打开或切换标签时清空。
     private var removals: [Removal] = []
 
@@ -385,6 +396,8 @@ final class HistoryModel {
         query = ""
         filters = PanelFilters()
         resetting = false
+        titleEditingID = nil
+        copiedID = nil
         focus = .cards
         pinboardID = nil
         historyLimit = Self.defaultLimit
@@ -426,6 +439,10 @@ final class HistoryModel {
         if !items.contains(where: { $0.id == selectedID }) {
             selectedID = items.first?.id
         }
+        // 正在编辑标题的卡片不在列表里了（例如换了筛选条件），输入框也没了：按保存处理。
+        if let id = titleEditingID, !items.contains(where: { $0.id == id }) {
+            commitTitle()
+        }
     }
 
     func reloadPinboards() {
@@ -453,6 +470,7 @@ final class HistoryModel {
     /// 切换到「历史」（nil）或某个 Pinboard。搜索词和筛选条件保留，在新的标签里接着搜索；撤销记录清空。
     func showTab(_ pinboardID: Int64?) {
         guard pinboardID != self.pinboardID else { return }
+        commitTitle()
         finishReordering()
         self.pinboardID = pinboardID
         historyLimit = Self.defaultLimit
@@ -564,6 +582,8 @@ final class HistoryModel {
     // MARK: - 拖动
 
     func beginDrag(_ item: ClipItem) {
+        // 在标题栏的输入框里拖动是选择文字。
+        guard item.id != titleEditingID else { return }
         onBeginDrag(item)
     }
 
@@ -649,19 +669,63 @@ final class HistoryModel {
                 onNotice("这一条没法这样转换", "exclamationmark.triangle")
                 return
             }
-            // 解码出来是一个网址时记成链接，和复制一个网址一样。
-            let isLink = PasteboardCodec.isWebLink(result)
-            let content = isLink
-                ? ClipContent(kind: .link, text: result.trimmingCharacters(in: .whitespacesAndNewlines))
-                : ClipContent(kind: .text, text: result)
-            let id = try store.insert(content, source: nil, at: now())
-            if isLink { onEdited(id) }
-            guard let converted = try store.item(id: id) else { return }
-            showInHistory(converted)
+            try record(result)
         } catch {
             NSLog("PasteMe: 转换失败：\(error)")
         }
     }
+
+    /// 把转换或计算出的结果记到历史最前面并选中。解码出来是一个网址时记成链接，和复制一个网址一样。
+    private func record(_ result: String) throws {
+        let isLink = PasteboardCodec.isWebLink(result)
+        let content = isLink
+            ? ClipContent(kind: .link, text: result.trimmingCharacters(in: .whitespacesAndNewlines))
+            : ClipContent(kind: .text, text: result)
+        let id = try store.insert(content, source: nil, at: now())
+        if isLink { onEdited(id) }
+        guard let recorded = try store.item(id: id) else { return }
+        showInHistory(recorded)
+    }
+
+    // MARK: - 哈希值（#37）
+
+    /// 文件条目算不了哈希值的原因（文件不在了、是文件夹），菜单里写在后面。能算时为 nil。
+    func hashUnavailableReason(for item: ClipItem) -> String? {
+        item.kind == .file ? HashInput.unavailableReason(forFiles: item.filePaths) : nil
+    }
+
+    /// 计算条目的哈希值：文本和链接算文字按 UTF-8 编码后的字节，文件算文件内容。在后台计算，面板不卡；
+    /// 算完后结果和转换一样记成一条新的文本条目，放到历史最前面并选中。返回后台的任务，测试用来等它算完。
+    @discardableResult
+    func computeHash(_ item: ClipItem, using algorithm: HashAlgorithm) -> Task<Void, Never>? {
+        let input: HashInput
+        switch item.kind {
+        case .text, .link:
+            guard let text = (try? store.content(id: item.id))?.text else { return nil }
+            input = .text(text)
+        case .file:
+            guard hashUnavailableReason(for: item) == nil else { return nil }
+            input = .files(item.filePaths.map { URL(fileURLWithPath: $0) })
+        case .image:
+            return nil
+        }
+        if input.fileSize > Self.largeFileSize {
+            onNotice("正在计算 \(algorithm.title)…", "number")
+        }
+        return Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { try algorithm.digest(of: input) }.result
+            guard let self else { return }
+            do {
+                try self.record(try result.get())
+            } catch {
+                NSLog("PasteMe: 计算 \(algorithm.title) 失败：\(error)")
+                self.onNotice("算不出 \(algorithm.title)：文件读取失败", "exclamationmark.triangle")
+            }
+        }
+    }
+
+    /// 超过这么大的文件，开始计算时先提示一下，几个 GB 的文件要算好几秒。
+    private static let largeFileSize = 200 * 1024 * 1024
 
     // MARK: - 预览和编辑
 
@@ -675,9 +739,37 @@ final class HistoryModel {
         onPreview(.edit(item))
     }
 
+    // MARK: - 标题（#33）
+
+    /// 起标题、改标题：选中这张卡片，它的标题栏变成输入框，已有的标题全选。不用打开预览。
     func rename(_ item: ClipItem? = nil) {
-        guard let item = item ?? selectedItem else { return }
-        onPreview(.rename(item))
+        guard let item = item ?? selectedItem, items.contains(where: { $0.id == item.id }) else { return }
+        commitTitle()
+        onWillEditTitle()
+        selectedID = item.id
+        titleDraft = item.title ?? ""
+        titleEditingID = item.id
+        focus = .title
+    }
+
+    /// 保存标题栏里输入的标题，焦点回到卡片上。清空了就是去掉标题，标题栏恢复显示类型。
+    func commitTitle() {
+        guard let id = titleEditingID else { return }
+        titleEditingID = nil
+        if focus == .title { focus = .cards }
+        do {
+            try store.setTitle(titleDraft, id: id)
+        } catch {
+            NSLog("PasteMe: 保存标题失败：\(error)")
+        }
+        reload()
+    }
+
+    /// esc：不保存，标题栏恢复原样。
+    func cancelTitle() {
+        guard titleEditingID != nil else { return }
+        titleEditingID = nil
+        focus = .cards
     }
 
     func newText() {
@@ -723,6 +815,28 @@ final class HistoryModel {
     func paste(_ item: ClipItem? = nil, as mode: PasteMode = .original) {
         guard let item = item ?? selectedItem else { return }
         onPaste(item, mode)
+    }
+
+    /// ⌘C、右键菜单「拷贝」（#35）：把条目写进剪贴板，用户之后自己粘贴。面板不收起，卡片也不动：
+    /// 条目等面板收起时（`panelWillHide`）才移到历史最前，下次打开面板时在最前面。
+    func copy(_ item: ClipItem? = nil) {
+        guard let item = item ?? selectedItem else { return }
+        onCopy(item)
+        copiedID = item.id
+        onNotice("已拷贝", "doc.on.doc")
+    }
+
+    /// 面板开始收起：保存标题栏里正在输入的标题，把拷贝过的条目移到历史最前。
+    func panelWillHide() {
+        commitTitle()
+        if let id = copiedID {
+            copiedID = nil
+            do {
+                try store.touch(id: id, at: now())
+            } catch {
+                NSLog("PasteMe: 移动拷贝的条目失败：\(error)")
+            }
+        }
     }
 
     /// ⌘1…⌘9：粘贴当前列表里的第 n 条。

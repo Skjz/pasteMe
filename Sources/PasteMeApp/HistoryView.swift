@@ -100,6 +100,7 @@ struct HistoryView: View {
         if model.showsSuggestions { return "↑ ↓ 选择   ↩ 筛选   esc 取消" }
         switch model.focus {
         case .search: return "← → 选择   ↓ 操作卡片   ↩ 粘贴   ⇧↩ 纯文本   esc 关闭"
+        case .title: return "↩ 保存标题   esc 取消"
         case .cards:
             let remove = model.pinboardID == nil ? "⌘⌫ 删除" : "⌘⌫ 移出   拖动排序"
             return "空格 预览   ↩ 粘贴   ⌘P 固定   \(remove)   ⌘Z 撤销   ⌘← ⌘→ 切换标签   直接打字搜索"
@@ -164,7 +165,13 @@ struct HistoryView: View {
         let item = card.item
         let selected = item.id == model.selectedID
         let visible = !card.isGap && !model.hiddenIDs.contains(item.id)
-        return ClipCardView(item: item, shortcutIndex: card.index.flatMap { $0 < 9 ? $0 + 1 : nil }, searchText: searchText)
+        let editingTitle = item.id == model.titleEditingID
+        return ClipCardView(
+            item: item,
+            shortcutIndex: card.index.flatMap { $0 < 9 ? $0 + 1 : nil },
+            searchText: searchText,
+            titleField: editingTitle ? AnyView(CardTitleField(model: model, placeholder: item.typeTitle)) : nil
+        )
             .scaleEffect(scale(selected: selected))
             .animation(SpringCurve.selection.animation, value: selected)
             // 放在选中动画外面：删除时卡片立即消失，不跟着选中的弹簧慢慢变淡。
@@ -181,8 +188,10 @@ struct HistoryView: View {
                 revealed: cardsRevealed || position >= Self.staggeredCards,
                 reduceMotion: reduceMotion
             ))
-            .onTapGesture(count: 2) { model.paste(item) }
+            // 编辑标题时，点、双击输入框是移动插入点、选词，不是选中或粘贴卡片。
+            .onTapGesture(count: 2) { if !editingTitle { model.paste(item) } }
             .simultaneousGesture(TapGesture().onEnded {
+                guard !editingTitle else { return }
                 model.selectedID = item.id
                 model.focus = .cards
             })
@@ -242,14 +251,26 @@ private struct CardContextMenu: View {
         if item.kind == .image, !model.pastesImagesAsFiles {
             Button("以文件粘贴") { model.paste(item, as: .file) }
         }
+        Button("拷贝") { model.copy(item) }
+            .keyboardShortcut("c", modifiers: .command)
         Divider()
         Button("预览") { model.preview(item) }
         if item.kind == .text || item.kind == .link {
             Button("编辑…") { model.edit(item) }
         }
-        Button(item.title == nil ? "添加标题…" : "修改标题…") { model.rename(item) }
+        Button(item.title == nil ? "添加标题" : "修改标题") { model.rename(item) }
+            .keyboardShortcut("r", modifiers: .command)
         if item.kind == .text || item.kind == .link {
             Menu("转换") { ConversionMenuItems(item: item, model: model) }
+        }
+        if item.kind == .file {
+            let reason = model.hashUnavailableReason(for: item)
+            ForEach(HashAlgorithm.allCases, id: \.self) { algorithm in
+                Button("计算 \(algorithm.title)" + (reason.map { "（\($0)）" } ?? "")) {
+                    model.computeHash(item, using: algorithm)
+                }
+                .disabled(reason != nil)
+            }
         }
         Menu("固定到") {
             ForEach(model.pinboards) { pinboard in
@@ -275,6 +296,23 @@ private struct CardContextMenu: View {
     }
 }
 
+/// 在卡片标题栏里编辑标题的输入框（#33）。出现时取得键盘焦点；↩ 和 esc 由 `PanelKeymap` 处理，
+/// 焦点去了别处时 `HistoryModel.focus` 改变，按保存处理。
+private struct CardTitleField: View {
+    @Bindable var model: HistoryModel
+    let placeholder: String
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField(placeholder, text: $model.titleDraft)
+            .textFieldStyle(.plain)
+            .lineLimit(1)
+            .focused($focused)
+            // 等这次更新把输入框放进窗口，再让它成为第一响应者；成为第一响应者时已有的文字会全选。
+            .onAppear { DispatchQueue.main.async { focused = true } }
+    }
+}
+
 /// 「转换」子菜单的内容（#27）。单独成一个视图：列出转换要读出完整内容，只在菜单打开时做。
 /// ⌘T 弹出的是同样内容的 `NSMenu`（`PanelController.showConversionMenu`）。
 private struct ConversionMenuItems: View {
@@ -291,6 +329,11 @@ private struct ConversionMenuItems: View {
             if index > 0, option.conversion == .encodeBase64 { Divider() }
             Button(option.menuTitle(for: item.textSubtype)) { model.convert(item, using: option.conversion) }
                 .disabled(option.unavailableReason != nil)
+        }
+        // 哈希值（#37）不受 1 MB 的限制，在后台计算。
+        Divider()
+        ForEach(HashAlgorithm.allCases, id: \.self) { algorithm in
+            Button(algorithm.title) { model.computeHash(item, using: algorithm) }
         }
     }
 }

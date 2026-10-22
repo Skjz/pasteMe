@@ -40,7 +40,7 @@ public struct TargetApp: Sendable, Equatable {
 /// 把内容写到系统剪贴板。
 @MainActor
 public protocol PasteboardWriting {
-    /// `file` 是图片另存成的 PNG 文件，以文件粘贴时才有。
+    /// `file` 是图片另存成的 PNG 文件（以文件粘贴时），或者文本存成的 .txt 文件（粘贴到访达时）。
     func write(_ content: ClipContent, attachingFile file: URL?)
 }
 
@@ -89,7 +89,7 @@ public final class Paster {
     }
 
     public func paste(_ id: Int64, as mode: PasteMode = .original, into target: TargetApp?) throws -> PasteOutcome {
-        try copyToPasteboard(id, as: mode)
+        try copyToPasteboard(id, as: mode, for: target)
 
         // 没有权限时内容已经在剪贴板里，用户可以自己按 ⌘V。
         guard keystroke.isTrusted else { return .copiedOnly }
@@ -98,26 +98,57 @@ public final class Paster {
     }
 
     /// 只把条目写进剪贴板并移到历史最前，不发送 ⌘V。Paste Stack 用它：⌘V 是用户自己按的。
-    public func copyToPasteboard(_ id: Int64, as mode: PasteMode = .original) throws {
+    /// 在面板里按 ⌘C 拷贝（#35）时 `touching` 为 false：面板还开着，卡片先不动，收起后再移到最前。
+    ///
+    /// `target` 是访达时，文本附带一个 .txt 文件，访达粘贴后得到这个文件（#36）；粘贴到其他应用时只给文字，
+    /// 免得有的应用把文本粘贴成附件。
+    public func copyToPasteboard(
+        _ id: Int64, as mode: PasteMode = .original, for target: TargetApp? = nil, touching: Bool = true
+    ) throws {
         guard var content = try store.content(id: id) else { throw PasteError.clipNotFound(id: id) }
         if mode == .plainText { content = content.plainTextOnly }
-        let attachesFile = mode == .file || (mode == .original && imagesAsFiles())
+        let file: URL?
+        if content.kind == .text {
+            file = target?.bundleID == TextFile.finderBundleID ? textFile(for: content, id: id) : nil
+        } else {
+            let attachesFile = mode == .file || (mode == .original && imagesAsFiles())
+            file = attachesFile ? imageFile(for: content, id: id) : nil
+        }
 
-        pasteboard.write(content, attachingFile: attachesFile ? imageFile(for: content, id: id) : nil)
+        pasteboard.write(content, attachingFile: file)
         // 内容已经在剪贴板里，排序没更新不影响这次粘贴。
-        try? store.touch(id: id)
+        if touching { try? store.touch(id: id) }
     }
 
     /// 从面板上拖出条目时交给拖拽的内容（#12）：和粘贴时写进剪贴板的一样，图片总是附带 PNG 文件。
+    /// 文本另外带一个 .txt 文件的 file promise，拖到访达时得到文件（#36）。
     /// 文件条目只给还在的文件，一个都不在时抛出 `PasteError.filesMissing`。
     public func draggingWriters(for id: Int64) throws -> [NSPasteboardWriting] {
         guard var content = try store.content(id: id) else { throw PasteError.clipNotFound(id: id) }
+        if content.kind == .text, let text = content.text {
+            let item = try store.item(id: id)
+            let name = TextFile.name(title: item?.title, text: text, copiedAt: item?.createdAt ?? Date())
+            return [TextFilePromise(text: text, rtf: content.rtf, fileName: name)]
+        }
         if content.kind == .file {
             let existing = content.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
             guard !existing.isEmpty else { throw PasteError.filesMissing }
             content.text = existing.map(\.path).joined(separator: "\n")
         }
         return PasteboardCodec.writers(for: content, attachingFile: imageFile(for: content, id: id))
+    }
+
+    /// 粘贴到访达的文本存成的 .txt 文件（#36）。没有设置 `files` 或写文件失败时为 nil，这时只给文字。
+    private func textFile(for content: ClipContent, id: Int64) -> URL? {
+        guard let text = content.text, let files else { return nil }
+        do {
+            let item = try store.item(id: id)
+            let name = TextFile.name(title: item?.title, text: text, copiedAt: item?.createdAt ?? Date())
+            return try files.textFile(text, name: name, id: id)
+        } catch {
+            NSLog("PasteMe: 保存文本文件失败：\(error)")
+            return nil
+        }
     }
 
     /// 图片存成的 PNG 文件。不是图片、没有设置 `files` 或写文件失败时为 nil，这时只给图片数据。

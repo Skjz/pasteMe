@@ -6,6 +6,8 @@ import PasteMeCore
 enum PanelFocus: Equatable {
     case search
     case cards
+    /// 在选中卡片的标题栏里编辑标题（#33）。
+    case title
 }
 
 /// 一次按键，从 `NSEvent` 中取出决定面板行为所需的部分。
@@ -54,6 +56,12 @@ enum PanelCommand: Equatable {
     case pinSelected
     case showInHistory
     case showConversions
+    /// ⌘R：在选中卡片的标题栏里起标题、改标题（#33）。
+    case renameSelected
+    case commitTitle
+    case cancelTitle
+    /// ⌘C：把选中的条目拷贝到剪贴板，不粘贴（#35）。
+    case copySelected
 }
 
 /// 按键交给谁处理。
@@ -74,6 +82,9 @@ enum PanelKeyAction: Equatable {
 /// 搜索框下面显示着 `@` 的候选列表时，↑ ↓ 在列表里移动，↩ 和 Tab 选中，esc 关掉列表。
 /// 输入法组字时 ↩、方向键、esc 是用来选字和取消的，所有按键都交给输入法。
 ///
+/// 在卡片标题栏里编辑标题时（#33），↩ 保存，esc 取消，其他按键都交给输入框。焦点在卡片上时 ⌘R 开始编辑标题，
+/// ⌘C 把选中的条目拷贝到剪贴板（#35）；焦点在搜索框时这两个键交给搜索框。
+///
 /// 焦点在卡片上时空格打开预览，预览开着时空格和 esc 关掉它（#10）。⌘T 在选中的卡片下面弹出「转换」菜单（#27）。⌘← ⌘→ 在「历史」和各个 Pinboard
 /// 之间切换，规则和 ← → 一样：搜索框里有文字时交给搜索框移动插入点（#9）。
 enum PanelKeymap {
@@ -81,6 +92,14 @@ enum PanelKeymap {
         guard !context.composing else { return .passThrough }
         let onCards = context.focus == .cards
         let mode: PasteMode = key.shift ? .plainText : .original
+
+        if context.focus == .title {
+            switch key.keyCode {
+            case kVK_Return, kVK_ANSI_KeypadEnter: return .run(.commitTitle)
+            case kVK_Escape: return .run(.cancelTitle)
+            default: return .passThrough
+            }
+        }
 
         if context.suggestionsShown, !key.command {
             switch key.keyCode {
@@ -107,6 +126,8 @@ enum PanelKeymap {
             case kVK_ANSI_E where !key.shift: return .run(.editSelected)
             case kVK_ANSI_J where !key.shift: return .run(.showInHistory)
             case kVK_ANSI_T where !key.shift: return .run(.showConversions)
+            case kVK_ANSI_R where !key.shift && onCards: return .run(.renameSelected)
+            case kVK_ANSI_C where !key.shift && onCards: return .run(.copySelected)
             default: break
             }
         }

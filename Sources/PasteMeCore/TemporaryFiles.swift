@@ -1,6 +1,6 @@
 import Foundation
 
-/// 以文件粘贴或拖出图片时生成的 PNG 文件（#12）。
+/// 以文件粘贴或拖出图片时生成的 PNG 文件（#12），以及把文本粘贴到访达时生成的 .txt 文件（#36）。
 ///
 /// 放在 `~/Library/Caches/PasteMe/Files/` 下，每个条目一个子目录，文件名用复制时间，
 /// 例如 `PasteMe 2026-10-16 14.41.55.png`：同一秒复制的两张图片不会互相覆盖，访达里看到的文件名也好认。
@@ -36,6 +36,24 @@ public struct TemporaryFiles: Sendable {
         try? manager.removeItem(at: folder)
         try manager.createDirectory(at: folder, withIntermediateDirectories: true)
         try png.write(to: url, options: .atomic)
+        return url
+    }
+
+    /// 把文本存成 .txt 文件（#36），返回文件的地址。`name` 不带扩展名，见 `TextFile.name`。
+    /// 内容和文件名都没变时不重写，只更新修改时间，从现在起再保留一天。
+    public func textFile(_ text: String, name: String, id: Int64) throws -> URL {
+        let folder = directory.appendingPathComponent(String(id), isDirectory: true)
+        let url = folder.appendingPathComponent(name + ".txt")
+        let data = TextFile.data(text)
+        let manager = FileManager.default
+        if (try? Data(contentsOf: url)) == data {
+            try manager.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+            return url
+        }
+        // 改过文字或标题后，以前存的旧文件一起换掉。
+        try? manager.removeItem(at: folder)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
         return url
     }
 
