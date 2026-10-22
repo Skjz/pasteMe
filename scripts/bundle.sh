@@ -3,6 +3,10 @@
 #
 # 用法：scripts/bundle.sh [release|debug]
 #
+# 环境变量：
+#   PASTEME_APP=<路径>       应用包放在哪里，默认 build/PasteMe.app
+#   PASTEME_UNIVERSAL=1      编成通用二进制（Apple 芯片和 Intel），发布用，见 scripts/make-dmg.sh
+#
 # 签名：默认使用钥匙串里第一个 "Apple Development" 证书。签名身份不变，
 # 系统授予的“辅助功能”权限在重新编译后仍然有效；用临时签名（-）则每次编译后都要重新授权。
 # 可用环境变量 PASTEME_SIGN_IDENTITY 指定其他证书，设为 "-" 表示临时签名。
@@ -11,20 +15,25 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
-APP="build/PasteMe.app"
+APP="${PASTEME_APP:-build/PasteMe.app}"
 
 # SwiftPM（Swift Build）链接出的二进制把 SDK 版本记成和部署目标一样的 14.0，系统据此按旧设计运行应用：
 # macOS 26 起红绿灯、开关、按钮和菜单都是旧样式。链接时按真实的 SDK 版本重新声明。
 MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' Resources/Info.plist)"
 SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
 BUILD=(swift build -c "$CONFIG" -Xlinker -platform_version -Xlinker macos -Xlinker "$MIN_OS" -Xlinker "$SDK_VERSION")
+if [[ "${PASTEME_UNIVERSAL:-0}" == "1" ]]; then
+  # 多个架构时 SwiftPM 换用另一套构建系统，产物的目录结构也不同，放在单独的目录里，不和平时的构建混在一起。
+  BUILD+=(--arch arm64 --arch x86_64 --build-path .build/universal)
+fi
 "${BUILD[@]}"
 BIN_DIR="$("${BUILD[@]}" --show-bin-path)"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/PasteMe" "$APP/Contents/MacOS/PasteMe"
-if ! xcrun vtool -show-build "$APP/Contents/MacOS/PasteMe" | grep -q "sdk $SDK_VERSION"; then
+# 通用二进制里每个架构各记一份，都要是真实的 SDK 版本。
+if [[ "$(xcrun vtool -show-build "$APP/Contents/MacOS/PasteMe" | awk '$1 == "sdk" { print $2 }' | sort -u)" != "$SDK_VERSION" ]]; then
   echo "二进制记录的 SDK 版本不是 $SDK_VERSION，应用会按旧设计运行" >&2
   exit 1
 fi
