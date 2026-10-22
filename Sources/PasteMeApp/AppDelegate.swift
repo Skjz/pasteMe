@@ -186,6 +186,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// 这两个窗口另存为 `<文件名>-preview.png`、`<文件名>-editor.png`。
     /// 加上 `PASTEME_SNAPSHOT_APPEARANCE=light` 或 `dark` 时不管系统设置，按浅色或深色外观画。
     /// 加上 `PASTEME_SNAPSHOT_RENAME=1` 时在选中卡片的标题栏里编辑标题（#33）。
+    /// 加上 `PASTEME_SNAPSHOT_HINTS=n` 时往右选 n 张（卡片列表跟着滚动），再当作按住了 ⌘，画出 ⌘1…⌘9（#39）。
     private func writeSnapshot(to path: String) {
         let environment = ProcessInfo.processInfo.environment
         switch environment["PASTEME_SNAPSHOT_APPEARANCE"] {
@@ -202,6 +203,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
         if environment["PASTEME_SNAPSHOT_RENAME"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.model.rename() }
+        }
+        if let offset = environment["PASTEME_SNAPSHOT_HINTS"].flatMap(Int.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.model.moveSelection(by: offset)
+                self.model.shortcutKeysChanged(held: true)
+            }
         }
         if environment["PASTEME_SNAPSHOT_EDITOR"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.model.onEditPinboard(.create(pinning: nil)) }

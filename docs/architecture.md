@@ -87,6 +87,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 删除时 `ClipStore.delete(id:)` 返回 `DeletedClip`（Pinboard 里是 `unpin` 返回 `UnpinnedClip`），`HistoryModel` 保存到面板关闭或切换标签为止，⌘Z 放回原来的 id、时间、缩略图和 Pinboard 里的位置。删除和撤销的动画见「删除动画」。
 - 焦点在卡片上时空格打开、关闭预览（预览开着时 esc 也关闭它），⌘P、⌘N、⌘E、⌘J、⌘T 在两种焦点下都起作用。⌘R、⌘C 只在焦点在卡片上时起作用，在搜索框里交给输入框（⌘C 拷贝选中的文字）。
 - 在卡片标题栏里编辑标题（#33）是第三种焦点 `.title`：`HistoryModel.rename` 记下 `titleEditingID`，`HistoryView` 只给这一张卡片的标题栏放 `CardTitleField`（其他卡片的画法不变），它出现后自己取得第一响应者。`PanelKeymap` 这时只处理 ↩（保存）和 esc（取消），其余按键都交给输入框。焦点离开 `.title`（点进搜索框、点了别的卡片）、切换标签、卡片被筛选掉、面板收起都按保存处理；卡片的点击、双击和拖动在编辑时不起作用，免得点输入框时选中、粘贴或拖走卡片。开始编辑前先关掉预览，否则预览关闭时会把它记着的旧标题存回去。截图模式里 `PASTEME_SNAPSHOT_RENAME=1` 画出编辑标题时的面板。
+- ⌘1…⌘9（#39）从最左边一张完整显示的卡片数起，卡片上的编号只在按住 ⌘ 时显示，两者用同一个起点（`HistoryModel.firstShortcutIndex`）。起点由 `HistoryView` 在卡片列表上用 `onGeometryChange` 按它在滚动区域里的位置算出（`firstFullyVisibleCard`），只在跨过一张卡片时写进 `HistoryModel.firstVisibleCard`；没按住 ⌘ 时视图不读它，滚动时卡片列表不用重新计算。这依赖卡片宽度和间距固定，和光标一样。呼出面板时滚回最前面，所以 ⌘1 还是最新的一条；只在上次滚到了后面时才滚（`HistoryView.scrolledPastFirst`），已经在最前面时再 `scrollTo` 一次，呼出动画的缺帧中位数多 1 帧左右。修饰键由 `PanelController` 的本地监视器收 `flagsChanged` 事件，规则在 `PanelKeymap.showsShortcutHints`；`HistoryModel.shortcutKeysChanged` 按住 0.2 秒后才显示（测试替换 `HistoryModel.schedule`）。收起面板时已经显示的编号不去掉，跟着面板滑出去，免得在收起动画里重画卡片。截图模式里 `PASTEME_SNAPSHOT_HINTS=n` 画出往右选了 n 张、按住 ⌘ 时的面板。
 - ⌘C（#35）用 `Paster.copyToPasteboard(_:touching: false)` 只写剪贴板，面板不收起，卡片也不动；`HistoryModel.copiedID` 记下最后拷贝的条目，`panelWillHide` 时才 `touch` 到历史最前。
 - PasteMe 没有菜单栏，但 `AppDelegate.setUpMainMenu()` 设了一个不显示的主菜单：输入框的 ⌘X、⌘C、⌘V、⌘A、⌘Z 和 ⌘W 关闭窗口都要靠菜单项的快捷键才能用。
 
@@ -115,7 +116,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 **分工**
 
 - `HistoryModel` 只通过 `CardRemovalEffect` 协议要求播放动画，生产实现是 `CardDust`，测试用 `FakeRemovalEffect`，没有设置时列表直接变化。模型改列表都经过 `HistoryModel.animate`（就是 `withAnimation`），测试替换它来观察视图会看到的状态。
-- `CardDust` 用 `ImageRenderer` 把卡片画成图（和面板一样的外观、⌘n 和搜索命中），交给 `DustView` 播放。`DustView` 是盖在 `HistoryView` 根视图上的透明 `CAMetalLayer`，每个颗粒是一个实例，位置、大小、透明度都在着色器里按时间和序号算，主线程每帧只更新时间、提交一次绘制。节奏参数在 `DustTiming`。着色器源码在运行时编译（SwiftPM 不编译 .metal 文件），`PanelController.prewarm()` 启动时在后台编译；没编译好时删除不播放颗粒。
+- `CardDust` 用 `ImageRenderer` 把卡片画成图（和面板一样的外观、按住 ⌘ 时的 ⌘n 和搜索命中），交给 `DustView` 播放。`DustView` 是盖在 `HistoryView` 根视图上的透明 `CAMetalLayer`，每个颗粒是一个实例，位置、大小、透明度都在着色器里按时间和序号算，主线程每帧只更新时间、提交一次绘制。节奏参数在 `DustTiming`。着色器源码在运行时编译（SwiftPM 不编译 .metal 文件），`PanelController.prewarm()` 启动时在后台编译；没编译好时删除不播放颗粒。
 - 开启「减少动态效果」时不播放颗粒，卡片直接去掉，右边的卡片用短的缓动补上。
 
 **规则**（每一条都对应过一个真实的显示问题）

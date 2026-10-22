@@ -171,6 +171,8 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             panel.makeFirstResponder(nil)
         }
         installKeyMonitor()
+        // 用 ⇧⌘V 呼出时 ⌘ 往往还按着：一直按着就照样显示 ⌘1…⌘9，马上松开就不显示。
+        shortcutKeysChanged(NSEvent.modifierFlags)
         animator.animate(to: 1, spring: .show) { [weak self] in
             self?.phase = .shown
         }
@@ -250,6 +252,8 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
         if model.focus == .cards {
             panel.makeFirstResponder(nil)
         }
+        // 用 ⌘W 关掉预览时 ⌘ 还按着。
+        shortcutKeysChanged(NSEvent.modifierFlags)
     }
 
     private func openPreview(_ request: PreviewRequest) {
@@ -332,9 +336,14 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         // 本地事件监视器总是在主线程上回调。
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             let handled = MainActor.assumeIsolated { () -> Bool in
                 guard let self else { return false }
+                if event.type == .flagsChanged {
+                    // 预览或编辑窗口在前面时，⌘数字 不是粘贴面板上的卡片，不显示提示。
+                    self.shortcutKeysChanged(event.window === self.panel ? event.modifierFlags : [])
+                    return false
+                }
                 if event.window === self.panel { return self.handle(event) }
                 if event.window === self.preview.window { return self.preview.handle(event) }
                 return false
@@ -346,6 +355,15 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
     private func removeKeyMonitor() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+    }
+
+    /// 按住 ⌘ 时卡片上显示 ⌘1…⌘9（#39），规则见 `PanelKeymap.showsShortcutHints`，推迟显示见 `HistoryModel`。
+    private func shortcutKeysChanged(_ modifiers: NSEvent.ModifierFlags) {
+        model.shortcutKeysChanged(held: PanelKeymap.showsShortcutHints(
+            command: modifiers.contains(.command),
+            option: modifiers.contains(.option),
+            control: modifiers.contains(.control)
+        ))
     }
 
     /// 处理面板上的快捷键，返回 true 表示已处理、不再交给搜索框。按键规则见 `PanelKeymap`。

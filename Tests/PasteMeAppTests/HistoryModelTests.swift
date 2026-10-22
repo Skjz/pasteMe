@@ -191,7 +191,8 @@ import PasteMeCore
         model.delete()
 
         #expect(effect.disappeared.map(\.id) == [b])
-        #expect(effect.disappeared.first?.index == 1)
+        // 没按住 ⌘，卡片上没有 ⌘n。
+        #expect(effect.disappeared.first?.shortcut == nil)
         #expect(effect.disappeared.first?.selected == true)
         // 条目已经删掉，后面的按键作用于新的列表；空位还占着 b 原来的地方。
         #expect(model.items.map(\.id) == [c, a])
@@ -283,7 +284,6 @@ import PasteMeCore
         model.delete(model.items[2])
 
         #expect(effect.disappeared.map(\.id) == [a])
-        #expect(effect.disappeared.first?.index == 2)
         #expect(effect.disappeared.first?.selected == false)
     }
 
@@ -308,7 +308,7 @@ import PasteMeCore
         #expect(model.items.map(\.id) == [c, b, a])
         #expect(model.selectedID == b)
         #expect(effect.appeared.map(\.id) == [b])
-        #expect(effect.appeared.first?.index == 1)
+        #expect(effect.appeared.first?.shortcut == nil)
         #expect(model.hiddenIDs == [b])
 
         effect.finishAppear()

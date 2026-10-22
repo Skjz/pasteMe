@@ -153,6 +153,13 @@ import Testing
         #expect(action(shifted, Self.onCards) == .run(.pasteAt(index: 2, .plainText)))
     }
 
+    @Test func hintsShowWithCommandOrShiftCommandOnly() {
+        #expect(PanelKeymap.showsShortcutHints(command: true, option: false, control: false))
+        #expect(!PanelKeymap.showsShortcutHints(command: false, option: false, control: false))
+        #expect(!PanelKeymap.showsShortcutHints(command: true, option: true, control: false))
+        #expect(!PanelKeymap.showsShortcutHints(command: true, option: false, control: true))
+    }
+
     // MARK: 预览、Pinboard、新建（#9 #10）
 
     static let space = PanelKey(keyCode: kVK_Space, characters: " ")

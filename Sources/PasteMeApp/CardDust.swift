@@ -153,7 +153,7 @@ final class CardDust: CardRemovalEffect {
     }
 
     func playDisappear(
-        _ item: ClipItem, at index: Int, selected: Bool, searchText: String,
+        _ item: ClipItem, shortcut: Int?, selected: Bool, searchText: String,
         completion: @escaping () -> Void
     ) -> Bool {
         // 撤销后还在等着开始聚拢的卡片：原来的颗粒还在飘的话，让它接着飘完，当作这次删除的动画；
@@ -162,7 +162,7 @@ final class CardDust: CardRemovalEffect {
             return view.continueDisappearing(id: item.id, completion: completion)
         }
         guard !Self.reduceMotion, view.isReady, let frame = visibleFrame(of: item.id),
-              let texture = texture(of: item, at: index, searchText: searchText)
+              let texture = texture(of: item, shortcut: shortcut, searchText: searchText)
         else { return false }
         view.play(
             id: item.id, texture: texture, frame: frame, scale: selected ? HistoryView.selectedScale : 1,
@@ -172,12 +172,12 @@ final class CardDust: CardRemovalEffect {
     }
 
     func playAppear(
-        _ item: ClipItem, at index: Int, searchText: String,
+        _ item: ClipItem, shortcut: Int?, searchText: String,
         completion: @escaping () -> Void
     ) -> Bool {
         // 卡片的图现在就画好：右边的卡片还没开始滑动，这几毫秒不会让动画掉帧。
         guard !Self.reduceMotion, view.isReady,
-              let texture = texture(of: item, at: index, searchText: searchText)
+              let texture = texture(of: item, shortcut: shortcut, searchText: searchText)
         else { return false }
         nextToken += 1
         let token = nextToken
@@ -240,10 +240,10 @@ final class CardDust: CardRemovalEffect {
     }
 
     /// 卡片现在的样子，和面板上的一样：同样的外观（深色或浅色）、⌘n 提示和搜索命中。
-    private func texture(of item: ClipItem, at index: Int, searchText: String) -> MTLTexture? {
+    private func texture(of item: ClipItem, shortcut: Int?, searchText: String) -> MTLTexture? {
         let appearance = view.effectiveAppearance
         let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let card = ClipCardView(item: item, shortcutIndex: index < 9 ? index + 1 : nil, searchText: searchText)
+        let card = ClipCardView(item: item, shortcutIndex: shortcut, searchText: searchText)
             .environment(\.colorScheme, dark ? .dark : .light)
         let renderer = ImageRenderer(content: card)
         renderer.scale = view.window?.backingScaleFactor ?? 2

@@ -5,14 +5,14 @@ import SwiftUI
 /// 一张历史卡片：彩色标题栏（类型、时间、来源应用图标）+ 内容预览 + 底部信息。
 struct ClipCardView: View {
     let item: ClipItem
-    /// 1…9，显示 ⌘n 提示；超过 9 条为 nil。
+    /// 1…9，在右下角显示 ⌘n 提示。只在按住 ⌘ 时有（#39），其余时候为 nil。
     let shortcutIndex: Int?
     /// 当前的搜索文字。命中图片里的文字时，卡片底部显示命中的那一段。
     var searchText = ""
     /// 在标题栏里编辑标题时的输入框（#33），放在标题的位置。只有正在编辑的那张卡片有。
     var titleField: AnyView?
 
-    static let size = CGSize(width: 230, height: 240)
+    nonisolated static let size = CGSize(width: 230, height: 240)
 
     var body: some View {
         VStack(spacing: 0) {
