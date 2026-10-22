@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- For developers: only the app in the release DMG is PasteMe; everything else runs as PasteMe Dev, with its own settings, history and caches. `scripts/bundle.sh` now builds PasteMe Dev (bundle id `io.github.skjz.PasteMe.dev`) unless `PASTEME_RELEASE=1` is set, as `scripts/make-dmg.sh` does, and `swift run`, the benchmark and tests use the same development settings. PasteMe Dev keeps its settings in `io.github.skjz.PasteMe.dev` and its history and caches in `PasteMe Dev` folders, so a test instance can no longer change your settings (such as the automatic clearing period), your login item or your history; it needs its own accessibility permission. ADR 0009 records why.
+
 ## [0.1.0] - 2026-10-23
 
 ### Added

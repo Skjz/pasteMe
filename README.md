@@ -80,17 +80,19 @@ scripts/bundle.sh
 open build/PasteMe.app
 ```
 
-`scripts/bundle.sh` 编译 release 版本，打包成 `build/PasteMe.app` 并签名。默认使用钥匙串里第一个 “Apple Development” 证书；没有证书时用临时签名。发布用的 DMG 由 `scripts/make-dmg.sh` 打包，步骤见 [docs/architecture.md](docs/architecture.md) 的「发布」。
+`scripts/bundle.sh` 编译 release 版本，打包成开发版 `build/PasteMe.app`（名字是 PasteMe Dev，见下面的「数据位置」）并签名。默认使用钥匙串里第一个 “Apple Development” 证书；没有证书时用临时签名。发布用的 DMG 由 `scripts/make-dmg.sh` 打包，步骤见 [docs/architecture.md](docs/architecture.md) 的「发布」。
 
 ### 辅助功能权限
 
 PasteMe 通过模拟按下 ⌘V 把内容粘贴到当前应用，这需要在「系统设置 → 隐私与安全性 → 辅助功能」里允许 PasteMe。没有授权时，选中的内容仍会写入剪贴板，手动按 ⌘V 即可。
 
-用固定证书签名时，重新编译后权限保持有效；用临时签名（`PASTEME_SIGN_IDENTITY=-`）则每次重新编译都要在设置里删掉旧条目再重新授权。
+自己用 `scripts/bundle.sh` 打包的是开发版「PasteMe Dev」，在辅助功能里和发布版的 PasteMe 是两项，要分别允许。用固定证书签名时，重新编译后权限保持有效；用临时签名（`PASTEME_SIGN_IDENTITY=-`）则每次重新编译都要在设置里删掉旧条目再重新授权。
 
 ### 数据位置
 
-历史和 Pinboard 保存在 `~/Library/Application Support/PasteMe/history.sqlite`。删除这个文件即清空全部历史和 Pinboard。以文件粘贴、拖出图片时生成的临时文件在 `~/Library/Caches/PasteMe/Files`，可以随时删除。
+历史和 Pinboard 保存在 `~/Library/Application Support/PasteMe/history.sqlite`。删除这个文件即清空全部历史和 Pinboard。以文件粘贴、拖出图片时生成的临时文件在 `~/Library/Caches/PasteMe/Files`，可以随时删除。设置存在偏好域 `io.github.skjz.PasteMe` 里。
+
+开发版（`scripts/bundle.sh` 打的 PasteMe Dev、`swift run`、基准和测试）用的是另一套：历史和缓存在 `PasteMe Dev` 目录，设置在 `io.github.skjz.PasteMe.dev`，开发时启动的测试实例碰不到你在用的 PasteMe（ADR 0009）。
 
 ## 开发
 
@@ -125,6 +127,7 @@ swift run PasteMe
 - [0006](docs/adr/0006-settings-defaults-domain.md)：设置的偏好域沿用 bundle id，在 .app 内用 `UserDefaults.standard` 读写。
 - [0007](docs/adr/0007-pinboard-shares-clip-rows.md)：Pinboard 引用历史里的条目，不另存一份。
 - [0008](docs/adr/0008-text-subtype-is-not-a-kind.md)：文本子类型不是新的类型，代码的语言也存在同一列。
+- [0009](docs/adr/0009-development-variant.md)：开发版用自己的 bundle id、偏好域和数据目录，和发布版互不影响。
 
 术语（条目、Pinboard、Paste Stack 等）的定义见 [GLOSSARY.md](GLOSSARY.md)。
 

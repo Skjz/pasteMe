@@ -18,7 +18,7 @@ public final class ClipStore {
         try migrate()
     }
 
-    /// `~/Library/Application Support/PasteMe/history.sqlite`
+    /// `~/Library/Application Support/PasteMe/history.sqlite`，开发版是 `PasteMe Dev` 目录（`AppVariant`）。
     public static func defaultPath() throws -> String {
         let support = try FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -26,7 +26,7 @@ public final class ClipStore {
             appropriateFor: nil,
             create: true
         )
-        let dir = support.appendingPathComponent("PasteMe", isDirectory: true)
+        let dir = support.appendingPathComponent(AppVariant.current.folderName, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("history.sqlite").path
     }

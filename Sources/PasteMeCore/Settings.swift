@@ -35,12 +35,9 @@ public enum HistoryRetention: String, CaseIterable, Sendable {
 
 /// 用户可以修改的开关，集中定义在这里。应用和 MCP 子进程读写同一个偏好域。
 public struct Settings {
-    /// 偏好域的名字，与 PasteMe.app 的 bundle id 相同。
-    public static let suiteName = "io.github.skjz.PasteMe"
-
     private let defaults: UserDefaults
 
-    /// 不传 `defaults` 时读写 `suiteName` 这个偏好域。测试时传入一个独立的 `UserDefaults`。
+    /// 不传 `defaults` 时读写这一版的偏好域（`AppVariant.defaultsDomain`）。测试时传入一个独立的 `UserDefaults`。
     public init(defaults: UserDefaults? = nil) {
         self.defaults = defaults ?? Self.sharedDefaults()
     }
@@ -122,11 +119,17 @@ public struct Settings {
         static let playsSoundOnRecord = "playsSoundOnRecord"
     }
 
-    /// 在 PasteMe.app 里运行时主 bundle id 就是 `suiteName`，系统不接受把它当 suite 名
-    /// （`UserDefaults(suiteName:)` 返回 nil），这时 `.standard` 就是这个偏好域。
-    /// `swift run` 或测试时没有这个 bundle id，用 suite 读写同一个偏好文件。见 ADR 0006。
+    /// 发布版读写 `io.github.skjz.PasteMe`，其余都读写 `io.github.skjz.PasteMe.dev`（ADR 0009）。
+    /// 在应用包里运行时主 bundle id 就是这个偏好域，系统不接受把它当 suite 名（`UserDefaults(suiteName:)` 返回 nil），
+    /// 这时 `.standard` 就是它；`swift run`、基准和测试没有这个 bundle id，用 suite（ADR 0006）。
+    static func sharedDomain(bundleID: String?) -> (name: String, isStandard: Bool) {
+        let name = AppVariant(bundleID: bundleID).defaultsDomain
+        return (name, bundleID == name)
+    }
+
     static func sharedDefaults() -> UserDefaults {
-        if Bundle.main.bundleIdentifier == suiteName { return .standard }
-        return UserDefaults(suiteName: suiteName) ?? .standard
+        let domain = sharedDomain(bundleID: Bundle.main.bundleIdentifier)
+        if domain.isStandard { return .standard }
+        return UserDefaults(suiteName: domain.name) ?? .standard
     }
 }

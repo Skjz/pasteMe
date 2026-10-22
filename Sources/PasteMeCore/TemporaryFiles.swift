@@ -12,7 +12,7 @@ public struct TemporaryFiles: Sendable {
         self.directory = directory
     }
 
-    /// `~/Library/Caches/PasteMe/Files`
+    /// `~/Library/Caches/PasteMe/Files`，开发版是 `PasteMe Dev` 目录（`AppVariant`）。
     public static func defaultDirectory() throws -> URL {
         let caches = try FileManager.default.url(
             for: .cachesDirectory,
@@ -20,7 +20,9 @@ public struct TemporaryFiles: Sendable {
             appropriateFor: nil,
             create: true
         )
-        return caches.appendingPathComponent("PasteMe/Files", isDirectory: true)
+        return caches
+            .appendingPathComponent(AppVariant.current.folderName, isDirectory: true)
+            .appendingPathComponent("Files", isDirectory: true)
     }
 
     /// 把条目的图片存成 PNG 文件，返回文件的地址。文件已经存在时不重写，只更新修改时间，从现在起再保留一天。

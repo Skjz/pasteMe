@@ -6,7 +6,7 @@ import PasteMeCore
 ///
 /// 用系统音效服务（`AudioServicesPlaySystemSoundWithCompletion`）播放：它的 `kAudioServicesPropertyIsUISound`
 /// 默认为 1，用户在系统设置里关掉「播放用户界面音效」时不出声，界面提示音应该这样。系统音效服务只能播放文件，
-/// 所以每次启动后第一次播放时合成、写进 `~/Library/Caches/PasteMe/RecordSound-<n>.wav`、载入：不拖慢启动，
+/// 所以每次启动后第一次播放时合成、写进 `~/Library/Caches/PasteMe/RecordSound-<n>.wav`（开发版是 `PasteMe Dev` 目录）、载入：不拖慢启动，
 /// 改了声音下次启动就生效。
 @MainActor
 final class SystemRecordSound: RecordSoundPlaying {
@@ -24,7 +24,7 @@ final class SystemRecordSound: RecordSoundPlaying {
         var ids: [SystemSoundID] = []
         do {
             let caches = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            let folder = caches.appendingPathComponent("PasteMe", isDirectory: true)
+            let folder = caches.appendingPathComponent(AppVariant.current.folderName, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             for (index, data) in RecordChime.takes().enumerated() {
                 let file = folder.appendingPathComponent("RecordSound-\(index + 1).wav")

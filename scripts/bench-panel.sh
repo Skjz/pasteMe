@@ -42,8 +42,8 @@ BENCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/pasteme-bench.XXXXXX")"
 trap 'rm -rf "$BENCH_HOME"' EXIT
 
 if [[ -n "${PASTEME_BENCH_HISTORY:-}" ]]; then
-  mkdir -p "$BENCH_HOME/Library/Application Support/PasteMe"
-  sqlite3 "$PASTEME_BENCH_HISTORY" ".backup '$BENCH_HOME/Library/Application Support/PasteMe/history.sqlite'"
+  mkdir -p "$BENCH_HOME/Library/Application Support/PasteMe Dev"
+  sqlite3 "$PASTEME_BENCH_HISTORY" ".backup '$BENCH_HOME/Library/Application Support/PasteMe Dev/history.sqlite'"
 fi
 
 CFFIXED_USER_HOME="$BENCH_HOME" PASTEME_BENCH="$CYCLES" PASTEME_BENCH_DELETE="$DELETE" PASTEME_BENCH_MOVE="$MOVE" "$BIN" "$@" 2>/dev/null
