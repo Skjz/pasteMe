@@ -138,7 +138,7 @@ final class FakeLinkFetcher: LinkPreviewFetching, @unchecked Sendable {
         #expect(LinkPreviewPolicy.request(for: shared, mode: .full)
             == LinkPreviewRequest(url: URL(string: "https://youtu.be/dQw4w9WgXcQ?t=42")!, includesPage: true))
 
-        let reddit = URL(string: "https://www.reddit.com/r/apple/comments/1o6ky4f/?share_id=tDWr0gkqKkYsPiY_1aYqA&utm_medium=ios_app")!
+        let reddit = URL(string: "https://www.reddit.com/r/apple/comments/1o6ky4f/?share_id=Ab3dEf6hIj9kLm_2nOpQr&utm_medium=ios_app")!
         #expect(LinkPreviewPolicy.request(for: reddit, mode: .full)?.url.absoluteString
             == "https://www.reddit.com/r/apple/comments/1o6ky4f/")
         // 令牌不是跟踪参数，照样只取网站图标。

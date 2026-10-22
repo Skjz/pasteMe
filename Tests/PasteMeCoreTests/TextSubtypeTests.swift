@@ -155,7 +155,7 @@ import Testing
             "function", "hello", "Hello world", "你好，世界", "这是一段中文。", "13812345678", "2025102112345678",
             "550e8400-e29b-41d4-a716-446655440000", "550E8400-E29B-41D4-A716-446655440000",
             "# 标题", "## Heading", "myVariableName2024", "SomeClassName123Foo", "getUserById",
-            "/usr/local/bin/python3", "/Users/lixiang/Documents/Project2", "https://example.com",
+            "/usr/local/bin/python3", "/Users/alice/Documents/Project2", "https://example.com",
             "a.b.c", "Version 2.0.1", "3.14159", "", "   ",
         ] {
             #expect(detect(text) == nil, "\(text)")
