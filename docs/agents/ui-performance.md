@@ -27,6 +27,7 @@
 - 测试历史由 `PanelBenchmark` 在空的临时 home 里自动生成：约 30 条来自本机系统应用的文本、链接和图片，每次都一样。链接带着链接预览（网站图标用来源应用的图标，一半有网页标题），呼出时依次出现的前 8 张里有两张链接。
 - WindowServer 的 CPU 占用（`ps -Ao pcpu,comm -r`）在 40% 以上时，`present_missed` 会一下子变成十几帧，`call_ms` 也会波动好几毫秒。这时只比较同一轮里背靠背测出的基线和改动，或者等负载降下来再测。想知道某种卡片本身贵不贵，在测试里用不显示的 `NSHostingView` 反复排版、绘制单张卡片计时，不受屏幕和 WindowServer 影响。
 - 传给应用的参数放在次数后面，例如 `scripts/bench-panel.sh 9 -cursorStyle flow`。
+- 基准按开发版运行（ADR 0009），读的是开发版偏好域 `io.github.skjz.PasteMe.dev` 里的设置，一般是默认值，不是用户自己的设置。和 ADR 0009 之前的提交比较时，旧提交读的是用户的设置；两边设置不同（比如光标样式）时，用上面的参数把它们设成一样。
 - 用户在自己的历史上觉得卡、基准却测不出来时，用用户的数据和 release 版本测：`PASTEME_BENCH_HISTORY=<history.sqlite>` 用这份历史的副本（`sqlite3 .backup` 拷贝，原文件不动），`PASTEME_BENCH_RELEASE=1` 用 release 优化编译。对比 main 时先用 `sqlite3 .backup` 固定一份副本，两边用同一份。
 - 中位数会藏住偶尔的大卡顿：循环次数加到 25 次左右，把每一行都存下来，再算平均值和最差的 10%。
 

@@ -2,6 +2,8 @@
 
 日期：2026-10-16
 
+部分被 ADR 0009 取代：开发版（`swift run`、`swift test`、`scripts/bundle.sh` 打的 PasteMe Dev）改用 `io.github.skjz.PasteMe.dev` 这个域，下面说的取法不变。
+
 ADR 0002 规定设置存在 `UserDefaults(suiteName: "io.github.skjz.PasteMe")`，应用和 MCP 子进程共用。这个名字就是 PasteMe.app 的 bundle id，而系统不接受把主 bundle id 当 suite 名：在 .app 里运行时 `UserDefaults(suiteName:)` 返回 nil，并在日志里打印 "Using your own bundle identifier as an NSUserDefaults suite name does not make sense"（2026-10-16 实测）。我们保留这个偏好域，由 `Settings` 按运行环境选择取法：主 bundle id 等于 suite 名时（应用本体，以及 ADR 0005 中从包内同一个可执行文件启动的 `PasteMe mcp`）用 `UserDefaults.standard`，它就是这个偏好域；否则（`swift run`、`swift test`）用 suite。两种取法读写的都是 `~/Library/Preferences/io.github.skjz.PasteMe.plist`。
 
 ## Considered Options

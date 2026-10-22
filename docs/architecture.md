@@ -7,7 +7,7 @@
 ```text
 PasteMe        可执行文件，只有 main.swift
 └─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、全局快捷键、监听 ⌘V、发送 ⌘V、面板、浮窗、视图
-   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、AppNames、Recorder、RecordChime、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter
+   └─ PasteMeCore  不依赖界面：AppVariant、ClipStore、ClipQuery、AppNames、Recorder、RecordChime、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter
 ```
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
@@ -167,7 +167,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 
 - 发送 ⌘V 前的 0.08 秒延迟（等面板收起、键盘焦点回到目标应用）放在 `CGEventPasteKeystroke` 里，`Paster.paste` 本身是同步的，测试不需要等待。
 - 有没有辅助功能权限，由按键 adapter 的 `isTrusted` 判断；弹出系统授权提示是应用层的事（`Accessibility`）。
-- 以文件粘贴和拖出图片生成的 PNG 放在 `~/Library/Caches/PasteMe/Files/<条目 id>/`，文件名用复制时间。再次用到时只更新修改时间；`AppDelegate` 在启动 3 秒后和之后每小时调用 `TemporaryFiles.removeExpired()`，删除一天没用过的。
+- 以文件粘贴和拖出图片生成的 PNG 放在 `~/Library/Caches/PasteMe/Files/<条目 id>/`（开发版是 `PasteMe Dev` 目录），文件名用复制时间。再次用到时只更新修改时间；`AppDelegate` 在启动 3 秒后和之后每小时调用 `TemporaryFiles.removeExpired()`，删除一天没用过的。
 - `TargetApp` 在 `PanelController.show()` 时从前台应用取得。面板不激活 PasteMe，所以生产环境里 ⌘V 直接发给前台应用，发送按键用不到这个值。文本粘贴到访达时附带 .txt 文件（#36）靠它判断目标；粘贴到其他应用不附带文件，否则有的应用会把文本粘贴成附件。#13 的粘贴事件（记录粘贴到了哪个应用）也会用到它。
 
 ## Seam 和测试替身
@@ -186,7 +186,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 | `HTMLPreviewFetcher(configuration:)` | `HTMLPreviewFetcher.defaultConfiguration()` | 加上 `StubURLProtocol` 的配置（`HTMLPreviewFetcherTests.swift`） |
 | `TemporaryFiles(directory:)` | `TemporaryFiles.defaultDirectory()` | 每个测试一个临时目录（`TemporaryFilesTests`） |
 | `ClipStore(path:)` | `ClipStore.defaultPath()` | `ClipStore(path: ":memory:")` |
-| `Settings(defaults:)` | 偏好域 `io.github.skjz.PasteMe`，取法见 ADR 0006 | 每个测试一个随机名字的 suite，结束时删除 |
+| `Settings(defaults:)` | 发布版的偏好域 `io.github.skjz.PasteMe`，开发版的 `io.github.skjz.PasteMe.dev`（`AppVariant`），取法见 ADR 0006、0009 | 每个测试一个随机名字的 suite，结束时删除 |
 
 只在已经有两个实现（测试替身也算一个）并且有调用方时才加 seam（ADR 0002）。
 
@@ -208,16 +208,18 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 
 全局快捷键、面板、真正发送 ⌘V 这些行为，单元测试覆盖不到。改动涉及它们时，按下面的步骤运行应用确认。
 
-1. 用 `pgrep -fl PasteMe` 检查用户是否已经开着 PasteMe。两个实例会争抢全局快捷键（⇧⌘V、⌃⇧⌘V、⌃⇧⌘C），需要先和用户确认能否退出。
-2. 运行 `scripts/bundle.sh` 打包。用 Apple Development 证书签名时，辅助功能权限在重新打包后仍然有效。SwiftPM 链接出的二进制把 SDK 版本记成和部署目标一样的 14.0，macOS 26 起系统会按旧设计运行它（旧的红绿灯、开关和菜单），所以 `bundle.sh` 链接时用 `-platform_version` 按真实的 SDK 版本声明并检查；`swift run`、`scripts/bench-panel.sh` 构建的二进制仍是旧设计。
+1. 用 `pgrep -fl PasteMe` 检查用户是否已经开着 PasteMe（用户装在「应用程序」里的发布版也算）。两个实例会争抢全局快捷键（⇧⌘V、⌃⇧⌘V、⌃⇧⌘C），复制的内容两边都会记录，需要先和用户确认能否退出。
+2. 运行 `scripts/bundle.sh` 打包。打出的是开发版「PasteMe Dev」（ADR 0009），在辅助功能里和用户的 PasteMe 是两项，第一次要单独允许；用 Apple Development 证书签名时，权限在重新打包后仍然有效。SwiftPM 链接出的二进制把 SDK 版本记成和部署目标一样的 14.0，macOS 26 起系统会按旧设计运行它（旧的红绿灯、开关和菜单），所以 `bundle.sh` 链接时用 `-platform_version` 按真实的 SDK 版本声明并检查；`swift run`、`scripts/bench-panel.sh` 构建的二进制仍是旧设计。
 3. 把 home 指向临时目录再启动，这样不会碰到用户真实的历史：
 
    ```bash
    open --env CFFIXED_USER_HOME="$TMPDIR/pasteme-home" build/PasteMe.app
    ```
 
-   历史数据库在 `$TMPDIR/pasteme-home/Library/Application Support/PasteMe/history.sqlite`，可以用 `sqlite3` 直接查。
-   设置不隔离：偏好设置由 cfprefsd 按真实用户读写，不认 `CFFIXED_USER_HOME`。在测试实例的设置窗口里改开关、加别名，改的都是用户真实的设置（`defaults read io.github.skjz.PasteMe` 可以查看）。请用户这样试之前先说明，试完提醒改回去。
+   启动前先告诉用户会弹系统授权框。PasteMe 启动时没有辅助功能权限，就会请求一次（`AppDelegate` 里的 `Accessibility.requestTrust()`），只跑几秒、用临时 home 也一样；只有 `scripts/bench-panel.sh` 和截图模式在这之前就返回，不会弹。要用 `open` 启动，弹窗署名才是「PasteMe Dev」。从 shell 直接运行 `build/PasteMe.app/Contents/MacOS/PasteMe`、`swift run` 或 DMG 里的应用时，进程算在启动它的终端或 Claude 头上，弹窗写的是「“claude”想控制此 Mac 并访问你的数据」，用户会以为是 Claude 在要权限。通过 ssh 在另一台 Mac 上启动，也会在那台机器的屏幕上弹。
+
+   历史数据库在 `$TMPDIR/pasteme-home/Library/Application Support/PasteMe Dev/history.sqlite`，可以用 `sqlite3` 直接查。拿用户历史的副本来测时，也要放进 `PasteMe Dev` 目录。不设 `CFFIXED_USER_HOME` 时，开发版用 `~/Library/Application Support/PasteMe Dev`，同样碰不到用户的历史。
+   设置不随 `CFFIXED_USER_HOME` 隔离（cfprefsd 按真实用户读写），但开发版有自己的偏好域 `io.github.skjz.PasteMe.dev`，改不到用户的 PasteMe（`defaults read io.github.skjz.PasteMe.dev` 可以查看）。所有开发版实例共用这一份设置。
 4. 用 `pbcopy` 造测试数据时加上 `LANG=en_US.UTF-8`。不设 `LANG` 时，含中文的内容会被写成空字符串，PasteMe 会直接跳过它。
 5. 用截图检查时，面板可能不出现在截图里（例如 computer-use 只截授权应用的窗口）。这时看操作结果：目标应用里粘贴出的文字，以及数据库里条目的增删和顺序。面板默认不出现在录屏里（`sharingType = .none`），请用户录屏反馈动画问题时，要先在设置窗口的「面板」页打开「共享屏幕时显示面板」，否则录到的只有面板后面的桌面。
 6. 验证完在仓库根目录用完整路径退出测试实例，以免误关用户自己的 PasteMe：`pkill -f "$PWD/build/PasteMe.app/Contents/MacOS/PasteMe"`。然后删除临时目录。
@@ -227,6 +229,6 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 版本号按 SemVer，tag 写成 `v0.1.0` 这样。
 
 1. 改 `Resources/Info.plist` 的 `CFBundleShortVersionString`，`CFBundleVersion` 加一；README「功能」标题里的版本号一起改。CHANGELOG 把 Unreleased 下的条目移到新版本的标题 `## [x.y.z] - 日期` 下，文末的比较链接加上新版本。这些改动走 PR 合进 main。
-2. 在合并后的 main 上运行 `scripts/make-dmg.sh`，得到 `build/PasteMe-x.y.z.dmg`。应用是通用二进制、临时签名，原因写在脚本开头。
-3. 发布前挂载 DMG（`hdiutil attach -nobrowse -readonly`）检查：`lipo -info` 有 x86_64 和 arm64；`xcrun vtool -show-build` 里每个架构的 `sdk` 都是真实的 SDK 版本；`codesign -dv` 是 `Signature=adhoc`。用临时 home 把两个架构各启动一次（`arch -x86_64` 要装了 Rosetta 的 Mac）。
+2. 在合并后的 main 上运行 `scripts/make-dmg.sh`，得到 `build/PasteMe-x.y.z.dmg`。它带 `PASTEME_RELEASE=1` 打包，bundle id 保持 `io.github.skjz.PasteMe`，接得上用户已有的设置和历史；应用是通用二进制、临时签名，原因写在脚本开头。
+3. 发布前挂载 DMG（`hdiutil attach -nobrowse -readonly`）检查：`lipo -info` 有 x86_64 和 arm64；`xcrun vtool -show-build` 里每个架构的 `sdk` 都是真实的 SDK 版本；`codesign -dv` 是 `Signature=adhoc`；Info.plist 的 `CFBundleIdentifier` 是 `io.github.skjz.PasteMe`，不是 `.dev`。用临时 home 把两个架构各启动一次（`arch -x86_64` 要装了 Rosetta 的 Mac）。这要从 shell 直接运行，会弹署名为终端或 Claude 的授权框（见「在真实应用里验证」第 3 步），先告诉用户，弹出后点「拒绝」。
 4. `gh release create vx.y.z build/PasteMe-x.y.z.dmg --target main`，tag 打在合并后的 main 上。发布说明写中文：这一版的主要变化、安装步骤（第一次打开要在「隐私与安全性」里点「仍要打开」，升级后要重新允许辅助功能）、系统要求，以及 DMG 的 SHA-256。

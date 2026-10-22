@@ -4,6 +4,7 @@
 #
 # 用法：scripts/make-dmg.sh
 #
+# 这是发布版：bundle id 保持 io.github.skjz.PasteMe，和用户已有的设置、历史接得上（ADR 0009）。
 # 应用编成通用二进制（Apple 芯片和 Intel），用临时签名：没有 Developer ID 证书，发布版本来就不能公证，
 # 用 Apple Development 证书签名还会把证书上的名字带进应用。临时签名的代价是用户每次升级后要重新打开辅助功能权限。
 set -euo pipefail
@@ -16,7 +17,7 @@ DMG="build/PasteMe-$VERSION.dmg"
 
 rm -rf "$STAGE" "$DMG"
 mkdir -p "$STAGE"
-PASTEME_APP="$STAGE/PasteMe.app" PASTEME_UNIVERSAL=1 PASTEME_SIGN_IDENTITY=- scripts/bundle.sh release
+PASTEME_APP="$STAGE/PasteMe.app" PASTEME_RELEASE=1 PASTEME_UNIVERSAL=1 PASTEME_SIGN_IDENTITY=- scripts/bundle.sh release
 ln -s /Applications "$STAGE/Applications"
 
 hdiutil create -volname "PasteMe $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
