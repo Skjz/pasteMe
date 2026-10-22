@@ -13,7 +13,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var monitor: ClipboardMonitor!
     private var panel: PanelController!
     private var appNames: AppNames!
-    private var aliasesWindow: AppAliasesWindow!
+    private var settingsWindow: SettingsWindow!
     private let hotKeys = HotKeyCenter()
     private let toast = Toast()
     private var statusItem: NSStatusItem!
@@ -22,17 +22,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private let pauseItem = NSMenuItem(title: "暂停记录", action: nil, keyEquivalent: "")
     private lazy var pauseMenu = makePauseMenu()
     private let pasteStackItem = NSMenuItem(title: "Paste Stack", action: #selector(togglePasteStack), keyEquivalent: "")
-    private let loginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-    private let recordSoundItem = NSMenuItem(title: "复制时播放提示音", action: #selector(togglePlaysSoundOnRecord), keyEquivalent: "")
-    private let screenSharingItem = NSMenuItem(title: "共享屏幕时显示面板", action: #selector(toggleShowDuringScreenSharing), keyEquivalent: "")
-    private let imagesAsFilesItem = NSMenuItem(title: "图片以文件粘贴", action: #selector(togglePasteImagesAsFiles), keyEquivalent: "")
-    private let linkPreviewsItem = NSMenuItem(title: "链接预览", action: nil, keyEquivalent: "")
     /// 定期删除以文件粘贴、拖出图片时生成的临时文件。
     private var cleanupTimer: Timer?
     private var temporaryFiles: TemporaryFiles?
-    private let accessibilityItem = NSMenuItem(title: "", action: #selector(openAccessibilitySettings), keyEquivalent: "")
-    private let cursorStyleItem = NSMenuItem(title: "光标样式", action: nil, keyEquivalent: "")
-    private let retentionItem = NSMenuItem(title: "自动清除历史", action: nil, keyEquivalent: "")
+    /// 没有辅助功能权限就粘贴不了，只在没开时显示在菜单最前面。
+    private let accessibilityItem = NSMenuItem(title: "辅助功能权限未开启（点此设置）", action: #selector(openAccessibilitySettings), keyEquivalent: "")
     private let settings = Settings()
     private let recordSound = SystemRecordSound()
 
@@ -62,7 +56,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             imagesAsFiles: { settings.pasteImagesAsFiles }
         )
         appNames = AppNames(store: store, settings: settings)
-        aliasesWindow = AppAliasesWindow(appNames: appNames, settings: settings)
         model = HistoryModel(store: store, appNames: appNames, settings: settings)
         model.cursorStyle = settings.cursorStyle
         model.pastesImagesAsFiles = settings.pasteImagesAsFiles
@@ -77,7 +70,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 NSLog("PasteMe: 拷贝失败：\(error)")
             }
         }
-        model.onEditAliases = { [weak self] bundleID in self?.showAliases(focusing: bundleID) }
+        model.onEditAliases = { [weak self] bundleID in
+            // 先收起面板，再打开设置窗口的「应用别名」页并定位到这个应用。
+            self?.panel.hide()
+            self?.settingsWindow.showAliases(focusing: bundleID)
+        }
         model.onNotice = { [weak self] message, symbol in self?.toast.show(message, symbol: symbol) }
 
         enrichment = EnrichmentQueue(store: store, enrichers: [
@@ -104,6 +101,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         recorder.onPauseChange = { [weak self] in self?.pauseDidChange() }
         monitor = ClipboardMonitor(recorder: recorder)
         monitor.start()
+        settingsWindow = SettingsWindow(model: makeSettingsModel())
 
         hotKeys.register(.panel) { [weak self] in self?.panel.toggle() }
         hotKeys.register(.pause) { [weak self] in self?.togglePause() }
@@ -121,6 +119,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         if let path = ProcessInfo.processInfo.environment["PASTEME_SNAPSHOT"] {
             writeSnapshot(to: path)
             return
+        }
+        // 调试用：启动后直接打开设置窗口的这一页（`SettingsModel.Page` 的 rawValue，例如 `aliases`），
+        // 用在点不了菜单栏图标的时候。截图模式画不出侧栏的材质，要在真实屏幕上看。
+        if let page = ProcessInfo.processInfo.environment["PASTEME_SHOW_SETTINGS"] {
+            settingsWindow.show(SettingsModel.Page(rawValue: page))
         }
         #endif
 
@@ -180,6 +183,26 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     private func reloadPanelIfVisible() {
         if panel.isVisible { model.reload() }
+    }
+
+    /// 设置窗口改了开关以后，让面板、Paste Stack 和记录跟着变。
+    private func makeSettingsModel() -> SettingsModel {
+        let settingsModel = SettingsModel(settings: settings, store: store, appNames: appNames)
+        settingsModel.loginItemEnabled = { SMAppService.mainApp.status == .enabled }
+        settingsModel.setLoginItemEnabled = { on in
+            try on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
+        }
+        settingsModel.isAccessibilityTrusted = { Accessibility.isTrusted }
+        settingsModel.onOpenAccessibilitySettings = { [weak self] in self?.openAccessibilitySettings() }
+        settingsModel.onPlaySound = { [recordSound] in recordSound.play() }
+        settingsModel.onScreenSharingChange = { [weak self] on in
+            self?.panel.showsDuringScreenSharing = on
+            self?.pasteStack.showsDuringScreenSharing = on
+        }
+        settingsModel.onImagesAsFilesChange = { [weak self] on in self?.model.pastesImagesAsFiles = on }
+        settingsModel.onCursorStyleChange = { [weak self] style in self?.model.cursorStyle = style }
+        settingsModel.onRetentionChange = { [weak self] in self?.clearOldHistory() }
+        return settingsModel
     }
 
     #if DEBUG
@@ -266,9 +289,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = StatusIcon.normal
 
+        // 菜单里只放常用的操作，开关都在设置窗口里。
         let menu = NSMenu()
         menu.delegate = self
 
+        menu.addItem(accessibilityItem)
         let open = NSMenuItem(title: "打开历史", action: #selector(showPanel), keyEquivalent: "")
         open.showShortcut(.panel)
         menu.addItem(open)
@@ -276,21 +301,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         menu.addItem(pauseItem)
         pasteStackItem.showShortcut(.pasteStack)
         menu.addItem(pasteStackItem)
-        menu.addItem(loginItem)
-        menu.addItem(recordSoundItem)
-        menu.addItem(screenSharingItem)
-        menu.addItem(imagesAsFilesItem)
-        menu.addItem(linkPreviewsItem)
-        linkPreviewsItem.submenu = makeLinkPreviewMenu()
-        menu.addItem(accessibilityItem)
-        menu.addItem(cursorStyleItem)
-        cursorStyleItem.submenu = makeCursorStyleMenu()
-        menu.addItem(NSMenuItem(title: "应用别名…", action: #selector(showAliasesFromMenu), keyEquivalent: ""))
         menu.addItem(.separator())
-        menu.addItem(retentionItem)
-        retentionItem.submenu = makeRetentionMenu()
-        menu.addItem(NSMenuItem(title: "清空历史（保留 Pinboard）…", action: #selector(clearHistory), keyEquivalent: ""))
-        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "退出 PasteMe", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) {
@@ -329,54 +341,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         NSApp.mainMenu = main
     }
 
-    private func makeCursorStyleMenu() -> NSMenu {
-        let menu = NSMenu()
-        for style in CursorStyle.allCases {
-            let item = NSMenuItem(title: style.title, action: #selector(chooseCursorStyle(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = style.rawValue
-            menu.addItem(item)
-        }
-        return menu
-    }
-
     public func menuWillOpen(_ menu: NSMenu) {
         updatePauseItem()
         pasteStackItem.state = pasteStack.stack.isActive ? .on : .off
-        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        recordSoundItem.state = settings.playsSoundOnRecord ? .on : .off
-        screenSharingItem.state = settings.showDuringScreenSharing ? .on : .off
-        imagesAsFilesItem.state = settings.pasteImagesAsFiles ? .on : .off
-        for item in linkPreviewsItem.submenu?.items ?? [] {
-            item.state = item.representedObject as? String == settings.linkPreviewMode.rawValue ? .on : .off
-        }
-        for item in cursorStyleItem.submenu?.items ?? [] {
-            item.state = item.representedObject as? String == model.cursorStyle.rawValue ? .on : .off
-        }
-        for item in retentionItem.submenu?.items ?? [] {
-            item.state = item.representedObject as? String == settings.historyRetention.rawValue ? .on : .off
-        }
-        accessibilityItem.title = Accessibility.isTrusted ? "辅助功能权限：已开启" : "辅助功能权限：未开启（点此设置）"
-    }
-
-    @objc private func chooseCursorStyle(_ sender: NSMenuItem) {
-        guard let style = (sender.representedObject as? String).flatMap(CursorStyle.init(rawValue:)) else { return }
-        settings.cursorStyle = style
-        model.cursorStyle = style
+        accessibilityItem.isHidden = Accessibility.isTrusted
     }
 
     @objc private func showPanel() {
         panel.show()
     }
 
-    @objc private func showAliasesFromMenu() {
-        aliasesWindow.show()
-    }
-
-    /// 卡片右键菜单里的「设置别名…」：先收起面板，再打开别名窗口并定位到这个应用。
-    private func showAliases(focusing bundleID: String) {
-        panel.hide()
-        aliasesWindow.show(focusing: bundleID)
+    @objc private func showSettings() {
+        settingsWindow.show()
     }
 
     // MARK: - 暂停记录
@@ -458,150 +434,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         return formatter
     }()
 
-    /// 打开时先播一次，让用户知道是什么声音。
-    @objc private func togglePlaysSoundOnRecord() {
-        settings.playsSoundOnRecord.toggle()
-        if settings.playsSoundOnRecord { recordSound.play() }
-    }
-
-    @objc private func toggleShowDuringScreenSharing() {
-        settings.showDuringScreenSharing.toggle()
-        panel.showsDuringScreenSharing = settings.showDuringScreenSharing
-        pasteStack.showsDuringScreenSharing = settings.showDuringScreenSharing
-    }
-
-    @objc private func togglePasteImagesAsFiles() {
-        settings.pasteImagesAsFiles.toggle()
-        model.pastesImagesAsFiles = settings.pasteImagesAsFiles
-    }
-
-    private func makeLinkPreviewMenu() -> NSMenu {
-        let menu = NSMenu()
-        for mode in LinkPreviewMode.allCases {
-            let item = NSMenuItem(title: mode.title, action: #selector(chooseLinkPreviewMode(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = mode.rawValue
-            menu.addItem(item)
-        }
-        return menu
-    }
-
-    /// 换到会发更多请求的档位前说明会请求什么：关闭 → 任何一档，只取网站图标 → 完整预览。
-    @objc private func chooseLinkPreviewMode(_ sender: NSMenuItem) {
-        guard let mode = (sender.representedObject as? String).flatMap(LinkPreviewMode.init(rawValue:)) else { return }
-        let current = settings.linkPreviewMode
-        let asksFirst = (current == .off && mode != .off) || (current == .siteIcon && mode == .full)
-        if asksFirst {
-            NSApp.activate()
-            let alert = NSAlert()
-            alert.messageText = mode == .full ? "打开完整的链接预览？" : "只取网站图标？"
-            alert.informativeText = (mode == .full ? Self.fullPreviewExplanation : Self.siteIconExplanation)
-                + "\n\n本机和内网的地址不会请求，以前复制的链接也不会补做。"
-            alert.addButton(withTitle: "打开")
-            alert.addButton(withTitle: "取消")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
-        settings.linkPreviewMode = mode
-    }
-
-    private static let siteIconExplanation = """
-        复制网页链接后，PasteMe 只打开这个网站的首页，取得网站图标，显示在卡片上。你复制的网址本身不会被打开，\
-        所以不会让一次性的登录链接、重置密码的链接失效。对方网站会看到有人访问了它的首页。
-        """
-
-    private static let fullPreviewExplanation = """
-        复制网页链接后，PasteMe 会打开这个网址，取得网页标题、预览图和网站图标，显示在卡片上，搜索时也能搜到网页标题。\
-        只下载网页本身，不执行网页里的脚本，也不带你的登录信息（Cookie）。\
-        看起来像一次性的链接（网址里有 token、reset、verify 这类词，或者一长串随机字符）只取网站图标。\
-        仍有极少数一次性链接认不出来，被打开一次就可能失效；在意的话请选「只取网站图标」。
-        """
-
-    @objc private func toggleLaunchAtLogin() {
-        do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            } else {
-                try SMAppService.mainApp.register()
-            }
-        } catch {
-            NSLog("PasteMe: 设置登录时启动失败：\(error)")
-        }
-    }
-
     @objc private func openAccessibilitySettings() {
         Accessibility.requestTrust()
         Accessibility.openSettings()
-    }
-
-    private func makeRetentionMenu() -> NSMenu {
-        let menu = NSMenu()
-        for retention in HistoryRetention.allCases {
-            let item = NSMenuItem(title: retention.title, action: #selector(chooseRetention(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = retention.rawValue
-            menu.addItem(item)
-            if retention == .never { menu.addItem(.separator()) }
-        }
-        return menu
-    }
-
-    /// 换成更短的时间、马上就要删掉条目时，先说明要删多少条：删除不能撤销。
-    @objc private func chooseRetention(_ sender: NSMenuItem) {
-        guard let retention = (sender.representedObject as? String).flatMap(HistoryRetention.init(rawValue:)) else { return }
-        if let days = retention.days, let cutoff = retention.cutoff(),
-           let count = try? store.unpinnedCount(before: cutoff), count > 0 {
-            NSApp.activate()
-            let alert = NSAlert()
-            alert.messageText = "清除 \(days) 天前的历史？"
-            alert.informativeText = "现在会删除 \(count) 个超过 \(days) 天没用过的条目，固定在 Pinboard 里的条目保留。"
-                + "之后每小时检查一次，超过 \(days) 天没有再复制或粘贴过的条目都会删除。此操作无法撤销。"
-            alert.addButton(withTitle: "清除")
-            alert.addButton(withTitle: "取消")
-            alert.buttons.first?.hasDestructiveAction = true
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
-        settings.historyRetention = retention
-        clearOldHistory()
-    }
-
-    @objc private func clearHistory() {
-        NSApp.activate()
-        let pinned = (try? store.pinnedCount()) ?? 0
-        let alert = NSAlert()
-        alert.messageText = "清空剪贴板历史？"
-        alert.informativeText = pinned == 0
-            ? "所有条目都会被删除。此操作无法撤销。"
-            : "固定在 Pinboard 里的 \(pinned) 个条目会保留，其他条目都会被删除。此操作无法撤销。"
-        alert.addButton(withTitle: "清空")
-        alert.addButton(withTitle: "取消")
-        alert.buttons.first?.hasDestructiveAction = true
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        do {
-            try store.clearHistory()
-        } catch {
-            NSLog("PasteMe: 清空历史失败：\(error)")
-        }
-    }
-}
-
-extension HistoryRetention {
-    var title: String {
-        switch self {
-        case .never: "永不"
-        case .week: "7 天前的"
-        case .month: "30 天前的"
-        case .quarter: "90 天前的"
-        case .year: "1 年前的"
-        }
-    }
-}
-
-extension LinkPreviewMode {
-    var title: String {
-        switch self {
-        case .off: "关闭"
-        case .siteIcon: "只取网站图标"
-        case .full: "完整预览"
-        }
     }
 }

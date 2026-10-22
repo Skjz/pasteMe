@@ -12,6 +12,7 @@ PasteMe        可执行文件，只有 main.swift
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
 - `PasteMeApp` 里只有 `AppDelegate` 是 `public`（`main.swift` 要用），其余保持 internal，测试用 `@testable import PasteMeApp`。
+- 应用图标的源文件是 `Resources/AppIcon.icon`，用 Xcode 自带的 Icon Composer 打开修改，图层是 `Assets/` 里的 SVG；`scripts/bundle.sh` 用 `actool` 把它编成 `Assets.car` 和 `AppIcon.icns`，macOS 14、15 显示的平面图标也由 `actool` 从这份文件生成，不另外维护。
 
 ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没建，等 #8 再建。
 
@@ -76,6 +77,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 面板、附属窗口、Paste Stack 浮窗和 Toast 的背景都由 `WindowBackground.make` 建（#41）：macOS 26 起是 Liquid Glass（`NSGlassEffectView`），之前是毛玻璃材质（`NSVisualEffectView`）。新加的浮动窗口也用它，版本分支只写在这一处。`@` 的候选列表画在面板里面，用 SwiftUI 的 `glassEffect`（`SuggestionListBackground`）。
 - 玻璃只当背景：`make` 返回一个普通容器，下面是玻璃，上面是按同样圆角裁剪的内容，内容不放进玻璃的 `contentView`（原因见 `make` 的注释）。窗口的 `contentView` 因此不是 SwiftUI 内容的直接父视图，要用内容视图时自己留着引用（`AuxiliaryPanel.hosting`）。
 - 截图模式用 `cacheDisplay` 画面板，画不出窗口后面的内容，截图里看不出玻璃的效果，要在真实屏幕上看。
+- 设置窗口是普通的有标题栏的窗口，不用 `WindowBackground`，外观照着 Alcove 的设置窗口：整个窗口铺一层侧栏材质（`WindowMaterial`，窗口不在前台时也透出桌面的颜色），侧栏和内容共用它，中间一条细线；分组是一层很淡的前景色加细边（`SettingsLayout`）。窗口带一个空的工具栏，标题栏和红绿灯是带工具栏窗口的尺寸，页面标题和红绿灯在同一行。
 
 ## 拖出卡片
 
@@ -103,7 +105,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 光标（`SelectionCursor`）不是每张卡片各画一个，而是在卡片列表上叠一层，按选中卡片的序号算出横向位置，所以选中项变化时能滑过去。这依赖卡片宽度固定（`ClipCardView.size`）和间距固定（`HistoryView.cardSpacing`）；改卡片布局时要同时改光标的位置计算。
 - 光标的旋转和明暗变化由 `TimelineView` 逐帧驱动，面板收起后（`HistoryModel.isPanelVisible` 为 false）或开启「减少动态效果」时暂停，不在后台耗电。
 - 标题栏图标比标题栏大、一部分被裁掉。这个裁切不能在运行时用 `.clipped()` 做：裁切超出范围的内容会让每张卡片在依次出现的动画里逐帧重新合成，#17 之后呼出面板时大约三分之一的帧赶不上 120 Hz。现在由 `AppIconCache.headerIcon` 把放大、阴影、裁切和卡片右上圆角一起画成一张正好标题栏右端大小的图片，所以标题栏高度固定为 `ClipCardView.headerHeight`。改标题栏的布局时要同时改 `headerIconSlice` 和 `headerIconFrame`。
-- 光标样式存在 `Settings.cursorStyle`，同时放一份在 `HistoryModel.cursorStyle`，让视图在菜单里切换后立即更新。
+- 光标样式存在 `Settings.cursorStyle`，同时放一份在 `HistoryModel.cursorStyle`，让视图在设置窗口里切换后立即更新。
 - 卡片列表左右的留白用 `contentMargins` 而不是 `padding`，这样 `scrollTo` 滚到某张卡片时也会留出这段距离。放大的卡片和光标的光晕会超出滚动区域的上下边，所以滚动区域设了 `scrollClipDisabled()`。
 
 ## 面板动画
@@ -193,9 +195,10 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 - **查询条件**：新的筛选字段加在 `ClipQuery` 上，转成 SQL 的代码也写在 `ClipQuery.swift` 的 `filter` 里，`ClipStore.items(matching:)` 不需要改。每个条件生成一段带括号的子句，多个条件用 AND 连接。搜索继续用 LIKE（ADR 0004），10,000 条条目时查询要在 50ms 以内（ADR 0003），`ClipFilterTests` 里有对应的测试。
 - **筛选的来源**：面板上的按钮和菜单改 `HistoryModel.filters`（`PanelFilters`）；搜索框里的 `type:`、`app:` 由 `ClipQuery.parse` 解析，不回写到按钮上。搜索框末尾的 `@词`（`FilterMention`）弹出候选列表（`HistoryModel.suggestions`：`ClipKind.matching`、名字包含这段文字的 Pinboard，再加上 `AppNames.apps(matching:)`），选中后从搜索框里去掉这个词、写进 `filters`，所以显示在按钮上。有候选项时这个词不参与搜索；没有候选项或按 esc 关掉列表后，它按普通文字搜索。`HistoryModel.currentQuery` 把两者合起来，类型取交集（`ClipQuery.kinds` 为空集合时什么都不返回）。`query` 和 `filters` 改动后立即重新查询；`didShow` 一次清空两者，只查询一次，因为它在呼出动画的第一帧之前运行。
 - **来源应用菜单**：用 AppKit 的 `NSMenu`，点开时才调用 `ClipStore.sourceApps()`，不在呼出面板时查询。
-- **按应用的其他名字搜索**：条目只记了复制时的应用名（中文系统下是「访达」）。`HistoryModel.currentQuery` 最后调用 `ClipQuery.resolvingAppNames`，由 `AppNames` 找出名字、其他语言的名字（`AppBundleNames`，只读用户语言和英文）或应用别名（`Settings.appAliases`）包含搜索文字的应用，SQL 里加 `OR source_bundle_id IN (…)`。从应用包读名字一个应用要一两毫秒，所以启动 3 秒后 `AppNames.prefetch()` 在后台读完历史里的应用；应用列表在每次呼出面板时（`historyChanged()`）作废，第一次搜索时重新查。别名在 `AppAliasesWindow` 里编辑，输入时就保存，不需要通知 `AppNames`。
+- **按应用的其他名字搜索**：条目只记了复制时的应用名（中文系统下是「访达」）。`HistoryModel.currentQuery` 最后调用 `ClipQuery.resolvingAppNames`，由 `AppNames` 找出名字、其他语言的名字（`AppBundleNames`，只读用户语言和英文）或应用别名（`Settings.appAliases`）包含搜索文字的应用，SQL 里加 `OR source_bundle_id IN (…)`。从应用包读名字一个应用要一两毫秒，所以启动 3 秒后 `AppNames.prefetch()` 在后台读完历史里的应用；应用列表在每次呼出面板时（`historyChanged()`）作废，第一次搜索时重新查。别名在设置窗口的「应用别名」页（`AppAliasesModel`）里编辑，输入时就保存，不需要通知 `AppNames`。
 - **数据库迁移**：`ClipStore.migrate()` 按 `user_version` 逐级升级，每一级一个 `if` 块，最后设新的版本号。改表结构时加一级，并在 `ClipStoreMigrationTests` 里用上一版的表结构建库，确认旧数据还在。现在是第 7 级：4 加标题，5 加链接预览，6 加 Pinboard，7 加文本子类型。外键在每次打开数据库时用 `PRAGMA foreign_keys = ON` 打开，但删除条目和 Pinboard 时仍然显式删掉 `pinboard_items` 里的行，不只靠级联。
 - **设置项**：所有开关都定义在 `Settings` 上，键名放在 `Settings.Key` 里。每个开关都写默认值测试和读写测试，参照 `SettingsTests`。
+- **设置窗口**：开关的界面都在设置窗口里，菜单栏菜单只放打开历史、暂停记录、Paste Stack 这类操作。`SettingsModel` 读写 `Settings`，应用里要跟着变的地方（面板的 `sharingType`、`HistoryModel.cursorStyle` 等）通过它的 `on…` 回调通知，由 `AppDelegate.makeSettingsModel` 接上；会删条目的操作（换成更短的自动清除期限、清空历史）先放进 `pending…`，视图弹出确认后才执行。各页的视图在 `SettingsWindow.swift`，新开关加在对应的页里，在 `SettingsWindowTests` 里测读写和回调。窗口大小固定（`SettingsWindow.size`），侧栏自己画，不用 `NavigationSplitView`（原因见 `SettingsView` 的注释）。离屏检查排版可以在测试里用 `cacheDisplay` 画窗口的 `contentView?.superview`，但画不出材质；DEBUG 构建里 `PASTEME_SHOW_SETTINGS=<页>`（`SettingsModel.Page` 的 rawValue）启动后直接打开设置窗口，点不了菜单栏图标时用它在真实屏幕上看。
 
 ## 线程
 
@@ -206,7 +209,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 全局快捷键、面板、真正发送 ⌘V 这些行为，单元测试覆盖不到。改动涉及它们时，按下面的步骤运行应用确认。
 
 1. 用 `pgrep -fl PasteMe` 检查用户是否已经开着 PasteMe。两个实例会争抢全局快捷键（⇧⌘V、⌃⇧⌘V、⌃⇧⌘C），需要先和用户确认能否退出。
-2. 运行 `scripts/bundle.sh` 打包。用 Apple Development 证书签名时，辅助功能权限在重新打包后仍然有效。
+2. 运行 `scripts/bundle.sh` 打包。用 Apple Development 证书签名时，辅助功能权限在重新打包后仍然有效。SwiftPM 链接出的二进制把 SDK 版本记成和部署目标一样的 14.0，macOS 26 起系统会按旧设计运行它（旧的红绿灯、开关和菜单），所以 `bundle.sh` 链接时用 `-platform_version` 按真实的 SDK 版本声明并检查；`swift run`、`scripts/bench-panel.sh` 构建的二进制仍是旧设计。
 3. 把 home 指向临时目录再启动，这样不会碰到用户真实的历史：
 
    ```bash
@@ -214,7 +217,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
    ```
 
    历史数据库在 `$TMPDIR/pasteme-home/Library/Application Support/PasteMe/history.sqlite`，可以用 `sqlite3` 直接查。
-   设置不隔离：偏好设置由 cfprefsd 按真实用户读写，不认 `CFFIXED_USER_HOME`。在测试实例的菜单里改开关、在别名窗口里加别名，改的都是用户真实的设置（`defaults read io.github.skjz.PasteMe` 可以查看）。请用户这样试之前先说明，试完提醒改回去。
+   设置不隔离：偏好设置由 cfprefsd 按真实用户读写，不认 `CFFIXED_USER_HOME`。在测试实例的设置窗口里改开关、加别名，改的都是用户真实的设置（`defaults read io.github.skjz.PasteMe` 可以查看）。请用户这样试之前先说明，试完提醒改回去。
 4. 用 `pbcopy` 造测试数据时加上 `LANG=en_US.UTF-8`。不设 `LANG` 时，含中文的内容会被写成空字符串，PasteMe 会直接跳过它。
 5. 用截图检查时，面板可能不出现在截图里（例如 computer-use 只截授权应用的窗口）。这时看操作结果：目标应用里粘贴出的文字，以及数据库里条目的增删和顺序。面板默认不出现在录屏里（`sharingType = .none`），请用户录屏反馈动画问题时，要先在菜单里打开「共享屏幕时显示面板」，否则录到的只有面板后面的桌面。
 6. 验证完在仓库根目录用完整路径退出测试实例，以免误关用户自己的 PasteMe：`pkill -f "$PWD/build/PasteMe.app/Contents/MacOS/PasteMe"`。然后删除临时目录。
