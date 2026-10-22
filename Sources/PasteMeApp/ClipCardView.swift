@@ -47,8 +47,9 @@ struct ClipCardView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
             }
-            Text(item.createdAt, format: .relative(presentation: .named))
+            subtitle
                 .font(.system(size: 11))
+                .lineLimit(1)
                 .opacity(0.85)
         }
         .foregroundStyle(style.darkText ? Color.black.opacity(0.78) : .white)
@@ -58,6 +59,13 @@ struct ClipCardView: View {
         .frame(height: Self.headerHeight)
         .background(style.color)
         .overlay(alignment: .topTrailing) { headerIcon }
+    }
+
+    /// 标题栏第二行：复制时间。起了标题的条目第一行不再是类型，类型（带文本子类型）挪到时间前面，
+    /// 例如「文本 · hex · 4 分钟前」，仍然看得出是什么内容。
+    private var subtitle: Text {
+        let time = Text(item.createdAt, format: .relative(presentation: .named))
+        return item.title == nil ? time : Text(item.typeTitle + " · ") + time
     }
 
     /// 标题栏里的来源应用图标：比标题栏还大，贴在右边、一部分被裁掉，带阴影，看起来从标题栏上凸出来。
