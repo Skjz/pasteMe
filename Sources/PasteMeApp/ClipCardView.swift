@@ -211,7 +211,7 @@ struct ClipCardView: View {
     }
 }
 
-/// 卡片右下角的 ⌘n（#39）。按住 ⌘ 时从左到右依次浮上来，松开时淡出。
+/// 卡片右下角的 ⌘n（#39）。按住 ⌘ 时从卡片下边缘外面滑进来，从左到右依次出现；松开时滑回去。
 /// 底部的文字很长时会伸到它下面，所以左边用卡片的底色渐隐，盖住下面的字。
 private struct ShortcutHint: View {
     let number: Int
@@ -225,15 +225,17 @@ private struct ShortcutHint: View {
             }
     }
 
-    /// 动画放在过渡上：显示和隐藏时不用模型包 `withAnimation`，滚动时新进入 ⌘1…⌘9 的卡片也会浮上来、离开的淡出。
-    /// 每个编号晚 0.02 秒，和呼出面板时卡片依次出现一样。
+    /// 起点和终点往下移的距离：底部留白 8 点加上文字的高度，编号整个在卡片下边缘以外，被卡片的圆角裁掉，
+    /// 看起来是从卡片外面进来的。
+    private static let outside: CGFloat = 22
+
+    /// 动画放在过渡上：显示和隐藏时不用模型包 `withAnimation`，滚动时新进入 ⌘1…⌘9 的卡片也会滑进来、离开的滑出去。
+    /// 只有位移，没有淡入和缩放；不回弹的短弹簧，每个编号只晚 0.01 秒，整排 0.3 秒内到位。
     static func transition(for number: Int) -> AnyTransition {
         .asymmetric(
-            insertion: .opacity
-                .combined(with: .scale(scale: 0.8, anchor: .bottomTrailing))
-                .combined(with: .offset(y: 4))
-                .animation(.spring(response: 0.3, dampingFraction: 0.8).delay(Double(number - 1) * 0.02)),
-            removal: .opacity.animation(.easeOut(duration: 0.12))
+            insertion: .offset(y: outside)
+                .animation(.spring(duration: 0.2, bounce: 0).delay(Double(number - 1) * 0.01)),
+            removal: .offset(y: outside).animation(.easeIn(duration: 0.1))
         )
     }
 }
