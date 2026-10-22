@@ -13,12 +13,21 @@ cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
 APP="build/PasteMe.app"
 
-swift build -c "$CONFIG"
-BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
+# SwiftPM（Swift Build）链接出的二进制把 SDK 版本记成和部署目标一样的 14.0，系统据此按旧设计运行应用：
+# macOS 26 起红绿灯、开关、按钮和菜单都是旧样式。链接时按真实的 SDK 版本重新声明。
+MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' Resources/Info.plist)"
+SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+BUILD=(swift build -c "$CONFIG" -Xlinker -platform_version -Xlinker macos -Xlinker "$MIN_OS" -Xlinker "$SDK_VERSION")
+"${BUILD[@]}"
+BIN_DIR="$("${BUILD[@]}" --show-bin-path)"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/PasteMe" "$APP/Contents/MacOS/PasteMe"
+if ! xcrun vtool -show-build "$APP/Contents/MacOS/PasteMe" | grep -q "sdk $SDK_VERSION"; then
+  echo "二进制记录的 SDK 版本不是 $SDK_VERSION，应用会按旧设计运行" >&2
+  exit 1
+fi
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
 # 应用图标：actool 把 Icon Composer 的 Resources/AppIcon.icon 编成 Assets.car（macOS 26 起是 Liquid Glass

@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On macOS 26 and later, PasteMe uses the system's current design: window buttons, switches, buttons, menus and alerts look like those of other apps. The app built by `scripts/bundle.sh` declared the macOS 14 SDK, so macOS ran it with the old look; the script now records the SDK it was built with and stops if that fails.
 - The panel opens at the newest card even when you had scrolled the card list with the trackpad last time without changing the selection; before, it opened where you had left it, with the newest card off screen. (#39)
 - App icons in card headers, and site icons on link cards, are no longer blurry on a Retina screen when they were first drawn while only a non-Retina display was connected. The icon images are now always drawn at least at 2x. (#19)
 - Screenshots copied from CleanShot X are recorded as images, not as files. CleanShot puts the screenshot on the clipboard both as picture data and as the PNG file it saved, so PasteMe kept only the file. Now, when the clipboard holds a single file and its picture data is exactly that file, PasteMe records the picture, which gets a thumbnail and text recognition like any other image. Copying an image file in Finder still records the file. Screenshots copied before this change stay file entries.

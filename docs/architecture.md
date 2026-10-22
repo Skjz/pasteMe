@@ -207,7 +207,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 全局快捷键、面板、真正发送 ⌘V 这些行为，单元测试覆盖不到。改动涉及它们时，按下面的步骤运行应用确认。
 
 1. 用 `pgrep -fl PasteMe` 检查用户是否已经开着 PasteMe。两个实例会争抢全局快捷键（⇧⌘V、⌃⇧⌘V、⌃⇧⌘C），需要先和用户确认能否退出。
-2. 运行 `scripts/bundle.sh` 打包。用 Apple Development 证书签名时，辅助功能权限在重新打包后仍然有效。
+2. 运行 `scripts/bundle.sh` 打包。用 Apple Development 证书签名时，辅助功能权限在重新打包后仍然有效。SwiftPM 链接出的二进制把 SDK 版本记成和部署目标一样的 14.0，macOS 26 起系统会按旧设计运行它（旧的红绿灯、开关和菜单），所以 `bundle.sh` 链接时用 `-platform_version` 按真实的 SDK 版本声明并检查；`swift run`、`scripts/bench-panel.sh` 构建的二进制仍是旧设计。
 3. 把 home 指向临时目录再启动，这样不会碰到用户真实的历史：
 
    ```bash
