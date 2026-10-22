@@ -216,6 +216,8 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
    open --env CFFIXED_USER_HOME="$TMPDIR/pasteme-home" build/PasteMe.app
    ```
 
+   启动前先告诉用户会弹系统授权框。PasteMe 启动时没有辅助功能权限，就会请求一次（`AppDelegate` 里的 `Accessibility.requestTrust()`），只跑几秒、用临时 home 也一样；只有 `scripts/bench-panel.sh` 和截图模式在这之前就返回，不会弹。要用 `open` 启动，弹窗署名才是「PasteMe Dev」。从 shell 直接运行 `build/PasteMe.app/Contents/MacOS/PasteMe`、`swift run` 或 DMG 里的应用时，进程算在启动它的终端或 Claude 头上，弹窗写的是「“claude”想控制此 Mac 并访问你的数据」，用户会以为是 Claude 在要权限。通过 ssh 在另一台 Mac 上启动，也会在那台机器的屏幕上弹。
+
    历史数据库在 `$TMPDIR/pasteme-home/Library/Application Support/PasteMe Dev/history.sqlite`，可以用 `sqlite3` 直接查。拿用户历史的副本来测时，也要放进 `PasteMe Dev` 目录。不设 `CFFIXED_USER_HOME` 时，开发版用 `~/Library/Application Support/PasteMe Dev`，同样碰不到用户的历史。
    设置不随 `CFFIXED_USER_HOME` 隔离（cfprefsd 按真实用户读写），但开发版有自己的偏好域 `io.github.skjz.PasteMe.dev`，改不到用户的 PasteMe（`defaults read io.github.skjz.PasteMe.dev` 可以查看）。所有开发版实例共用这一份设置。
 4. 用 `pbcopy` 造测试数据时加上 `LANG=en_US.UTF-8`。不设 `LANG` 时，含中文的内容会被写成空字符串，PasteMe 会直接跳过它。
@@ -228,5 +230,5 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 
 1. 改 `Resources/Info.plist` 的 `CFBundleShortVersionString`，`CFBundleVersion` 加一；README「功能」标题里的版本号一起改。CHANGELOG 把 Unreleased 下的条目移到新版本的标题 `## [x.y.z] - 日期` 下，文末的比较链接加上新版本。这些改动走 PR 合进 main。
 2. 在合并后的 main 上运行 `scripts/make-dmg.sh`，得到 `build/PasteMe-x.y.z.dmg`。它带 `PASTEME_RELEASE=1` 打包，bundle id 保持 `io.github.skjz.PasteMe`，接得上用户已有的设置和历史；应用是通用二进制、临时签名，原因写在脚本开头。
-3. 发布前挂载 DMG（`hdiutil attach -nobrowse -readonly`）检查：`lipo -info` 有 x86_64 和 arm64；`xcrun vtool -show-build` 里每个架构的 `sdk` 都是真实的 SDK 版本；`codesign -dv` 是 `Signature=adhoc`；Info.plist 的 `CFBundleIdentifier` 是 `io.github.skjz.PasteMe`，不是 `.dev`。用临时 home 把两个架构各启动一次（`arch -x86_64` 要装了 Rosetta 的 Mac）。
+3. 发布前挂载 DMG（`hdiutil attach -nobrowse -readonly`）检查：`lipo -info` 有 x86_64 和 arm64；`xcrun vtool -show-build` 里每个架构的 `sdk` 都是真实的 SDK 版本；`codesign -dv` 是 `Signature=adhoc`；Info.plist 的 `CFBundleIdentifier` 是 `io.github.skjz.PasteMe`，不是 `.dev`。用临时 home 把两个架构各启动一次（`arch -x86_64` 要装了 Rosetta 的 Mac）。这要从 shell 直接运行，会弹署名为终端或 Claude 的授权框（见「在真实应用里验证」第 3 步），先告诉用户，弹出后点「拒绝」。
 4. `gh release create vx.y.z build/PasteMe-x.y.z.dmg --target main`，tag 打在合并后的 main 上。发布说明写中文：这一版的主要变化、安装步骤（第一次打开要在「隐私与安全性」里点「仍要打开」，升级后要重新允许辅助功能）、系统要求，以及 DMG 的 SHA-256。
