@@ -31,6 +31,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var temporaryFiles: TemporaryFiles?
     private let accessibilityItem = NSMenuItem(title: "", action: #selector(openAccessibilitySettings), keyEquivalent: "")
     private let cursorStyleItem = NSMenuItem(title: "光标样式", action: nil, keyEquivalent: "")
+    private let retentionItem = NSMenuItem(title: "自动清除历史", action: nil, keyEquivalent: "")
     private let settings = Settings()
 
     override public init() {
@@ -67,6 +68,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         panel.showsDuringScreenSharing = settings.showDuringScreenSharing
         panel.draggingWriters = { [paster] item in try paster!.draggingWriters(for: item.id) }
         model.onPaste = { [weak self] item, mode in self?.paste(item, as: mode) }
+        model.onCopy = { [paster] item in
+            do {
+                try paster!.copyToPasteboard(item.id, touching: false)
+            } catch {
+                NSLog("PasteMe: 拷贝失败：\(error)")
+            }
+        }
         model.onEditAliases = { [weak self] bundleID in self?.showAliases(focusing: bundleID) }
         model.onNotice = { [weak self] message, symbol in self?.toast.show(message, symbol: symbol) }
 
@@ -119,10 +127,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             self?.backfillTextSubtypes()
             Task { await self?.appNames.prefetch() }
             self?.removeExpiredFiles()
+            self?.clearOldHistory()
         }
-        // 以文件粘贴、拖出图片时生成的临时文件，过一天删掉。
+        // 以文件粘贴、拖出图片时生成的临时文件，过一天删掉；打开了自动清除时清除旧的历史。
         let timer = Timer(timeInterval: 60 * 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.removeExpiredFiles() }
+            MainActor.assumeIsolated {
+                self?.removeExpiredFiles()
+                self?.clearOldHistory()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         cleanupTimer = timer
@@ -131,6 +143,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func removeExpiredFiles() {
         guard let files = temporaryFiles else { return }
         Task.detached { files.removeExpired() }
+    }
+
+    /// 自动清除（#34）：删除不在 Pinboard 里、超过设定时间没用过的条目。面板开着时这次跳过，
+    /// 免得卡片在用户眼前消失，一小时后再查。
+    private func clearOldHistory() {
+        guard let cutoff = settings.historyRetention.cutoff(), !panel.isVisible else { return }
+        do {
+            try store.deleteUnpinned(before: cutoff)
+        } catch {
+            NSLog("PasteMe: 自动清除历史失败：\(error)")
+        }
     }
 
     /// 给升级前记下的文本条目分批补算子类型（#26）。识别在主线程上做（`ClipStore` 只在主线程用），
@@ -162,6 +185,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// 加上 `PASTEME_SNAPSHOT_PREVIEW=1` 时打开选中卡片的预览，`PASTEME_SNAPSHOT_EDITOR=1` 时打开新建 Pinboard 的窗口，
     /// 这两个窗口另存为 `<文件名>-preview.png`、`<文件名>-editor.png`。
     /// 加上 `PASTEME_SNAPSHOT_APPEARANCE=light` 或 `dark` 时不管系统设置，按浅色或深色外观画。
+    /// 加上 `PASTEME_SNAPSHOT_RENAME=1` 时在选中卡片的标题栏里编辑标题（#33）。
     private func writeSnapshot(to path: String) {
         let environment = ProcessInfo.processInfo.environment
         switch environment["PASTEME_SNAPSHOT_APPEARANCE"] {
@@ -175,6 +199,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
         if environment["PASTEME_SNAPSHOT_PREVIEW"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.model.preview() }
+        }
+        if environment["PASTEME_SNAPSHOT_RENAME"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.model.rename() }
         }
         if environment["PASTEME_SNAPSHOT_EDITOR"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.model.onEditPinboard(.create(pinning: nil)) }
@@ -244,6 +271,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         cursorStyleItem.submenu = makeCursorStyleMenu()
         menu.addItem(NSMenuItem(title: "应用别名…", action: #selector(showAliasesFromMenu), keyEquivalent: ""))
         menu.addItem(.separator())
+        menu.addItem(retentionItem)
+        retentionItem.submenu = makeRetentionMenu()
         menu.addItem(NSMenuItem(title: "清空历史（保留 Pinboard）…", action: #selector(clearHistory), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 PasteMe", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -306,6 +335,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
         for item in cursorStyleItem.submenu?.items ?? [] {
             item.state = item.representedObject as? String == model.cursorStyle.rawValue ? .on : .off
+        }
+        for item in retentionItem.submenu?.items ?? [] {
+            item.state = item.representedObject as? String == settings.historyRetention.rawValue ? .on : .off
         }
         accessibilityItem.title = Accessibility.isTrusted ? "辅助功能权限：已开启" : "辅助功能权限：未开启（点此设置）"
     }
@@ -478,6 +510,37 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         Accessibility.openSettings()
     }
 
+    private func makeRetentionMenu() -> NSMenu {
+        let menu = NSMenu()
+        for retention in HistoryRetention.allCases {
+            let item = NSMenuItem(title: retention.title, action: #selector(chooseRetention(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = retention.rawValue
+            menu.addItem(item)
+            if retention == .never { menu.addItem(.separator()) }
+        }
+        return menu
+    }
+
+    /// 换成更短的时间、马上就要删掉条目时，先说明要删多少条：删除不能撤销。
+    @objc private func chooseRetention(_ sender: NSMenuItem) {
+        guard let retention = (sender.representedObject as? String).flatMap(HistoryRetention.init(rawValue:)) else { return }
+        if let days = retention.days, let cutoff = retention.cutoff(),
+           let count = try? store.unpinnedCount(before: cutoff), count > 0 {
+            NSApp.activate()
+            let alert = NSAlert()
+            alert.messageText = "清除 \(days) 天前的历史？"
+            alert.informativeText = "现在会删除 \(count) 个超过 \(days) 天没用过的条目，固定在 Pinboard 里的条目保留。"
+                + "之后每小时检查一次，超过 \(days) 天没有再复制或粘贴过的条目都会删除。此操作无法撤销。"
+            alert.addButton(withTitle: "清除")
+            alert.addButton(withTitle: "取消")
+            alert.buttons.first?.hasDestructiveAction = true
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        settings.historyRetention = retention
+        clearOldHistory()
+    }
+
     @objc private func clearHistory() {
         NSApp.activate()
         let pinned = (try? store.pinnedCount()) ?? 0
@@ -494,6 +557,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             try store.clearHistory()
         } catch {
             NSLog("PasteMe: 清空历史失败：\(error)")
+        }
+    }
+}
+
+extension HistoryRetention {
+    var title: String {
+        switch self {
+        case .never: "永不"
+        case .week: "7 天前的"
+        case .month: "30 天前的"
+        case .quarter: "90 天前的"
+        case .year: "1 年前的"
         }
     }
 }

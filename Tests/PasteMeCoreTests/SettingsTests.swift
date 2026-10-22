@@ -86,4 +86,17 @@ import Testing
         defaults.set("everything", forKey: "linkPreviewMode")
         #expect(Settings(defaults: defaults).linkPreviewMode == .off)
     }
+
+    @Test func historyIsNeverClearedByDefault() {
+        #expect(Settings(defaults: defaults).historyRetention == .never)
+        defaults.set("forever", forKey: "historyRetention")
+        #expect(Settings(defaults: defaults).historyRetention == .never)
+    }
+
+    @Test func historyRetentionPersists() {
+        Settings(defaults: defaults).historyRetention = .week
+        #expect(Settings(defaults: defaults).historyRetention == .week)
+        Settings(defaults: defaults).historyRetention = .never
+        #expect(Settings(defaults: defaults).historyRetention == .never)
+    }
 }

@@ -92,3 +92,61 @@ import PasteMeCore
         #expect(model.conversionOptions(for: try item(file)).isEmpty)
     }
 }
+
+/// 在面板上计算哈希值（#37）：在后台算，结果和转换一样记成新条目放到最前面并选中。
+@MainActor
+@Suite final class HashModelTests {
+    let store: ClipStore
+    let model: HistoryModel
+    let directory: URL
+
+    init() throws {
+        store = try ClipStore(path: ":memory:")
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        model = HistoryModel(store: store) { Date(timeIntervalSince1970: 100) }
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func item(_ id: Int64) throws -> ClipItem {
+        try #require(try store.item(id: id))
+    }
+
+    @Test func hashingTextRecordsTheResultFirst() async throws {
+        let id = try store.insert(ClipContent(kind: .text, text: "hello"), source: ClipSource(bundleID: "com.apple.Notes", name: "备忘录"), at: Date(timeIntervalSince1970: 1))
+        model.didShow()
+
+        await model.computeHash(try item(id), using: .md5)?.value
+
+        let first = try #require(model.items.first)
+        #expect(first.preview == "5d41402abc4b2a76b9719d911017c592")
+        #expect(first.sourceBundleID == nil)
+        #expect(model.selectedID == first.id)
+        #expect(model.items.count == 2)
+    }
+
+    @Test func hashingAFileUsesItsContents() async throws {
+        let url = directory.appendingPathComponent("hello.txt")
+        try Data("hello".utf8).write(to: url)
+        let id = try store.insert(ClipContent(kind: .file, text: url.path), source: nil, at: Date(timeIntervalSince1970: 1))
+        model.didShow()
+        #expect(model.hashUnavailableReason(for: try item(id)) == nil)
+
+        await model.computeHash(try item(id), using: .sha256)?.value
+
+        #expect(model.items.first?.preview == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+    }
+
+    @Test func missingFilesAndImagesAreNotHashed() throws {
+        let gone = try store.insert(ClipContent(kind: .file, text: directory.appendingPathComponent("gone").path), source: nil)
+        let image = try store.insert(ClipContent(kind: .image, image: try #require(PanelTestImage.png)), source: nil)
+        model.didShow()
+
+        #expect(model.hashUnavailableReason(for: try item(gone)) == "文件已经不在了")
+        #expect(model.computeHash(try item(gone), using: .md5) == nil)
+        #expect(model.computeHash(try item(image), using: .md5) == nil)
+    }
+}

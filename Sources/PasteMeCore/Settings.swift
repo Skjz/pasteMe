@@ -8,6 +8,31 @@ public enum CursorStyle: String, CaseIterable, Sendable {
     case flow
 }
 
+/// 自动清除多久以前的历史（#34）。只清除不在 Pinboard 里的条目，按最后一次使用的时间算。
+public enum HistoryRetention: String, CaseIterable, Sendable {
+    case never
+    case week
+    case month
+    case quarter
+    case year
+
+    /// 保留的天数，`never` 为 nil。
+    public var days: Int? {
+        switch self {
+        case .never: nil
+        case .week: 7
+        case .month: 30
+        case .quarter: 90
+        case .year: 365
+        }
+    }
+
+    /// 早于这个时间的条目要清除。`never` 为 nil。
+    public func cutoff(now: Date = Date()) -> Date? {
+        days.map { now.addingTimeInterval(-Double($0) * 24 * 60 * 60) }
+    }
+}
+
 /// 用户可以修改的开关，集中定义在这里。应用和 MCP 子进程读写同一个偏好域。
 public struct Settings {
     /// 偏好域的名字，与 PasteMe.app 的 bundle id 相同。
@@ -61,6 +86,12 @@ public struct Settings {
         nonmutating set { defaults.set(newValue.rawValue, forKey: Key.linkPreviewMode) }
     }
 
+    /// 自动清除多久以前的历史（#34）。默认不清除：升级后不能自己开始删用户的数据。存的值认不出来时也按不清除处理。
+    public var historyRetention: HistoryRetention {
+        get { defaults.string(forKey: Key.historyRetention).flatMap(HistoryRetention.init(rawValue:)) ?? .never }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Key.historyRetention) }
+    }
+
     /// 最近一次固定条目用的 Pinboard，⌘P 固定到这里。没有时为 nil。
     public var lastPinboardID: Int64? {
         get { (defaults.object(forKey: Key.lastPinboardID) as? NSNumber)?.int64Value }
@@ -81,6 +112,7 @@ public struct Settings {
         static let pasteImagesAsFiles = "pasteImagesAsFiles"
         static let linkPreviewMode = "linkPreviewMode"
         static let lastPinboardID = "lastPinboardID"
+        static let historyRetention = "historyRetention"
     }
 
     /// 在 PasteMe.app 里运行时主 bundle id 就是 `suiteName`，系统不接受把它当 suite 名

@@ -18,8 +18,6 @@ final class PreviewState {
     @ObservationIgnored var bodyEdited = false
     /// 每换一次内容加一，正文编辑器据此重新载入文字。
     private(set) var revision = 0
-    /// 加一时标题输入框取得键盘焦点。
-    private(set) var titleFocusRequest = 0
     /// 图片的缩放：加一时执行 `zoomCommand`。
     private(set) var zoomRevision = 0
     private(set) var zoomCommand = ZoomCommand.fit
@@ -42,10 +40,6 @@ final class PreviewState {
         revision += 1
         zoomCommand = .fit
         zoomRevision += 1
-    }
-
-    func focusTitle() {
-        titleFocusRequest += 1
     }
 
     func zoom(_ command: ZoomCommand) {
@@ -106,7 +100,7 @@ final class PreviewController: NSObject, NSWindowDelegate {
     func open(_ request: PreviewRequest, above panelFrame: NSRect) {
         if isVisible { saveEdits() }
         switch request {
-        case .show(let item), .edit(let item), .rename(let item):
+        case .show(let item), .edit(let item):
             state.load(item, content: model.content(of: item.id))
         case .newText:
             state.load(nil, content: nil)
@@ -135,9 +129,6 @@ final class PreviewController: NSObject, NSWindowDelegate {
                 self.window.makeFirstResponder(textView)
                 textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
             }
-        case .rename:
-            window.makeKey()
-            DispatchQueue.main.async { [weak self] in self?.state.focusTitle() }
         }
     }
 
@@ -202,7 +193,6 @@ private struct PreviewView: View {
     let state: PreviewState
     let model: HistoryModel
     let close: () -> Void
-    @FocusState private var titleFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -213,7 +203,6 @@ private struct PreviewView: View {
             Divider()
             footer
         }
-        .onChange(of: state.titleFocusRequest) { titleFocused = true }
     }
 
     private var header: some View {
@@ -224,7 +213,6 @@ private struct PreviewView: View {
             TextField(state.isNewText ? "新建文本，可以起个标题" : "添加标题", text: Bindable(state).title)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15, weight: .semibold))
-                .focused($titleFocused)
             Spacer(minLength: 8)
             Text(details)
                 .font(.system(size: 11))

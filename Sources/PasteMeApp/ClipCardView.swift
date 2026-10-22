@@ -9,6 +9,8 @@ struct ClipCardView: View {
     let shortcutIndex: Int?
     /// 当前的搜索文字。命中图片里的文字时，卡片底部显示命中的那一段。
     var searchText = ""
+    /// 在标题栏里编辑标题时的输入框（#33），放在标题的位置。只有正在编辑的那张卡片有。
+    var titleField: AnyView?
 
     static let size = CGSize(width: 230, height: 240)
 
@@ -34,9 +36,17 @@ struct ClipCardView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
             // 起了标题的条目显示标题，否则显示类型（有文本子类型时带上，例如「文本 · Base64」）。
-            Text(item.title ?? item.typeTitle)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
+            if let titleField {
+                titleField
+                    .font(.system(size: 13, weight: .semibold))
+                    .padding(.horizontal, 4)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(.black.opacity(0.18)))
+                    .padding(.horizontal, -4)
+            } else {
+                Text(item.title ?? item.typeTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+            }
             Text(item.createdAt, format: .relative(presentation: .named))
                 .font(.system(size: 11))
                 .opacity(0.85)

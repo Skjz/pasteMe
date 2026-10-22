@@ -7,7 +7,7 @@
 ```text
 PasteMe        可执行文件，只有 main.swift
 └─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、全局快捷键、监听 ⌘V、发送 ⌘V、面板、浮窗、视图
-   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、AppNames、Recorder、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、SyntaxHighlighter
+   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、AppNames、Recorder、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter
 ```
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
@@ -47,6 +47,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - **存储**：`clips.text_subtype`（第 7 级迁移，为什么不是新的类型见 ADR 0008）存 `TextSubtype.rawValue`（`base64`、`code:swift`），只有文本条目有：NULL 是还没识别，空字符串是识别过、不是任何子类型。`ClipStore.insert` 记录时算，`updateText` 改完重算；再次复制相同内容时，新的结果为空就保留原来的（同一段代码从编辑器复制时认得出语言，从别处复制时可能认不出）。升级前的文本条目由 `AppDelegate.backfillTextSubtypes` 在启动 3 秒后每批 100 条、间隔 0.2 秒补算（`ClipStore.backfillTextSubtypes`），不在迁移里算，免得历史很多时启动变慢。
 - **筛选**：`ClipQuery.textSubtypes`（`.code` 用 `LIKE 'code:%'` 包含所有语言），`PanelFilters.subtypes`，`FilterSuggestion.subtype`。子类型没有常驻的按钮，从 `@` 选了才在类型按钮后面出现（`SubtypeChip`）。搜索框里的 `type:` 对得上类型时只按类型筛选，子类型都是文本，取并集只剩类型。
 - **转换**（#27）：`TextConverter.options(for:subtype:)` 按子类型列出转换（做不了的带原因，菜单里照样列出），`convert` 做转换，都是纯函数（`TextConversionTests` 用本机 `hexdump -C`、`xxd -i` 的真实输出做期望值）。`HistoryModel.convert` 把结果当成 ⌘N 新建的文本那样记录（不记来源应用），再用 `showInHistory` 回到没有筛选的「历史」选中它，所以在 Pinboard 里或有筛选时也看得到。右键菜单里的「转换」是单独的视图（`ConversionMenuItems`），列出转换要读完整内容，只在菜单打开时做；⌘T 弹出同样内容的 `NSMenu`（`PanelController.showConversionMenu`），位置取 `CardDust` 记下的卡片布局，它的视图盖在卡片列表上，坐标一致。
+- **哈希值**（#37）：`HashAlgorithm.digest(of:)`（`Hashing.swift`）算 MD5、SHA-256，文本按 UTF-8 编码后的字节、不解码子类型，文件用 `FileHandle` 每次读 1 MB。`HistoryModel.computeHash` 在主线程读出输入，用 `Task.detached` 在后台算，回到主线程按转换的规则记录（`record`，和 `convert` 共用）。它不在 `TextConverter` 里：转换是同步的纯函数、有 1 MB 的上限，哈希值没有上限、文件可能很大。菜单里放在转换后面，文件卡片在右键菜单里，文件不在或是文件夹时写明原因（`HashInput.unavailableReason`）。
 - **识别代码**（#28）：`CodeDetector` 只看前 4000 个字符、80 行，逐行比较字节，不用正则（release 下 15 行代码约 80 µs，一段散文约 13 µs）。顺序：确定的标记（shebang、`<?php`、`<?xml`、能解析的 JSON）→ 排除散文和 Markdown → HTML/XML、YAML → 按 `CodeSignals.swift` 的表给各语言打分。注释行不打分；C++、Objective-C 的分加在 C 上，TypeScript 加在 JavaScript 上；最高分要过门槛（编辑器 3、终端 4、其他 6）并且比第二名多 2 分。加一种语言：在 `CodeLanguage` 加一项（`rawValue` 存进数据库，不能改），在 `CodeSignals` 写只有它才有的写法，在 `LexerRules` 和 `Keywords` 写词法，再在 `CodeDetectorTests` 加正例和会混淆的反例。改规则后最好拿一批真实文字检查误认：例如把仓库里的文档按段落、源码按 15 行切开跑一遍，文档段落一条都不应该认成代码。
 - **着色**：`SyntaxHighlighter.segments(of:language:)` 返回覆盖整段文字的片段。多数语言用 C 风格的 `Lexer`，只换 `LexerRules`；HTML/XML、CSS、JSON、YAML 各有自己的扫描。卡片只着色显示的部分：`CodeSnippet.displayText` 取前 11 行、tab 换成 4 个空格、去掉共同的缩进，`CodeSnippet.truncating` 把超出卡片宽度的部分截掉换成「…」（中日韩文字算两列）。不让文字超出卡片再靠圆角裁掉，原因和标题栏图标一样（见「卡片外观」）。`CodeHighlightCache` 按条目、预览文字、语言和深浅外观缓存 `AttributedString`；视图读 `colorScheme`，外观换了就取另一份。单张代码卡片从创建到画出来和普通文本卡片一样（release 下都约 8 ms，主要花在创建视图上）。
 
@@ -57,6 +58,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 删除：「历史」里 ⌘⌫ 删除条目，也从所有 Pinboard 里去掉；Pinboard 里 ⌘⌫ 只是移出（`ClipStore.unpin`）。两种都进 `HistoryModel.removals`，⌘Z 用 `restore` / `restorePin` 放回原来的位置。切换标签时撤销记录清空：撤销放回的卡片要在当前列表里才能播放聚拢的动画。
 - `ClipStore.delete(id:)` 把整行按列名存进 `DeletedClip`，连同它在各个 Pinboard 里的位置，`restore` 原样插回去。以后给 `clips` 加列，撤销删除不用改。
 - 清空历史（`ClipStore.clearHistory()`）只删除不在任何 Pinboard 里的条目。
+- 自动清除（#34，`Settings.historyRetention`）：`AppDelegate.clearOldHistory` 在启动 3 秒后和之后每小时（和 `TemporaryFiles.removeExpired` 用同一个定时器）调用 `ClipStore.deleteUnpinned(before:)`，删除不在 Pinboard 里、`created_at` 早于期限的条目；`created_at` 在再次复制和粘贴时更新，所以按的是最后一次使用。面板开着时跳过这一次。不做 VACUUM，免得大数据库每小时卡一下。换成更短的期限、马上会删条目时，先用 `unpinnedCount(before:)` 数出来、弹窗确认。
 - 标签：`HistoryModel.pinboardID` 为 nil 是「历史」，每次呼出面板回到「历史」。⌘← ⌘→（`PanelKeymap`，规则和 ← → 一样）和面板开着时的 ⇧⌘V（`PanelController.toggle`，没有 Pinboard 时仍是收起）循环切换。⌘P 固定到 `Settings.lastPinboardID`，没有 Pinboard 时请求新建。
 - 新建、重命名、删除确认都在 `PinboardEditorController` 的小窗口里（见下一节），不用系统提示框：`NSAlert` 要激活 PasteMe，目标应用就不在前台了，关掉面板后 ⌘V 会落空。
 
@@ -72,7 +74,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 ## 拖出卡片
 
 - 卡片上的 `DragGesture` 第一次变化时调用 `HistoryModel.beginDrag`，`PanelController.beginDrag` 取 `NSApp.currentEvent`（这时是 leftMouseDragged）调用面板 `NSHostingView` 的 `beginDraggingSession`，之后鼠标交给 AppKit 的拖拽。用 AppKit 而不是 SwiftUI 的 `onDrag`：`onDrag` 只能给一个 `NSItemProvider`，几个文件的条目拖不出去。
-- 拖的内容由 `Paster.draggingWriters(for:)` 生成，和粘贴时写进剪贴板的一样（`PasteboardCodec.writers`），图片总是附带 PNG 文件。
+- 拖的内容由 `Paster.draggingWriters(for:)` 生成，和粘贴时写进剪贴板的一样（`PasteboardCodec.writers`），图片总是附带 PNG 文件。文本是 `TextFilePromise`（#36）：一个 file promise，访达放下时才在目标文件夹写出 .txt；它同时提供文字和 RTF，其他应用照常拿到文字。拖拽开始时不知道会放到哪里，所以不能像粘贴那样按目标应用决定。
 - 拖出面板时（`draggingSession(_:movedTo:)`）面板收起；在面板里时可以拖到 Pinboard 的标签上固定（`PinboardTabs` 的 `onDrop`），在 Pinboard 里拖到别的卡片上换位置（`ReorderDropDelegate` → `HistoryModel.moveDraggedCard`，拖拽结束时 `endDrag` 写进数据库）。这几处 `onDrop` 都只认 `HistoryModel.draggingID`，不解析拖拽的内容。
 
 ## 面板按键
@@ -83,7 +85,9 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 焦点在卡片上时打字，需要让这次按键直接进入搜索框。本地事件监视器在事件分发之前回调，所以 `PanelController` 在监视器里同步把搜索框设为第一响应者，再把事件放行。搜索框是在视图层级里找到的第一个可编辑 `NSTextField`。
 - 输入法组字时（搜索框的字段编辑器 `hasMarkedText()`），所有按键都交给输入法：↩、方向键和 esc 是用来选字和取消的。
 - 删除时 `ClipStore.delete(id:)` 返回 `DeletedClip`（Pinboard 里是 `unpin` 返回 `UnpinnedClip`），`HistoryModel` 保存到面板关闭或切换标签为止，⌘Z 放回原来的 id、时间、缩略图和 Pinboard 里的位置。删除和撤销的动画见「删除动画」。
-- 焦点在卡片上时空格打开、关闭预览（预览开着时 esc 也关闭它），⌘P、⌘N、⌘E、⌘J、⌘T 在两种焦点下都起作用。
+- 焦点在卡片上时空格打开、关闭预览（预览开着时 esc 也关闭它），⌘P、⌘N、⌘E、⌘J、⌘T 在两种焦点下都起作用。⌘R、⌘C 只在焦点在卡片上时起作用，在搜索框里交给输入框（⌘C 拷贝选中的文字）。
+- 在卡片标题栏里编辑标题（#33）是第三种焦点 `.title`：`HistoryModel.rename` 记下 `titleEditingID`，`HistoryView` 只给这一张卡片的标题栏放 `CardTitleField`（其他卡片的画法不变），它出现后自己取得第一响应者。`PanelKeymap` 这时只处理 ↩（保存）和 esc（取消），其余按键都交给输入框。焦点离开 `.title`（点进搜索框、点了别的卡片）、切换标签、卡片被筛选掉、面板收起都按保存处理；卡片的点击、双击和拖动在编辑时不起作用，免得点输入框时选中、粘贴或拖走卡片。开始编辑前先关掉预览，否则预览关闭时会把它记着的旧标题存回去。截图模式里 `PASTEME_SNAPSHOT_RENAME=1` 画出编辑标题时的面板。
+- ⌘C（#35）用 `Paster.copyToPasteboard(_:touching: false)` 只写剪贴板，面板不收起，卡片也不动；`HistoryModel.copiedID` 记下最后拷贝的条目，`panelWillHide` 时才 `touch` 到历史最前。
 - PasteMe 没有菜单栏，但 `AppDelegate.setUpMainMenu()` 设了一个不显示的主菜单：输入框的 ⌘X、⌘C、⌘V、⌘A、⌘Z 和 ⌘W 关闭窗口都要靠菜单项的快捷键才能用。
 
 ## 卡片外观
@@ -145,6 +149,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
    │  ├─ ClipStore.content(id:)         # 条目已不存在 → 抛 PasteError.clipNotFound
    │  ├─ .plainText 时去掉 RTF
    │  ├─ .file（或设置了「图片以文件粘贴」）时 TemporaryFiles.imageFile 把图片存成 PNG
+   │  ├─ 文本、目标是访达时 TemporaryFiles.textFile 存成 .txt（TextFile.name 起名）
    │  ├─ PasteboardWriting.write(content, attachingFile:)
    │  ├─ ClipStore.touch(id:)           # 移到历史最前；失败不影响这次粘贴
    │  └─ PasteKeystrokeSending.isTrusted ? sendPaste(to:) → .pasted : .copiedOnly
@@ -154,7 +159,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 - 发送 ⌘V 前的 0.08 秒延迟（等面板收起、键盘焦点回到目标应用）放在 `CGEventPasteKeystroke` 里，`Paster.paste` 本身是同步的，测试不需要等待。
 - 有没有辅助功能权限，由按键 adapter 的 `isTrusted` 判断；弹出系统授权提示是应用层的事（`Accessibility`）。
 - 以文件粘贴和拖出图片生成的 PNG 放在 `~/Library/Caches/PasteMe/Files/<条目 id>/`，文件名用复制时间。再次用到时只更新修改时间；`AppDelegate` 在启动 3 秒后和之后每小时调用 `TemporaryFiles.removeExpired()`，删除一天没用过的。
-- `TargetApp` 在 `PanelController.show()` 时从前台应用取得。面板不激活 PasteMe，所以生产环境里 ⌘V 直接发给前台应用，用不到这个值。它是为 #13 的粘贴事件（记录粘贴到了哪个应用）准备的。
+- `TargetApp` 在 `PanelController.show()` 时从前台应用取得。面板不激活 PasteMe，所以生产环境里 ⌘V 直接发给前台应用，发送按键用不到这个值。文本粘贴到访达时附带 .txt 文件（#36）靠它判断目标；粘贴到其他应用不附带文件，否则有的应用会把文本粘贴成附件。#13 的粘贴事件（记录粘贴到了哪个应用）也会用到它。
 
 ## Seam 和测试替身
 

@@ -200,4 +200,45 @@ import Testing
             #expect(action(command(kVK_ANSI_T, "t"), context) == .run(.showConversions))
         }
     }
+
+    // MARK: 在卡片标题栏里编辑标题（#33）、拷贝（#35）
+
+    static let editingTitle = PanelContext(focus: .title, queryIsEmpty: true, canUndoDelete: true)
+    static let commandR = PanelKey(keyCode: kVK_ANSI_R, command: true, characters: "r")
+    static let commandC = PanelKey(keyCode: kVK_ANSI_C, command: true, characters: "c")
+
+    @Test func commandROnCardsEditsTheTitleButNotInTheSearchField() {
+        #expect(action(Self.commandR, Self.onCards) == .run(.renameSelected))
+        #expect(action(Self.commandR, Self.searching) == .passThrough)
+    }
+
+    @Test func returnSavesAndEscapeCancelsTheTitle() {
+        #expect(action(PanelKey(keyCode: kVK_Return), Self.editingTitle) == .run(.commitTitle))
+        #expect(action(PanelKey(keyCode: kVK_ANSI_KeypadEnter), Self.editingTitle) == .run(.commitTitle))
+        #expect(action(PanelKey(keyCode: kVK_Escape), Self.editingTitle) == .run(.cancelTitle))
+        var previewShown = Self.editingTitle
+        previewShown.previewShown = true
+        #expect(action(PanelKey(keyCode: kVK_Escape), previewShown) == .run(.cancelTitle))
+    }
+
+    @Test func everyOtherKeyGoesIntoTheTitleField() {
+        for key in [
+            PanelKey(keyCode: kVK_ANSI_A, characters: "a"), Self.space, Self.left, Self.right,
+            PanelKey(keyCode: kVK_UpArrow), PanelKey(keyCode: kVK_DownArrow), Self.commandDelete, Self.commandZ,
+            Self.commandC, Self.commandR, PanelKey(keyCode: kVK_ANSI_P, command: true, characters: "p"),
+            PanelKey(keyCode: kVK_ANSI_1, command: true, characters: "1"),
+        ] {
+            #expect(action(key, Self.editingTitle) == .passThrough, "\(key)")
+        }
+        // 输入法组字时 ↩ 是确认拼音。
+        var composing = Self.editingTitle
+        composing.composing = true
+        #expect(action(PanelKey(keyCode: kVK_Return), composing) == .passThrough)
+    }
+
+    @Test func commandCOnCardsCopiesButCopiesTextInTheSearchField() {
+        #expect(action(Self.commandC, Self.onCards) == .run(.copySelected))
+        #expect(action(Self.commandC, Self.searching) == .passThrough)
+        #expect(action(PanelKey(keyCode: kVK_ANSI_C, command: true, shift: true, characters: "c"), Self.onCards) == .passThrough)
+    }
 }

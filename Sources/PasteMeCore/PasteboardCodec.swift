@@ -56,7 +56,7 @@ public enum PasteboardCodec {
         return nil
     }
 
-    /// 把内容写回剪贴板，并打上 `ownMarker`。`file` 是图片另存成的 PNG 文件，有的话一起写进去。
+    /// 把内容写回剪贴板，并打上 `ownMarker`。`file` 是图片另存成的 PNG 文件或文本存成的 .txt 文件，有的话一起写进去。
     public static func write(_ content: ClipContent, attachingFile file: URL? = nil, to pasteboard: NSPasteboard) {
         pasteboard.clearContents()
         pasteboard.writeObjects(writers(for: content, attachingFile: file))
@@ -66,7 +66,7 @@ public enum PasteboardCodec {
     /// 写进剪贴板或拖拽的内容。文件是每个文件一项；其他类型是一项，带上它的几种写法，接收方自己挑。
     ///
     /// 图片给了 `file` 时，同一项里既有图片数据也有文件地址：访达、网页上传框这类只收文件的地方用文件，
-    /// 其他应用照常用图片数据。
+    /// 其他应用照常用图片数据。文本给了 `file`（粘贴到访达时，#36）也一样。
     public static func writers(for content: ClipContent, attachingFile file: URL? = nil) -> [NSPasteboardWriting] {
         if content.kind == .file {
             return content.fileURLs as [NSURL]
@@ -76,6 +76,7 @@ public enum PasteboardCodec {
         case .text:
             if let rtf = content.rtf { item.setData(rtf, forType: .rtf) }
             if let text = content.text { item.setString(text, forType: .string) }
+            if let file { item.setString(file.absoluteString, forType: .fileURL) }
         case .link:
             if let text = content.text {
                 item.setString(text, forType: .string)

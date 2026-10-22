@@ -97,6 +97,7 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             guard let self, self.preview.isVisible else { return }
             self.preview.follow(self.model.selectedItem)
         }
+        model.onWillEditTitle = { [weak self] in self?.preview.close() }
         preview.onResignKey = { [weak self] in self?.keyMovedAway() }
         pinboardEditor.onResignKey = { [weak self] in
             // 点回面板时编辑窗口关掉，当作取消。
@@ -179,7 +180,8 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
     func hide() {
         guard isVisible else { return }
         phase = .hiding
-        // 预览里的修改在这里保存；编辑窗口当作取消。它们关掉时不用把键盘焦点还给面板。
+        // 标题栏里正在输入的标题、预览里的修改在这里保存；编辑窗口当作取消。它们关掉时不用把键盘焦点还给面板。
+        model.panelWillHide()
         closingAuxiliaryWindows = true
         preview.close()
         pinboardEditor.close()
@@ -427,6 +429,17 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             if model.canShowInHistory { model.showInHistory() }
         case .showConversions:
             showConversionMenu()
+        case .renameSelected:
+            model.rename()
+        case .commitTitle:
+            model.commitTitle()
+            // 输入框随之去掉，键盘焦点回到卡片上。
+            panel.makeFirstResponder(nil)
+        case .cancelTitle:
+            model.cancelTitle()
+            panel.makeFirstResponder(nil)
+        case .copySelected:
+            model.copy()
         }
     }
 
@@ -452,10 +465,17 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             entry.isEnabled = option.unavailableReason == nil
             menu.addItem(entry)
         }
+        menu.addItem(.separator())
+        for algorithm in HashAlgorithm.allCases {
+            menu.addItem(ClosureMenuItem(algorithm.title) { [weak self] in
+                self?.model.computeHash(item, using: algorithm)
+            })
+        }
         menu.popUp(positioning: nil, at: CGPoint(x: frame.minX + 10, y: frame.minY + ClipCardView.headerHeight), in: dust.view)
     }
 
-    /// SwiftUI 的 `TextField` 在 macOS 上由 `NSTextField` 实现，面板里只有这一个。
+    /// SwiftUI 的 `TextField` 在 macOS 上由 `NSTextField` 实现。搜索框在视图层级里排在最前面；
+    /// 另一个输入框是卡片标题栏里编辑标题时的（#33），那时焦点是 `.title`，不会走到这里。
     private func searchField(in view: NSView?) -> NSTextField? {
         guard let view else { return nil }
         if let field = view as? NSTextField, field.isEditable { return field }

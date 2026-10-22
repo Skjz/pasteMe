@@ -569,6 +569,30 @@ public final class ClipStore {
         try db.execute("VACUUM")
     }
 
+    /// 不在任何 Pinboard 里、最后一次使用早于 `date` 的条目数，自动清除前提示用（#34）。
+    public func unpinnedCount(before date: Date) throws -> Int {
+        let statement = try db.prepare(
+            "SELECT count(*) FROM clips WHERE created_at < ? AND id NOT IN (SELECT clip_id FROM pinboard_items)",
+            [.double(date.timeIntervalSince1970)]
+        )
+        _ = try statement.step()
+        return Int(statement.int(0))
+    }
+
+    /// 自动清除（#34）：删除不在任何 Pinboard 里、最后一次使用早于 `date` 的条目，返回删除的条数。
+    /// 最后一次使用就是 `created_at`：再次复制和从面板粘贴（`touch`）都会更新它，常用的条目不会被删。
+    ///
+    /// 和 `clearHistory` 不同，这里不做 VACUUM：每小时都可能运行，大的数据库 VACUUM 一次要好一会儿，
+    /// 空出来的空间留给以后的条目用。
+    @discardableResult
+    public func deleteUnpinned(before date: Date) throws -> Int {
+        try db.run(
+            "DELETE FROM clips WHERE created_at < ? AND id NOT IN (SELECT clip_id FROM pinboard_items)",
+            [.double(date.timeIntervalSince1970)]
+        )
+        return db.changes
+    }
+
     public func count() throws -> Int {
         let statement = try db.prepare("SELECT count(*) FROM clips")
         _ = try statement.step()

@@ -58,6 +58,18 @@ import Testing
         #expect(keystroke.sentTo.isEmpty)
     }
 
+    @Test func copyingFromThePanelLeavesTheOrderAlone() throws {
+        // 面板里按 ⌘C（#35）：面板还开着，卡片先不动。
+        let old = try store.insert(ClipContent(kind: .text, text: "old"), source: nil, at: Date(timeIntervalSince1970: 1))
+        try store.insert(ClipContent(kind: .text, text: "new"), source: nil, at: Date(timeIntervalSince1970: 2))
+
+        try paster.copyToPasteboard(old, touching: false)
+
+        #expect(pasteboard.written == [ClipContent(kind: .text, text: "old")])
+        #expect(try store.items().map(\.preview) == ["new", "old"])
+        #expect(keystroke.sentTo.isEmpty)
+    }
+
     @Test func withoutAccessibilityPermissionOnlyCopies() throws {
         keystroke.isTrusted = false
         let id = try store.insert(ClipContent(kind: .text, text: "x"), source: nil)
