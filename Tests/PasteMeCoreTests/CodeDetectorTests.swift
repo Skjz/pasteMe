@@ -508,7 +508,7 @@ import Testing
         #expect(detect("git status") == nil)
         // 终端里复制的输出不是命令。
         #expect(detect("On branch main\nYour branch is up to date with 'origin/main'.", from: "com.apple.Terminal") == nil)
-        #expect(detect("total 48\ndrwxr-xr-x  5 lixiang  staff  160 Oct 17 10:00 Desktop", from: "com.apple.Terminal") == nil)
+        #expect(detect("total 48\ndrwxr-xr-x  5 alice  staff  160 Oct 17 10:00 Desktop", from: "com.apple.Terminal") == nil)
     }
 
     @Test func editorsLowerTheBar() {

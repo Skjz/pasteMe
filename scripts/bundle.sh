@@ -9,7 +9,7 @@
 # 环境变量：
 #   PASTEME_APP=<路径>       应用包放在哪里，默认 build/PasteMe.app
 #   PASTEME_UNIVERSAL=1      编成通用二进制（Apple 芯片和 Intel），发布用，见 scripts/make-dmg.sh
-#   PASTEME_RELEASE=1        打发布版：保留 Info.plist 里的 bundle id 和名字，见 scripts/make-dmg.sh
+#   PASTEME_RELEASE=1        打发布版：保留 Info.plist 里的 bundle id 和名字，去掉调试符号，见 scripts/make-dmg.sh
 #
 # 签名：默认使用钥匙串里第一个 "Apple Development" 证书。签名身份不变，
 # 系统授予的“辅助功能”权限在重新编译后仍然有效；用临时签名（-）则每次编译后都要重新授权。
@@ -40,6 +40,14 @@ cp "$BIN_DIR/PasteMe" "$APP/Contents/MacOS/PasteMe"
 if [[ "$(xcrun vtool -show-build "$APP/Contents/MacOS/PasteMe" | awk '$1 == "sdk" { print $2 }' | sort -u)" != "$SDK_VERSION" ]]; then
   echo "二进制记录的 SDK 版本不是 $SDK_VERSION，应用会按旧设计运行" >&2
   exit 1
+fi
+if [[ "${PASTEME_RELEASE:-0}" == "1" ]]; then
+  # 发布版去掉调试符号：符号表里记着编译时每个目标文件的完整路径（/Users/<用户名>/…），会随 DMG 发出去。
+  strip -S "$APP/Contents/MacOS/PasteMe"
+  if LC_ALL=C grep -q "$HOME/" "$APP/Contents/MacOS/PasteMe"; then
+    echo "发布版的二进制里还有本机路径（$HOME）" >&2
+    exit 1
+  fi
 fi
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 if [[ "${PASTEME_RELEASE:-0}" != "1" ]]; then
