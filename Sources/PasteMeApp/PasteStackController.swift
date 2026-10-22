@@ -230,22 +230,7 @@ final class PasteStackHUD {
     private lazy var hosting = NSHostingView(rootView: PasteStackView(state: state))
 
     init() {
-        let effect = NSVisualEffectView()
-        effect.material = .hudWindow
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 14
-        effect.layer?.masksToBounds = true
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        effect.addSubview(hosting)
-        NSLayoutConstraint.activate([
-            hosting.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-            hosting.topAnchor.constraint(equalTo: effect.topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-        ])
-        panel.contentView = effect
+        panel.contentView = WindowBackground.make(cornerRadius: 14, material: .hudWindow, content: hosting)
         panel.sharingType = .none
         state.remove = { [weak self] index in self?.onRemove(index) }
         state.close = { [weak self] in self?.onClose() }

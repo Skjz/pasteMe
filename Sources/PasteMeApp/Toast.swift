@@ -32,17 +32,7 @@ final class Toast {
     func show(_ message: String, detail: String? = nil, symbol: String) {
         let hosting = NSHostingView(rootView: ToastView(message: message, detail: detail, symbol: symbol))
         let size = hosting.fittingSize
-        let effect = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
-        effect.material = .hudWindow
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 14
-        effect.layer?.masksToBounds = true
-        hosting.frame = effect.bounds
-        hosting.autoresizingMask = [.width, .height]
-        effect.addSubview(hosting)
-        panel.contentView = effect
+        panel.contentView = WindowBackground.make(cornerRadius: 14, material: .hudWindow, content: hosting)
 
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main

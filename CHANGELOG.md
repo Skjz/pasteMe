@@ -70,6 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- On macOS 26 and later, the panel, the preview and Pinboard windows, the Paste Stack window, on-screen notices and the `@` filter list have Liquid Glass backgrounds, like the system's own menus and windows; their rounded corners are unchanged. macOS 14 and 15 keep the previous frosted material. (#41)
 - ⌘1–⌘9 hints on the cards show only while you hold ⌘ (or ⇧⌘), after about 0.2 seconds, so quick shortcuts like ⌘C, or letting go right after ⇧⌘V, don't flash them; they are hidden while you edit a title. They slide up into the card from below its bottom edge, one after another from left to right, and slide back out when you let go; they sit over the right end of the card's bottom line, so the text there doesn't move. The numbers, and what ⌘1–⌘9 paste, now start at the leftmost card that is fully shown, so after scrolling right ⌘1 pastes the first card on screen instead of the newest entry. When the panel opens it starts at the newest card, so ⌘1 is still the newest entry then. (#39)
 - "清空历史…" in the menu bar menu is now "清空历史（保留 Pinboard）…" and keeps entries pinned to a Pinboard. (#9)
 - The preview window and the Pinboard editing window follow the panel's screen-sharing setting, so they are hidden from screen sharing too unless "共享屏幕时显示面板" is on.
