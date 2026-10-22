@@ -53,6 +53,21 @@
 - 菜单栏菜单只放常用的操作：打开历史、暂停记录、Paste Stack、设置…（⌘,）和退出；没有辅助功能权限时最前面多一项提醒。
 - 设置窗口：左边侧栏选页，右边是分组的开关，大小固定。「通用」有登录时启动、复制时播放提示音、辅助功能权限和全局快捷键一览；「面板」有光标样式、共享屏幕时显示面板和图片以文件粘贴；「链接预览」选获取哪一档；「历史」有自动清除和清空历史（保留 Pinboard）；「应用别名」给来源应用加别名；「关于」是版本号和项目主页。
 
+## 安装
+
+需要 macOS 14 及以上，Apple 芯片和 Intel 的 Mac 都能用。
+
+1. 从 [Releases](https://github.com/Skjz/pasteMe/releases) 下载最新的 `PasteMe-<版本>.dmg`，打开后把 PasteMe 拖进「应用程序」。
+2. 第一次打开时系统会拦下：PasteMe 没有经过 Apple 公证。关掉提示框，到「系统设置 → 隐私与安全性」，在「安全性」下面找到 PasteMe，点「仍要打开」并确认。也可以在终端里运行下面这行，去掉下载标记后正常打开：
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/PasteMe.app
+   ```
+
+3. 在「系统设置 → 隐私与安全性 → 辅助功能」里允许 PasteMe，否则只能写入剪贴板，不能直接粘贴（见下面的「辅助功能权限」）。
+
+升级时先退出 PasteMe，再用新版本替换「应用程序」里的旧版本。发布版用的是临时签名，每次升级后都要在「辅助功能」里删掉旧的 PasteMe 条目，再重新允许。
+
 ## 构建和运行
 
 需要 macOS 14 及以上、Xcode 16 及以上（Swift 6）。
@@ -65,7 +80,7 @@ scripts/bundle.sh
 open build/PasteMe.app
 ```
 
-`scripts/bundle.sh` 编译 release 版本，打包成 `build/PasteMe.app` 并签名。默认使用钥匙串里第一个 “Apple Development” 证书；没有证书时用临时签名。
+`scripts/bundle.sh` 编译 release 版本，打包成 `build/PasteMe.app` 并签名。默认使用钥匙串里第一个 “Apple Development” 证书；没有证书时用临时签名。发布用的 DMG 由 `scripts/make-dmg.sh` 打包，步骤见 [docs/architecture.md](docs/architecture.md) 的「发布」。
 
 ### 辅助功能权限
 

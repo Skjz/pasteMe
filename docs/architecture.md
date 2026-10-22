@@ -219,5 +219,14 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
    历史数据库在 `$TMPDIR/pasteme-home/Library/Application Support/PasteMe/history.sqlite`，可以用 `sqlite3` 直接查。
    设置不隔离：偏好设置由 cfprefsd 按真实用户读写，不认 `CFFIXED_USER_HOME`。在测试实例的设置窗口里改开关、加别名，改的都是用户真实的设置（`defaults read io.github.skjz.PasteMe` 可以查看）。请用户这样试之前先说明，试完提醒改回去。
 4. 用 `pbcopy` 造测试数据时加上 `LANG=en_US.UTF-8`。不设 `LANG` 时，含中文的内容会被写成空字符串，PasteMe 会直接跳过它。
-5. 用截图检查时，面板可能不出现在截图里（例如 computer-use 只截授权应用的窗口）。这时看操作结果：目标应用里粘贴出的文字，以及数据库里条目的增删和顺序。面板默认不出现在录屏里（`sharingType = .none`），请用户录屏反馈动画问题时，要先在菜单里打开「共享屏幕时显示面板」，否则录到的只有面板后面的桌面。
+5. 用截图检查时，面板可能不出现在截图里（例如 computer-use 只截授权应用的窗口）。这时看操作结果：目标应用里粘贴出的文字，以及数据库里条目的增删和顺序。面板默认不出现在录屏里（`sharingType = .none`），请用户录屏反馈动画问题时，要先在设置窗口的「面板」页打开「共享屏幕时显示面板」，否则录到的只有面板后面的桌面。
 6. 验证完在仓库根目录用完整路径退出测试实例，以免误关用户自己的 PasteMe：`pkill -f "$PWD/build/PasteMe.app/Contents/MacOS/PasteMe"`。然后删除临时目录。
+
+## 发布
+
+版本号按 SemVer，tag 写成 `v0.1.0` 这样。
+
+1. 改 `Resources/Info.plist` 的 `CFBundleShortVersionString`，`CFBundleVersion` 加一；README「功能」标题里的版本号一起改。CHANGELOG 把 Unreleased 下的条目移到新版本的标题 `## [x.y.z] - 日期` 下，文末的比较链接加上新版本。这些改动走 PR 合进 main。
+2. 在合并后的 main 上运行 `scripts/make-dmg.sh`，得到 `build/PasteMe-x.y.z.dmg`。应用是通用二进制、临时签名，原因写在脚本开头。
+3. 发布前挂载 DMG（`hdiutil attach -nobrowse -readonly`）检查：`lipo -info` 有 x86_64 和 arm64；`xcrun vtool -show-build` 里每个架构的 `sdk` 都是真实的 SDK 版本；`codesign -dv` 是 `Signature=adhoc`。用临时 home 把两个架构各启动一次（`arch -x86_64` 要装了 Rosetta 的 Mac）。
+4. `gh release create vx.y.z build/PasteMe-x.y.z.dmg --target main`，tag 打在合并后的 main 上。发布说明写中文：这一版的主要变化、安装步骤（第一次打开要在「隐私与安全性」里点「仍要打开」，升级后要重新允许辅助功能）、系统要求，以及 DMG 的 SHA-256。
