@@ -190,10 +190,13 @@ struct ClipCardView: View {
         }
         // ⌘n 盖在底部右端：出现和消失时底部的文字不用重新排版，只播放提示自己的动画（#39）。
         .overlay(alignment: .trailing) {
-            if let shortcutIndex {
-                ShortcutHint(number: shortcutIndex)
-                    .transition(ShortcutHint.transition(for: shortcutIndex))
+            Group {
+                if let shortcutIndex {
+                    ShortcutHint(number: shortcutIndex)
+                        .transition(.offset(y: ShortcutHint.outside))
+                }
             }
+            .animation(ShortcutHint.animation(for: shortcutIndex), value: shortcutIndex == nil)
         }
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
@@ -227,16 +230,15 @@ private struct ShortcutHint: View {
 
     /// 起点和终点往下移的距离：底部留白 8 点加上文字的高度，编号整个在卡片下边缘以外，被卡片的圆角裁掉，
     /// 看起来是从卡片外面进来的。
-    private static let outside: CGFloat = 22
+    static let outside: CGFloat = 22
 
-    /// 动画放在过渡上：显示和隐藏时不用模型包 `withAnimation`，滚动时新进入 ⌘1…⌘9 的卡片也会滑进来、离开的滑出去。
-    /// 只有位移，没有淡入和缩放；不回弹的短弹簧，每个编号只晚 0.01 秒，整排 0.3 秒内到位。
-    static func transition(for number: Int) -> AnyTransition {
-        .asymmetric(
-            insertion: .offset(y: outside)
-                .animation(.spring(duration: 0.2, bounce: 0).delay(Double(number - 1) * 0.01)),
-            removal: .offset(y: outside).animation(.easeIn(duration: 0.1))
-        )
+    /// 编号出现、消失时用的动画，由 `.animation(_:value:)` 按有没有编号触发：模型不用包 `withAnimation`，
+    /// 滚动时新进入 ⌘1…⌘9 的卡片也会滑进来、离开的滑出去。不能把动画挂在过渡上（`.transition(….animation(…))`），
+    /// 那样只有透明度会动，位移直接跳到终点（`SwiftUIAssumptionTests` 检查）。
+    /// 只有位移，没有淡入和缩放；进来用不回弹的短弹簧，每个编号只晚 0.01 秒，整排 0.3 秒内到位。
+    static func animation(for number: Int?) -> Animation {
+        guard let number else { return .easeIn(duration: 0.1) }
+        return .spring(duration: 0.2, bounce: 0).delay(Double(number - 1) * 0.01)
     }
 }
 

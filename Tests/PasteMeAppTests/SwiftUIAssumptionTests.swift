@@ -162,6 +162,60 @@ import PasteMeCore
         }
     }
 
+    /// 按住 ⌘ 时卡片上的编号从卡片下边缘外面滑进来，松开时滑回去（#39）。模型改编号时不包 `withAnimation`，
+    /// 所以动画要由卡片自己的 `.animation(_:value:)` 触发；挂在过渡上的动画（`.transition(….animation(…))`）
+    /// 只对透明度有效，位移会直接跳到终点，看起来就是没有动画。
+    @Test func shortcutHintsSlideInAndOutOnTheirOwn() throws {
+        let store = try ClipStore(path: ":memory:")
+        try store.insert(ClipContent(kind: .text, text: "条目"), source: nil, at: Date())
+        let item = try #require(store.items(matching: ClipQuery()).first)
+        let hint = HintModel()
+        let window = Self.window(HintCard(item: item, hint: hint), width: ClipCardView.size.width, height: ClipCardView.size.height)
+        let view = try #require(window.contentView)
+        spin(timeout: 0.2)
+        let empty = Self.hintInk(in: view).count
+
+        /// 编号的笔画露出来时，记下它们离卡片底边的平均高度。
+        func heights(after change: () -> Void) -> [Double] {
+            var heights: [Double] = []
+            change()
+            spin(timeout: 0.4) {
+                let ink = Self.hintInk(in: view)
+                if ink.count > empty + 30 { heights.append(ink.height) }
+                return false
+            }
+            return heights
+        }
+
+        let comingIn = heights { hint.number = 1 }
+        let final = try #require(comingIn.last)
+        #expect(comingIn.contains { $0 < final - 3 }, "滑进来时的高度：\(comingIn)")
+
+        let goingOut = heights { hint.number = nil }
+        #expect(goingOut.contains { $0 < final - 3 }, "滑出去时的高度：\(goingOut)")
+        #expect(Self.hintInk(in: view).count <= empty + 30)
+        _ = window
+    }
+
+    /// 卡片右下角 45×30 点里深色的像素：个数，以及它们离卡片底边的平均高度（点）。
+    static func hintInk(in view: NSView) -> (count: Int, height: Double) {
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return (0, 0) }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let scale = Double(rep.pixelsWide) / view.bounds.width
+        let size = ClipCardView.size
+        var count = 0, sum = 0.0
+        for y in Int((size.height - 30) * scale)..<rep.pixelsHigh {
+            for x in Int((size.width - 45) * scale)..<rep.pixelsWide {
+                guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                      color.redComponent + color.greenComponent + color.blueComponent < 2.2
+                else { continue }
+                count += 1
+                sum += Double(rep.pixelsHigh - y) / scale
+            }
+        }
+        return (count, count == 0 ? 0 : sum / Double(count))
+    }
+
     // MARK: 工具
 
     static func window(_ view: some View, width: CGFloat = 400, height: CGFloat = 100) -> NSWindow {
@@ -171,6 +225,23 @@ import PasteMeCore
         )
         window.contentView = NSHostingView(rootView: view)
         return window
+    }
+}
+
+@Observable
+@MainActor
+private final class HintModel {
+    var number: Int?
+}
+
+/// 卡片上的编号由 `HintModel` 决定，改它时不包 `withAnimation`。
+private struct HintCard: View {
+    let item: ClipItem
+    let hint: HintModel
+
+    var body: some View {
+        ClipCardView(item: item, shortcutIndex: hint.number)
+            .environment(\.colorScheme, .light)
     }
 }
 
