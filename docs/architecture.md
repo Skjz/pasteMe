@@ -12,6 +12,7 @@ PasteMe        可执行文件，只有 main.swift
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
 - `PasteMeApp` 里只有 `AppDelegate` 是 `public`（`main.swift` 要用），其余保持 internal，测试用 `@testable import PasteMeApp`。
+- 应用图标的源文件是 `Resources/AppIcon.icon`，用 Xcode 自带的 Icon Composer 打开修改，图层是 `Assets/` 里的 SVG；`scripts/bundle.sh` 用 `actool` 把它编成 `Assets.car` 和 `AppIcon.icns`，macOS 14、15 显示的平面图标也由 `actool` 从这份文件生成，不另外维护。
 
 ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没建，等 #8 再建。
 

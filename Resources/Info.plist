@@ -6,6 +6,10 @@
 	<string>zh_CN</string>
 	<key>CFBundleExecutable</key>
 	<string>PasteMe</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.github.skjz.PasteMe</string>
 	<key>CFBundleInfoDictionaryVersion</key>
