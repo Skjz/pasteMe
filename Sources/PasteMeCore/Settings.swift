@@ -78,6 +78,12 @@ public struct Settings {
         nonmutating set { defaults.set(newValue, forKey: Key.pasteImagesAsFiles) }
     }
 
+    /// 复制被记录时播放提示音（#25）。默认 false：常驻后台的工具升级后突然开始出声会打扰用户，由用户自己打开。
+    public var playsSoundOnRecord: Bool {
+        get { defaults.bool(forKey: Key.playsSoundOnRecord) }
+        nonmutating set { defaults.set(newValue, forKey: Key.playsSoundOnRecord) }
+    }
+
     /// 复制链接后获取什么（#11）。默认关闭：获取会向对方网站发请求，要用户自己选；
     /// 「只取网站图标」不会打开复制的网址，「完整预览」会，一次性的链接在极少数情况下可能因此失效。
     /// 存的值认不出来时也按关闭处理。
@@ -113,6 +119,7 @@ public struct Settings {
         static let linkPreviewMode = "linkPreviewMode"
         static let lastPinboardID = "lastPinboardID"
         static let historyRetention = "historyRetention"
+        static let playsSoundOnRecord = "playsSoundOnRecord"
     }
 
     /// 在 PasteMe.app 里运行时主 bundle id 就是 `suiteName`，系统不接受把它当 suite 名

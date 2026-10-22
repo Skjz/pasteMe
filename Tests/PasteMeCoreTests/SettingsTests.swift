@@ -93,6 +93,18 @@ import Testing
         #expect(Settings(defaults: defaults).historyRetention == .never)
     }
 
+    @Test func recordSoundIsOffByDefault() {
+        #expect(Settings(defaults: defaults).playsSoundOnRecord == false)
+    }
+
+    @Test func recordSoundPersists() {
+        Settings(defaults: defaults).playsSoundOnRecord = true
+        #expect(Settings(defaults: defaults).playsSoundOnRecord == true)
+
+        Settings(defaults: defaults).playsSoundOnRecord = false
+        #expect(Settings(defaults: defaults).playsSoundOnRecord == false)
+    }
+
     @Test func historyRetentionPersists() {
         Settings(defaults: defaults).historyRetention = .week
         #expect(Settings(defaults: defaults).historyRetention == .week)
