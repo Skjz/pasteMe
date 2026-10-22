@@ -77,13 +77,6 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
 
     init(model: HistoryModel) {
         self.model = model
-        let effect = NSVisualEffectView()
-        effect.material = .popover
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 16
-        effect.layer?.masksToBounds = true
         hosting = NSHostingView(rootView: HistoryView(model: model, dust: dust))
         preview = PreviewController(model: model)
         pinboardEditor = PinboardEditorController(model: model)
@@ -106,15 +99,7 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
         }
         preview.onClose = { [weak self] in self?.takeKeyBack() }
         pinboardEditor.onClose = { [weak self] in self?.takeKeyBack() }
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        effect.addSubview(hosting)
-        NSLayoutConstraint.activate([
-            hosting.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-            hosting.topAnchor.constraint(equalTo: effect.topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-        ])
-        panel.contentView = effect
+        panel.contentView = WindowBackground.make(cornerRadius: 16, material: .popover, content: hosting)
         panel.delegate = self
     }
 

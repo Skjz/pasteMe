@@ -71,6 +71,12 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 修改在预览关闭、换内容或面板收起时保存（`PreviewState.markSaved` 先记下已保存，保存引起的重新查询再回来时不会存第二次）。正文是 `NSTextView`，有 RTF 的文本按富文本编辑、画在白底上（富文本常带黑色文字），其他按纯文本编辑；关掉了引号、破折号替换和拼写纠正。`ClipStore.updateText` 改完内容哈希会变，和另一条相同时合并（规则见它的注释和 `ClipEditingTests`）。
 - 截图模式里 `PASTEME_SNAPSHOT_PREVIEW=1` / `PASTEME_SNAPSHOT_EDITOR=1` 把这两个窗口另存成图片。
 
+## 窗口背景
+
+- 面板、附属窗口、Paste Stack 浮窗和 Toast 的背景都由 `WindowBackground.make` 建（#41）：macOS 26 起是 Liquid Glass（`NSGlassEffectView`），之前是毛玻璃材质（`NSVisualEffectView`）。新加的浮动窗口也用它，版本分支只写在这一处。`@` 的候选列表画在面板里面，用 SwiftUI 的 `glassEffect`（`SuggestionListBackground`）。
+- 玻璃只当背景：`make` 返回一个普通容器，下面是玻璃，上面是按同样圆角裁剪的内容，内容不放进玻璃的 `contentView`（原因见 `make` 的注释）。窗口的 `contentView` 因此不是 SwiftUI 内容的直接父视图，要用内容视图时自己留着引用（`AuxiliaryPanel.hosting`）。
+- 截图模式用 `cacheDisplay` 画面板，画不出窗口后面的内容，截图里看不出玻璃的效果，要在真实屏幕上看。
+
 ## 拖出卡片
 
 - 卡片上的 `DragGesture` 第一次变化时调用 `HistoryModel.beginDrag`，`PanelController.beginDrag` 取 `NSApp.currentEvent`（这时是 leftMouseDragged）调用面板 `NSHostingView` 的 `beginDraggingSession`，之后鼠标交给 AppKit 的拖拽。用 AppKit 而不是 SwiftUI 的 `onDrag`：`onDrag` 只能给一个 `NSItemProvider`，几个文件的条目拖不出去。

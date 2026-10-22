@@ -40,6 +40,8 @@
 
 - 链接卡片的衬线字体（拉丁字母 New York，中文换成宋体）要建字体描述、挂上备用字体，每次画卡片都新建会让 `show()` 多花几毫秒，所以 `EditorialFont` 按字号缓存。海报样式的图标光晕也预先画成图（`LinkIconCache.posterIcon`），不在运行时模糊。单张海报链接卡片从创建到画出来约 4.5 ms，文本卡片约 3.7 ms。
 
+- Liquid Glass 背景（#41）：SwiftUI 内容放在 `NSGlassEffectView` 的 `contentView` 里时，窗口每次上屏（`makeKeyAndOrderFront`、收起时的 `orderFrontRegardless`）玻璃都会让内容整个重画一遍，呼出的 `call_ms` 比 main 多约 6 ms、收起多约 4 ms。改成玻璃只当背景、内容叠在上面之后，呼出和收起的 `call_ms` 都不比 main 多。玻璃自己每次上屏还要 3～4 ms，这部分省不掉。
+
 - 卡片的右键菜单写在卡片的 body 里（`.contextMenu { … }` 直接放按钮）时，SwiftUI 每次画卡片都把整个菜单建一遍。#9 给菜单加了「固定到」子菜单（每个 Pinboard 一个勾）后，`show()` 的 `call_ms` 多了约 7 ms；把菜单拆成单独的视图（`CardContextMenu`）后回到基线。改右键菜单时看 `call_ms`。
 
 ## 外观检查
@@ -47,6 +49,7 @@
 - 计算机操作工具和 `screencapture` 都拍不到面板（没有屏幕录制权限，截图会过滤 PasteMe 的窗口）。
 - `PASTEME_SNAPSHOT` 用 `cacheDisplay` 在 CPU 上重画面板，普通视图和阴影与屏幕一致。
 - `drawingGroup` 里的模糊例外：截图和 `ImageRenderer` 里看起来正常，屏幕上却出现方框状的边缘。这类效果请用户在真实屏幕上确认。
+- Liquid Glass 背景（#41）也要请用户在屏幕上看：`cacheDisplay` 画不出窗口后面的内容，截图里的玻璃不是屏幕上的样子。
 
 ## 试过但不可靠的测量方式
 

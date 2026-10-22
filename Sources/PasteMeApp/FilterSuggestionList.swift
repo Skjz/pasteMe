@@ -32,9 +32,7 @@ struct FilterSuggestionList: View {
                 proxy.scrollTo(suggestions[index].id)
             }
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.1)))
-        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+        .modifier(SuggestionListBackground())
     }
 
     private func row(_ suggestion: FilterSuggestion, highlighted: Bool) -> some View {
@@ -110,6 +108,21 @@ struct FilterSuggestionList: View {
         case .subtype(let subtype): model.filters.subtypes.contains(subtype)
         case .app(let app): model.filters.sourceApp?.bundleID == app.bundleID
         case .pinboard(let pinboard): model.filters.pinboardIDs.contains(pinboard.id)
+        }
+    }
+}
+
+/// 候选列表的背景（#41）：macOS 26 起是 Liquid Glass，玻璃自带边缘和阴影；之前是毛玻璃材质加描边和阴影。
+private struct SuggestionListBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 10)
+        if #available(macOS 26, *) {
+            content.glassEffect(.regular, in: shape)
+        } else {
+            content
+                .background(.regularMaterial, in: shape)
+                .overlay(shape.strokeBorder(Color.primary.opacity(0.1)))
+                .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
         }
     }
 }
