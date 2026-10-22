@@ -202,6 +202,7 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             self.panel.ignoresMouseEvents = false
             self.phase = .hidden
             self.model.isPanelVisible = false
+            self.model.panelDidHide()
         }
     }
 

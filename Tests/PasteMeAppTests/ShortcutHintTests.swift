@@ -91,8 +91,10 @@ import PasteMeCore
         holdCommand()
         model.firstVisibleCard = 4
         model.panelWillHide()
-        // 已经显示的提示跟着面板滑出去，不在收起动画里重画卡片。
+        // 已经显示的提示跟着面板滑出去，收起动画播完才去掉。
         #expect(model.showsShortcutHints)
+        model.panelDidHide()
+        #expect(!model.showsShortcutHints)
 
         model.didShow()
         #expect(!model.showsShortcutHints)

@@ -846,7 +846,7 @@ final class HistoryModel {
     }
 
     /// 面板开始收起：保存标题栏里正在输入的标题，把拷贝过的条目移到历史最前。
-    /// 已经显示的 ⌘1…⌘9 跟着面板滑出去，不在收起动画里重画卡片；还没到时间的不再显示。
+    /// 已经显示的 ⌘1…⌘9 跟着面板滑出去，不在收起动画里淡出；还没到时间的不再显示。
     func panelWillHide() {
         shortcutKeysDown = false
         shortcutKeysGeneration += 1
@@ -859,6 +859,11 @@ final class HistoryModel {
                 NSLog("PasteMe: 移动拷贝的条目失败：\(error)")
             }
         }
+    }
+
+    /// 收起动画播完、面板已经不在屏幕上：这时才去掉还显示着的 ⌘1…⌘9，下次呼出时不在呼出动画里淡出。
+    func panelDidHide() {
+        if shortcutKeysHeld { shortcutKeysHeld = false }
     }
 
     /// ⌘1…⌘9：粘贴从第一张完整显示的卡片数起的第 `index + 1` 条，和卡片上显示的 ⌘n 一致（#39）。

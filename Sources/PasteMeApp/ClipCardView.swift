@@ -187,8 +187,12 @@ struct ClipCardView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
+        }
+        // ⌘n 盖在底部右端：出现和消失时底部的文字不用重新排版，只播放提示自己的动画（#39）。
+        .overlay(alignment: .trailing) {
             if let shortcutIndex {
-                Text("⌘\(shortcutIndex)")
+                ShortcutHint(number: shortcutIndex)
+                    .transition(ShortcutHint.transition(for: shortcutIndex))
             }
         }
         .font(.system(size: 11))
@@ -204,6 +208,33 @@ struct ClipCardView: View {
         case .image: item.sourceName ?? ""
         case .file: item.filePaths.count == 1 ? "1 个文件" : "\(item.filePaths.count) 个文件"
         }
+    }
+}
+
+/// 卡片右下角的 ⌘n（#39）。按住 ⌘ 时从左到右依次浮上来，松开时淡出。
+/// 底部的文字很长时会伸到它下面，所以左边用卡片的底色渐隐，盖住下面的字。
+private struct ShortcutHint: View {
+    let number: Int
+
+    var body: some View {
+        let background = Color(nsColor: .textBackgroundColor)
+        Text("⌘\(number)")
+            .padding(.leading, 14)
+            .background {
+                LinearGradient(colors: [background.opacity(0), background], startPoint: .leading, endPoint: .center)
+            }
+    }
+
+    /// 动画放在过渡上：显示和隐藏时不用模型包 `withAnimation`，滚动时新进入 ⌘1…⌘9 的卡片也会浮上来、离开的淡出。
+    /// 每个编号晚 0.02 秒，和呼出面板时卡片依次出现一样。
+    static func transition(for number: Int) -> AnyTransition {
+        .asymmetric(
+            insertion: .opacity
+                .combined(with: .scale(scale: 0.8, anchor: .bottomTrailing))
+                .combined(with: .offset(y: 4))
+                .animation(.spring(response: 0.3, dampingFraction: 0.8).delay(Double(number - 1) * 0.02)),
+            removal: .opacity.animation(.easeOut(duration: 0.12))
+        )
     }
 }
 
