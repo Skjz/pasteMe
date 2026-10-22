@@ -23,6 +23,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private lazy var pauseMenu = makePauseMenu()
     private let pasteStackItem = NSMenuItem(title: "Paste Stack", action: #selector(togglePasteStack), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+    private let recordSoundItem = NSMenuItem(title: "复制时播放提示音", action: #selector(togglePlaysSoundOnRecord), keyEquivalent: "")
     private let screenSharingItem = NSMenuItem(title: "共享屏幕时显示面板", action: #selector(toggleShowDuringScreenSharing), keyEquivalent: "")
     private let imagesAsFilesItem = NSMenuItem(title: "图片以文件粘贴", action: #selector(togglePasteImagesAsFiles), keyEquivalent: "")
     private let linkPreviewsItem = NSMenuItem(title: "链接预览", action: nil, keyEquivalent: "")
@@ -33,6 +34,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private let cursorStyleItem = NSMenuItem(title: "光标样式", action: nil, keyEquivalent: "")
     private let retentionItem = NSMenuItem(title: "自动清除历史", action: nil, keyEquivalent: "")
     private let settings = Settings()
+    private let recordSound = SystemRecordSound()
 
     override public init() {
         super.init()
@@ -86,7 +88,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         enrichment.onEnriched = { [weak self] _ in self?.reloadPanelIfVisible() }
         model.onEdited = { [weak self] id in self?.enrichment.enqueue(id) }
         let stack = PasteStack()
-        recorder = Recorder(store: store, enrichment: enrichment, pasteStack: stack)
+        recorder = Recorder(
+            store: store,
+            enrichment: enrichment,
+            pasteStack: stack,
+            sound: recordSound,
+            playsSound: { settings.playsSoundOnRecord }
+        )
         recorder.onRecord = { [weak self] _ in self?.reloadPanelIfVisible() }
         pasteStack = PasteStackController(stack: stack, store: store, paster: paster, toast: toast)
         pasteStack.showsDuringScreenSharing = settings.showDuringScreenSharing
@@ -269,6 +277,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         pasteStackItem.showShortcut(.pasteStack)
         menu.addItem(pasteStackItem)
         menu.addItem(loginItem)
+        menu.addItem(recordSoundItem)
         menu.addItem(screenSharingItem)
         menu.addItem(imagesAsFilesItem)
         menu.addItem(linkPreviewsItem)
@@ -335,6 +344,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         updatePauseItem()
         pasteStackItem.state = pasteStack.stack.isActive ? .on : .off
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        recordSoundItem.state = settings.playsSoundOnRecord ? .on : .off
         screenSharingItem.state = settings.showDuringScreenSharing ? .on : .off
         imagesAsFilesItem.state = settings.pasteImagesAsFiles ? .on : .off
         for item in linkPreviewsItem.submenu?.items ?? [] {
@@ -447,6 +457,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         formatter.dateFormat = "HH:mm"
         return formatter
     }()
+
+    /// 打开时先播一次，让用户知道是什么声音。
+    @objc private func togglePlaysSoundOnRecord() {
+        settings.playsSoundOnRecord.toggle()
+        if settings.playsSoundOnRecord { recordSound.play() }
+    }
 
     @objc private func toggleShowDuringScreenSharing() {
         settings.showDuringScreenSharing.toggle()

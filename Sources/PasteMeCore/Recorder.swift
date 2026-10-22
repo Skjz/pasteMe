@@ -1,5 +1,11 @@
 import Foundation
 
+/// 记下一次复制后播放提示音（#25）。
+@MainActor
+public protocol RecordSoundPlaying {
+    func play()
+}
+
 /// 把一次复制记录进历史，并管理暂停。
 ///
 /// 剪贴板轮询（`ClipboardMonitor`）只负责发现新内容和来源应用；记不记录、记录之后要通知谁，都在这里决定。
@@ -16,22 +22,30 @@ public final class Recorder {
     private let store: ClipStore
     private let enrichment: EnrichmentQueue?
     private let pasteStack: PasteStack?
+    private let sound: (any RecordSoundPlaying)?
+    /// 为 true 时每记下一个条目播放一次 `sound`（设置里的「复制时播放提示音」）。
+    private let playsSound: () -> Bool
     private let now: () -> Date
     private var resumeTimer: Timer?
 
     /// - Parameters:
     ///   - enrichment: 记录图片、文件和链接后交给它补充附加信息。
     ///   - pasteStack: 开启时，记下的条目依次加进去。
+    ///   - sound: 记下条目后播放的提示音，`playsSound` 返回 true 时才播放。每次记录时重新读，在菜单里切换后马上生效。
     ///   - now: 用于测试时控制时间。
     public init(
         store: ClipStore,
         enrichment: EnrichmentQueue? = nil,
         pasteStack: PasteStack? = nil,
+        sound: (any RecordSoundPlaying)? = nil,
+        playsSound: @escaping () -> Bool = { false },
         now: @escaping () -> Date = Date.init
     ) {
         self.store = store
         self.enrichment = enrichment
         self.pasteStack = pasteStack
+        self.sound = sound
+        self.playsSound = playsSound
         self.now = now
     }
 
@@ -76,6 +90,8 @@ public final class Recorder {
             enrichment?.enqueue(id)
         }
         pasteStack?.push(id)
+        // 在 onRecord 之前播放：面板开着时 onRecord 要重新查询，不让它推迟提示音。
+        if playsSound() { sound?.play() }
         onRecord(id)
         return id
     }

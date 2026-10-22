@@ -6,11 +6,18 @@ import Testing
 @Suite final class RecorderTests {
     let store: ClipStore
     var now = Date(timeIntervalSince1970: 1_000)
+    let sound = FakeSound()
+    var playsSound = false
     var recorder: Recorder!
 
     init() throws {
         store = try ClipStore(path: ":memory:")
-        recorder = Recorder(store: store, now: { [unowned self] in self.now })
+        recorder = Recorder(
+            store: store,
+            sound: sound,
+            playsSound: { [unowned self] in self.playsSound },
+            now: { [unowned self] in self.now }
+        )
     }
 
     @Test func recordsCopiesAndReportsTheirIDs() throws {
@@ -64,5 +71,40 @@ import Testing
         recorder.resume()
 
         #expect(changes == 3)
+    }
+
+    @Test func playsASoundForEveryRecordWhenTurnedOn() throws {
+        playsSound = true
+
+        try recorder.record(ClipContent(kind: .text, text: "a"), from: nil)
+        #expect(sound.plays == 1)
+        // 再次复制已有的内容只是把它移到最前，也算一次记录。
+        try recorder.record(ClipContent(kind: .text, text: "a"), from: nil)
+        try recorder.record(ClipContent(kind: .text, text: "b"), from: nil)
+        #expect(sound.plays == 3)
+    }
+
+    @Test func staysSilentWhenTurnedOffOrPaused() throws {
+        try recorder.record(ClipContent(kind: .text, text: "off"), from: nil)
+        #expect(sound.plays == 0)
+
+        playsSound = true
+        recorder.pause()
+        try recorder.record(ClipContent(kind: .text, text: "paused"), from: nil)
+        #expect(sound.plays == 0)
+
+        recorder.resume()
+        try recorder.record(ClipContent(kind: .text, text: "resumed"), from: nil)
+        #expect(sound.plays == 1)
+    }
+}
+
+/// 记下播放了几次，不出声。
+@MainActor
+final class FakeSound: RecordSoundPlaying {
+    var plays = 0
+
+    func play() {
+        plays += 1
     }
 }

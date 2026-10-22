@@ -7,7 +7,7 @@
 ```text
 PasteMe        可执行文件，只有 main.swift
 └─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、全局快捷键、监听 ⌘V、发送 ⌘V、面板、浮窗、视图
-   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、AppNames、Recorder、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter
+   └─ PasteMeCore  不依赖界面：ClipStore、ClipQuery、AppNames、Recorder、RecordChime、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter
 ```
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
@@ -18,7 +18,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 ## 记录和全局快捷键
 
 - `ClipboardMonitor` 只轮询剪贴板：发现变化后跳过 PasteMe 自己写入的内容和敏感内容，读出内容和来源应用，交给 `Recorder.record(_:from:)`。暂停时它连剪贴板都不读。
-- `Recorder` 决定记不记录（暂停），入库后调用 `onRecord`。暂停只在内存里：`pausedUntil` 为 `.distantFuture` 表示直到手动恢复，定时暂停由 `Recorder` 自己的定时器到时恢复，`onPauseChange` 通知应用换菜单栏图标、显示提示。测试用注入的时钟（`RecorderTests`）。
+- `Recorder` 决定记不记录（暂停），入库后调用 `onRecord`。设置里打开了「复制时播放提示音」（#25）时，入库后、`onRecord` 之前先播放提示音（`RecordSoundPlaying`）；没有走到 `Recorder` 的内容（暂停、敏感内容、PasteMe 自己写入的）不会响。生产实现 `SystemRecordSound` 用系统音效服务播放，遵守系统设置里的「播放用户界面音效」；系统音效服务只能播放文件，所以 `RecordChime` 在代码里合成的声音（纸滑进剪贴板的夹子，4 个版本由 `TakeRotation` 轮流，不连续重复）在第一次播放时写成缓存目录里的 .wav。音色和响度是和用户试听十几轮选定的，否掉的方向写在 `RecordChime` 的注释里，改之前先试听。暂停只在内存里：`pausedUntil` 为 `.distantFuture` 表示直到手动恢复，定时暂停由 `Recorder` 自己的定时器到时恢复，`onPauseChange` 通知应用换菜单栏图标、显示提示。测试用注入的时钟（`RecorderTests`）。
 - 菜单栏图标由 `AppDelegate.updateStatusIcon()` 决定：暂停记录优先，其次 Paste Stack。屏幕上的短暂提示用 `Toast`。
 - 全局快捷键都通过 `HotKeyCenter.register(_:action:)` 注册，按键组合定义在 `GlobalShortcut`。Carbon 会把每个快捷键事件发给所有已安装的处理器，所以只装一个处理器，读出事件里的快捷键 id 再分发；`HotKeyCenterTests` 直接调用 `dispatch` 模拟按键。
 
@@ -179,6 +179,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 | `AppNames(systemNames:)` | `AppBundleNames.names(ofBundleID:)`（Core，读已安装应用的本地化名字） | 固定的字典（`AppNamesTests`、`AppAliasesTests`） |
 | `PasteboardWriting` | `GeneralPasteboard`（Core，`PasteboardCodec` 写 `NSPasteboard.general`） | `FakePasteboard`（`PasterTests.swift`） |
 | `PasteKeystrokeSending` | `CGEventPasteKeystroke`（App） | `FakeKeystroke`（`PasterTests.swift`） |
+| `RecordSoundPlaying` | `SystemRecordSound`（App） | `FakeSound`（`RecorderTests.swift`） |
 | `LinkPreviewFetching` | `HTMLPreviewFetcher`（Core） | `FakeLinkFetcher`（`LinkPreviewTests.swift`） |
 | `HTMLPreviewFetcher(configuration:)` | `HTMLPreviewFetcher.defaultConfiguration()` | 加上 `StubURLProtocol` 的配置（`HTMLPreviewFetcherTests.swift`） |
 | `TemporaryFiles(directory:)` | `TemporaryFiles.defaultDirectory()` | 每个测试一个临时目录（`TemporaryFilesTests`） |
