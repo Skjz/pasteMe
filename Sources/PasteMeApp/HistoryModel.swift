@@ -203,6 +203,8 @@ final class HistoryModel {
     @ObservationIgnored var onSelectionChange: () -> Void = {}
     /// 要在卡片标题栏里编辑标题了：预览开着时先关掉它，免得关闭时把旧标题存回去。
     @ObservationIgnored var onWillEditTitle: () -> Void = {}
+    /// 点了面板上没有卡片和控件的地方：预览开着时关掉它，和按 esc 一样。
+    @ObservationIgnored var onBlankClick: () -> Void = {}
 
     @ObservationIgnored private let store: ClipStore
     /// 记住 ⌘P 用的 Pinboard。为 nil 时（测试）只在内存里记。
@@ -878,6 +880,11 @@ final class HistoryModel {
     func openApps(for item: ClipItem) -> [OpenApp] {
         guard item.kind == .file else { return [] }
         return OpenApp.allCases.filter { $0.isAvailable(isInstalled: isInstalled) }
+    }
+
+    /// 点了面板上的空白处（搜索栏那一行的空隙、底部的留白）。
+    func blankClicked() {
+        onBlankClick()
     }
 
     /// ⌘O、右键菜单「打开」「打开方式」：打开链接、文件和文件夹，面板收起。文件都不在了时面板不收起，只提示；

@@ -465,21 +465,22 @@ private struct PreviewView: View {
                     Toggle(url.lastPathComponent, isOn: Binding(get: { index == state.fileIndex }, set: { _ in showFile(index) }))
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Text(state.currentFileURL?.lastPathComponent ?? "")
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text("\(state.fileIndex + 1) / \(urls.count)")
-                        .monospacedDigit()
-                        .foregroundStyle(.tertiary)
-                }
-                .font(.system(size: 12))
-                .frame(maxWidth: 240)
+                Text(state.currentFileURL?.lastPathComponent ?? "")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .font(.system(size: 12))
+                    .frame(maxWidth: 240)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
             .help("选择要预览的文件")
+            // 不放进菜单的标签里：菜单在 macOS 上只显示标签里的第一段文字。
+            Text("\(state.fileIndex + 1) / \(urls.count)")
+                .font(.system(size: 12))
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 4)
             action("chevron.right", "下一个文件（⌥→）") { showFile(state.fileIndex + 1) }
         }
         .foregroundStyle(hovering || titleFocused ? .secondary : .tertiary)
@@ -684,7 +685,7 @@ private struct ZoomableImage: NSViewRepresentable {
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
-        scroll.documentView = NSImageView()
+        scroll.documentView = FirstClickImageView()
         return scroll
     }
 
@@ -716,6 +717,9 @@ final class ZoomingScrollView: NSScrollView {
     /// 下次布局时缩到正好放进窗口。
     var needsFit = true
 
+    // 点图片不需要键盘：接受第一下点击，预览窗口不抢走面板的键盘焦点（见 `AuxiliaryPanel.sendEvent`）。
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     var documentCenter: NSPoint {
         let visible = documentVisibleRect
         return NSPoint(x: visible.midX, y: visible.midY)
@@ -731,8 +735,15 @@ final class ZoomingScrollView: NSScrollView {
     }
 }
 
+/// 预览里的图片：接受第一下点击，原因同 `ZoomingScrollView`。
+final class FirstClickImageView: NSImageView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 /// 图片比窗口小时放在正中间。
 final class CenteringClipView: NSClipView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
         var rect = super.constrainBoundsRect(proposedBounds)
         guard let document = documentView else { return rect }

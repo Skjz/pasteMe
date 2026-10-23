@@ -20,7 +20,7 @@ struct HistoryView: View {
     /// 卡片列表左右两端的留白。选中的卡片放大、外面再套一圈光标后，离面板边缘仍有约 20 点。
     private static let sideMargin: CGFloat = 30
     /// 选中的卡片放大到的比例。
-    static let selectedScale: CGFloat = 1.05
+    nonisolated static let selectedScale: CGFloat = 1.05
     /// 卡片和空位都不做淡入淡出：删除时卡片变成同一位置上的空位，颗粒接替了它；空位去掉时本来就看不见，
     /// 而且要立即移除，之后撤销放回同一个条目时才是新视图（`SwiftUIAssumptionTests` 检查）；
     /// 撤销删除时放回的卡片先藏起来（`HistoryModel.hiddenIDs`），等颗粒拼好再显示。
@@ -41,6 +41,13 @@ struct HistoryView: View {
             }
         }
         .coordinateSpace(.named(CardDust.space))
+        // 面板上没有控件的地方（搜索栏那一行的空隙、底部的留白）：点了关掉预览。控件和卡片在它前面，
+        // 点中它们时轮不到这里。卡片那一排的空隙被滚动区域挡着，由 `PanelController` 按卡片的位置判断（`CardListClick`）。
+        .background {
+            Color.clear
+                .contentShape(.rect)
+                .onTapGesture { model.blankClicked() }
+        }
         .overlay {
             DustOverlay(view: dust.view)
                 .allowsHitTesting(false)
@@ -93,6 +100,8 @@ struct HistoryView: View {
                 .lineLimit(1)
                 // 面板窄时先截掉提示，不挤占搜索框和筛选按钮。
                 .layoutPriority(-1)
+                // 只是说明：点在上面和点在空白处一样（`HistoryModel.blankClicked`）。
+                .allowsHitTesting(false)
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
