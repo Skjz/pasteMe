@@ -115,6 +115,9 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 光标（`SelectionCursor`）不是每张卡片各画一个，而是在卡片列表上叠一层，按选中卡片的序号算出横向位置，所以选中项变化时能滑过去。这依赖卡片宽度固定（`ClipCardView.size`）和间距固定（`HistoryView.cardSpacing`）；改卡片布局时要同时改光标的位置计算。
 - 光标的旋转和明暗变化由 `TimelineView` 逐帧驱动，面板收起后（`HistoryModel.isPanelVisible` 为 false）或开启「减少动态效果」时暂停，不在后台耗电。
 - 标题栏图标比标题栏大、一部分被裁掉。这个裁切不能在运行时用 `.clipped()` 做：裁切超出范围的内容会让每张卡片在依次出现的动画里逐帧重新合成，#17 之后呼出面板时大约三分之一的帧赶不上 120 Hz。现在由 `AppIconCache.headerIcon` 把放大、阴影、裁切和卡片右上圆角一起画成一张正好标题栏右端大小的图片，所以标题栏高度固定为 `ClipCardView.headerHeight`。改标题栏的布局时要同时改 `headerIconSlice` 和 `headerIconFrame`。
+- 文件卡片（`FileCardContent`）和链接卡片一样是海报样式，标题、细线中间的小字和顶上那片颜色是两者共用的 `PosterHeadline`、`PosterCaption`、`PosterGlow`。卡片上写的字由 `FileCardText` 按路径和文件信息算出，是纯函数（`FileCardTests`）。图片文件显示复制时的缩略图；别的文件有缩略图时（ImageIO 能打开的 PDF）显示成一页纸。
+- 文件信息（类型、大小、文件夹的项数、图片的像素）要读文件系统，大文件夹、网络磁盘可能很慢，所以 `FileFacts.read` 只在后台调用，结果由 `FileFactsCache` 缓存。卡片第一次画某个路径时 `facts(for:)` 返回 nil，同一轮请求的路径一起读、一起写回，卡片先按路径写（类型取扩展名），读到后重画一次。面板每次呼出动画播完以后 `refresh()` 在后台重读，只写回变了的，所以文件被删掉以后下次打开面板就显示「已经不在原处」，平时打开面板卡片不会先空着再填上。
+- 文件图标的光晕、灰掉的图标和那一页纸由 `FileIconCache` 预先画成图，原因和标题栏图标一样。普通文件的图标按类型缓存（`IconKey.type`），同一类文件共用一张；文件夹、文件包和扩展名不认识的文件可能有自己的图标，按路径缓存（`IconKey.path`）。还没读到文件信息时按扩展名猜，「v1.2」这样的文件夹读到以后才换成按路径的图标。
 - 光标样式存在 `Settings.cursorStyle`，同时放一份在 `HistoryModel.cursorStyle`，让视图在设置窗口里切换后立即更新。
 - 卡片列表左右的留白用 `contentMargins` 而不是 `padding`，这样 `scrollTo` 滚到某张卡片时也会留出这段距离。放大的卡片和光标的光晕会超出滚动区域的上下边，所以滚动区域设了 `scrollClipDisabled()`。
 

@@ -212,6 +212,8 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
         shortcutKeysChanged(NSEvent.modifierFlags)
         animator.animate(to: 1, spring: .show) { [weak self] in
             self?.phase = .shown
+            // 呼出动画播完再重读文件卡片上的信息，变了的卡片在这之后才重画。
+            FileFactsCache.shared.refresh()
         }
     }
 

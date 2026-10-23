@@ -109,31 +109,7 @@ struct ClipCardView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         case .file:
-            let paths = item.filePaths
-            VStack(spacing: 6) {
-                if let data = item.thumbnail, let image = NSImage(data: data) {
-                    // 图片文件：显示复制时生成的缩略图，只留一行文件名。
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    Text(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))
-                        .font(.system(size: 11))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } else {
-                    if let first = paths.first {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: first))
-                            .resizable()
-                            .frame(width: 64, height: 64)
-                    }
-                    Text(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: "\n"))
-                        .font(.system(size: 12))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(4)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            FileCardContent(item: item)
         }
     }
 
@@ -209,7 +185,7 @@ struct ClipCardView: View {
         case .text: "\(item.textLength) 个字符"
         case .link: item.sourceName ?? ""
         case .image: item.sourceName ?? ""
-        case .file: item.filePaths.count == 1 ? "1 个文件" : "\(item.filePaths.count) 个文件"
+        case .file: FileCardText.location(of: item.filePaths)
         }
     }
 }

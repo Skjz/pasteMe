@@ -71,6 +71,52 @@ enum EditorialFont {
     }
 }
 
+/// 海报样式的衬线标题，链接卡片和文件卡片共用。
+struct PosterHeadline: View {
+    let text: String
+    let size: CGFloat
+    let lines: Int
+
+    var body: some View {
+        Text(text)
+            .font(EditorialFont.serif(size))
+            .multilineTextAlignment(.center)
+            .lineLimit(lines)
+            .frame(maxWidth: .infinity)
+    }
+}
+
+/// 海报样式标题下面夹在两条细线中间的大写小字：链接的网站名，文件的类型和大小。
+struct PosterCaption: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            rule
+            Text(text.uppercased())
+                .font(.system(size: 8, weight: .semibold))
+                .tracking(1.5)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            rule
+        }
+    }
+
+    private var rule: some View {
+        Rectangle().fill(Color.primary.opacity(0.25)).frame(width: 14, height: 0.5)
+    }
+}
+
+/// 从内容区顶上散开的一片图标颜色，垫在海报样式的图标后面。
+struct PosterGlow: View {
+    let tint: Color
+
+    var body: some View {
+        RadialGradient(colors: [tint.opacity(0.22), .clear], center: .top, startRadius: 0, endRadius: 140)
+            .padding(-10)
+    }
+}
+
 /// 链接卡片的内容区，海报样式：居中，网站图标带一圈图标颜色的光，下面是衬线标题和夹在两条细线中间的网站名；
 /// 有预览图时预览图在上面。还没获取或获取失败时是域名和网址。
 struct LinkCardContent: View {
@@ -90,8 +136,8 @@ struct LinkCardContent: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 80)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
-                headline(size: 15, lines: 2)
-                siteLine
+                PosterHeadline(text: text.headline, size: 15, lines: 2)
+                PosterCaption(text: text.site)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let data = item.linkIcon, let style = LinkIconCache.style(for: item.id, icon: data) {
@@ -102,36 +148,13 @@ struct LinkCardContent: View {
                     .frame(width: Self.iconSize + LinkIconCache.glow * 2, height: Self.iconSize + LinkIconCache.glow * 2)
                     .padding(-LinkIconCache.glow)
                     .padding(.top, 6)
-                headline(size: 18, lines: 3)
-                siteLine
+                PosterHeadline(text: text.headline, size: 18, lines: 3)
+                PosterCaption(text: text.site)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(alignment: .top) {
-                RadialGradient(colors: [style.tint.opacity(0.22), .clear], center: .top, startRadius: 0, endRadius: 140)
-                    .padding(-10)
-            }
+            .background(alignment: .top) { PosterGlow(tint: style.tint) }
         } else {
             plain
-        }
-    }
-
-    private func headline(size: CGFloat, lines: Int) -> some View {
-        Text(text.headline)
-            .font(EditorialFont.serif(size))
-            .multilineTextAlignment(.center)
-            .lineLimit(lines)
-            .frame(maxWidth: .infinity)
-    }
-
-    private var siteLine: some View {
-        HStack(spacing: 6) {
-            Rectangle().fill(Color.primary.opacity(0.25)).frame(width: 14, height: 0.5)
-            Text(text.site.uppercased())
-                .font(.system(size: 8, weight: .semibold))
-                .tracking(1.5)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Rectangle().fill(Color.primary.opacity(0.25)).frame(width: 14, height: 0.5)
         }
     }
 

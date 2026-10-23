@@ -41,6 +41,8 @@
 
 - 链接卡片的衬线字体（拉丁字母 New York，中文换成宋体）要建字体描述、挂上备用字体，每次画卡片都新建会让 `show()` 多花几毫秒，所以 `EditorialFont` 按字号缓存。海报样式的图标光晕也预先画成图（`LinkIconCache.posterIcon`），不在运行时模糊。单张海报链接卡片从创建到画出来约 4.5 ms，文本卡片约 3.7 ms。
 
+- 文件卡片的海报样式：单张卡片从创建到画出来约 4.2～4.5 ms，和海报链接卡片一样，比改版前的文件卡片（约 3.7 ms）多约 0.5 ms。多出来的主要是顶上那片 `PosterGlow` 渐变：离屏计时里去掉它就回到 3.7 ms，但换成预先画好的图片也一样贵（CPU 画一大片半透明的区域本身就要这么久），在屏幕上测也没有差别，所以没有换。用 17 条文件条目的历史（PDF、代码、照片、文件夹、多个文件、已经不在的文件，release）和 main 交替测，呼出的 `present_missed` 两边都是 0～2，收起都是 0。呼出的 `call_ms` main 四轮 18.5～25.2 ms（平均 22），改版后三轮 23.9～27.8 ms（平均 26），WindowServer 负载在 45%～56%，单轮波动有好几毫秒。多出的 3 ms 左右和每张卡片多 0.5 ms、一屏约 8 张对得上；这份历史全是文件，平时和文本、链接混在一起时更少。文件大小、文件夹项数在后台读（`FileFactsCache`），不占 `show()`。
+
 - Liquid Glass 背景（#41）：SwiftUI 内容放在 `NSGlassEffectView` 的 `contentView` 里时，窗口每次上屏（`makeKeyAndOrderFront`、收起时的 `orderFrontRegardless`）玻璃都会让内容整个重画一遍，呼出的 `call_ms` 比 main 多约 6 ms、收起多约 4 ms。改成玻璃只当背景、内容叠在上面之后，呼出和收起的 `call_ms` 都不比 main 多。玻璃自己每次上屏还要 3～4 ms，这部分省不掉。
 
 - 卡片的右键菜单写在卡片的 body 里（`.contextMenu { … }` 直接放按钮）时，SwiftUI 每次画卡片都把整个菜单建一遍。#9 给菜单加了「固定到」子菜单（每个 Pinboard 一个勾）后，`show()` 的 `call_ms` 多了约 7 ms；把菜单拆成单独的视图（`CardContextMenu`）后回到基线。改右键菜单时看 `call_ms`。
