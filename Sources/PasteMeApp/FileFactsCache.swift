@@ -31,13 +31,10 @@ final class FileFactsCache {
         if let facts = known[path] { return facts }
         if requested.insert(path).inserted {
             queued.append(path)
-            // 在画卡片的过程中不改 `known`：等这一轮画完再开始读。
+            // 在画卡片的过程中不改 `known`：等这一轮画完再开始读。每一轮各读各的，
+            // 一个读不完的路径（断开的网络磁盘）不会挡住之后的卡片。
             if queued.count == 1 {
-                let previous = reading
-                reading = Task {
-                    await previous?.value
-                    await self.readQueued()
-                }
+                reading = Task { await self.readQueued() }
             }
         }
         return nil

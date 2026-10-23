@@ -116,6 +116,35 @@ import PasteMeCore
         #expect(cache.facts(for: "/w/src") == FileFacts(kind: .folder, itemCount: 2))
     }
 
+    @Test func aPathThatNeverFinishesDoesNotHoldUpLaterCards() async throws {
+        // `/net/slow` 像断开的网络磁盘一样一直读不完，直到测试最后放行。
+        let gate = DispatchSemaphore(value: 0)
+        let started = FakeFiles([:])
+        let files = FakeFiles(["/w/a.pdf": FileFacts(kind: .file, byteCount: 1)])
+        let cache = FileFactsCache { path in
+            if path == "/net/slow" {
+                _ = started.read(path)
+                gate.wait()
+            }
+            return files.read(path)
+        }
+        defer { gate.signal() }
+
+        _ = cache.facts(for: "/net/slow")
+        for _ in 0..<200 where started.readCount == 0 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(started.readCount == 1)
+
+        // 下一轮画卡片时请求的路径不等上一轮。
+        #expect(cache.facts(for: "/w/a.pdf") == nil)
+        for _ in 0..<200 where cache.known["/w/a.pdf"] == nil {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(cache.known["/w/a.pdf"] == FileFacts(kind: .file, byteCount: 1))
+        #expect(cache.known["/net/slow"] == nil)
+    }
+
     @Test func refreshingWritesBackOnlyWhatChanged() async {
         let files = FakeFiles(["/w/a.pdf": FileFacts(kind: .file, byteCount: 1)])
         let cache = FileFactsCache(read: files.read)
