@@ -132,6 +132,9 @@ final class HistoryModel {
     var pastesImagesAsFiles = false
     /// 光标的样式。初始值和修改都来自 `Settings.cursorStyle`，放在这里是为了让视图随之更新。
     var cursorStyle = CursorStyle.breathe
+    /// ⌘O 用什么打开文件和文件夹（#51）。初始值和修改都来自 `Settings.fileApp`、`Settings.folderApp`。
+    @ObservationIgnored var fileApp = OpenApp.systemDefault
+    @ObservationIgnored var folderApp = OpenApp.systemDefault
     /// 面板在屏幕上（包括呼出和收起动画期间）。为 false 时视图停掉一直在跑的动画。
     var isPanelVisible = false
     /// 键盘操作当前作用于搜索框还是卡片列表，视图据此移动键盘焦点。呼出面板时在卡片列表上：
@@ -178,6 +181,12 @@ final class HistoryModel {
     @ObservationIgnored var onPaste: (ClipItem, PasteMode) -> Void = { _, _ in }
     /// 把条目写进剪贴板，不粘贴，也不移到历史最前（#35）。
     @ObservationIgnored var onCopy: (ClipItem) -> Void = { _ in }
+    /// 收起面板，按 `OpenPlan` 打开链接、文件和文件夹（#51）。
+    @ObservationIgnored var onOpen: (OpenPlan) -> Void = { _ in }
+    /// 这个 bundle id 的应用装了没有。测试替换它。
+    @ObservationIgnored var isInstalled: (String) -> Bool = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
+    /// 路径现在是文件还是文件夹，不在了是 nil。测试替换它。
+    @ObservationIgnored var pathKind: (String) -> OpenPlan.PathKind? = OpenPlan.pathKind(atPath:)
     /// 打开应用别名窗口，并定位到这个应用（bundle id）。
     @ObservationIgnored var onEditAliases: (String) -> Void = { _ in }
     /// 打开预览窗口。
@@ -843,6 +852,40 @@ final class HistoryModel {
         onCopy(item)
         copiedID = item.id
         onNotice("已拷贝", "doc.on.doc")
+    }
+
+    // MARK: - 打开（#51）
+
+    /// 条目要怎么打开，右键菜单用它写菜单项。文本和图片没有可打开的东西，为 nil。`app` 是右键菜单
+    /// 「打开方式」里选的应用，文件和文件夹都用它；为 nil 时按设置。
+    /// 读完整的内容：卡片上的 `preview` 只有前 2000 个字符，长网址、很多文件时后面的会被截掉。
+    func openPlan(for item: ClipItem, using app: OpenApp? = nil) -> OpenPlan? {
+        guard item.kind == .link || item.kind == .file else { return nil }
+        let text = (try? store.content(id: item.id))?.text
+        return OpenPlan.make(
+            kind: item.kind, text: text, fileApp: app ?? fileApp, folderApp: app ?? folderApp,
+            isInstalled: isInstalled, pathKind: pathKind
+        )
+    }
+
+    /// 右键菜单「打开方式」里列出的应用：装了的都列出来。只有文件条目有。
+    func openApps(for item: ClipItem) -> [OpenApp] {
+        guard item.kind == .file else { return [] }
+        return OpenApp.allCases.filter { $0.isAvailable(isInstalled: isInstalled) }
+    }
+
+    /// ⌘O、右键菜单「打开」「打开方式」：打开链接、文件和文件夹，面板收起。文件都不在了时面板不收起，只提示；
+    /// 有一部分不在时打开还在的，再提示找不到几个。
+    func open(_ item: ClipItem? = nil, using app: OpenApp? = nil) {
+        guard let item = item ?? selectedItem, let plan = openPlan(for: item, using: app) else { return }
+        if let reason = plan.unavailableReason {
+            onNotice(reason, "exclamationmark.triangle")
+            return
+        }
+        onOpen(plan)
+        if plan.missing > 0 {
+            onNotice("有 \(plan.missing) 个文件已经不在了", "exclamationmark.triangle")
+        }
     }
 
     /// 面板开始收起：保存标题栏里正在输入的标题，把拷贝过的条目移到历史最前。

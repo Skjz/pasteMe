@@ -14,7 +14,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var panel: PanelController!
     private var appNames: AppNames!
     private var settingsWindow: SettingsWindow!
-    private let hotKeys = HotKeyCenter()
+    private var shortcuts: GlobalShortcuts!
     private let toast = Toast()
     private var statusItem: NSStatusItem!
 
@@ -22,6 +22,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private let pauseItem = NSMenuItem(title: "暂停记录", action: nil, keyEquivalent: "")
     private lazy var pauseMenu = makePauseMenu()
     private let pasteStackItem = NSMenuItem(title: "Paste Stack", action: #selector(togglePasteStack), keyEquivalent: "")
+    private let openItem = NSMenuItem(title: "打开历史", action: #selector(showPanel), keyEquivalent: "")
+    /// 「暂停记录」子菜单里的「直到手动恢复」，右边显示暂停的快捷键。
+    private let untilResumedItem = NSMenuItem(title: "直到手动恢复", action: #selector(pauseFromMenu(_:)), keyEquivalent: "")
     /// 定期删除以文件粘贴、拖出图片时生成的临时文件。
     private var cleanupTimer: Timer?
     private var temporaryFiles: TemporaryFiles?
@@ -59,6 +62,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         model = HistoryModel(store: store, appNames: appNames, settings: settings)
         model.cursorStyle = settings.cursorStyle
         model.pastesImagesAsFiles = settings.pasteImagesAsFiles
+        model.fileApp = settings.fileApp
+        model.folderApp = settings.folderApp
         panel = PanelController(model: model)
         panel.showsDuringScreenSharing = settings.showDuringScreenSharing
         panel.draggingWriters = { [paster] item in try paster!.draggingWriters(for: item.id) }
@@ -70,6 +75,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 NSLog("PasteMe: 拷贝失败：\(error)")
             }
         }
+        model.onOpen = { [weak self] plan in self?.open(plan) }
         model.onEditAliases = { [weak self] bundleID in
             // 先收起面板，再打开设置窗口的「应用别名」页并定位到这个应用。
             self?.panel.hide()
@@ -101,11 +107,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         recorder.onPauseChange = { [weak self] in self?.pauseDidChange() }
         monitor = ClipboardMonitor(recorder: recorder)
         monitor.start()
+        shortcuts = GlobalShortcuts(settings: settings)
+        pasteStack.exitShortcut = { [weak self] in self?.shortcuts.symbol(for: .pasteStack) }
         settingsWindow = SettingsWindow(model: makeSettingsModel())
 
-        hotKeys.register(.panel) { [weak self] in self?.panel.toggle() }
-        hotKeys.register(.pause) { [weak self] in self?.togglePause() }
-        hotKeys.register(.pasteStack) { [weak self] in self?.pasteStack.toggle() }
+        shortcuts.set(.panel) { [weak self] in self?.panel.toggle() }
+        shortcuts.set(.pause) { [weak self] in self?.togglePause() }
+        shortcuts.set(.pasteStack) { [weak self] in self?.pasteStack.toggle() }
+        shortcuts.registerAll()
 
         setUpMainMenu()
         setUpStatusItem()
@@ -201,6 +210,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
         settingsModel.onImagesAsFilesChange = { [weak self] on in self?.model.pastesImagesAsFiles = on }
         settingsModel.onCursorStyleChange = { [weak self] style in self?.model.cursorStyle = style }
+        settingsModel.onOpenAppsChange = { [weak self] files, folders in
+            self?.model.fileApp = files
+            self?.model.folderApp = folders
+        }
+        settingsModel.onShortcutRecording = { [weak self] recording in
+            recording ? self?.shortcuts.suspend() : self?.shortcuts.resume()
+        }
+        settingsModel.onShortcutChange = { [weak self] in self?.shortcuts.registerAll() }
+        settingsModel.isReservedBySystem = { combo in SystemShortcuts.contains(combo, in: SystemShortcuts.current()) }
+        settingsModel.failedShortcuts = { [weak self] in self?.shortcuts.failed ?? [] }
         settingsModel.onRetentionChange = { [weak self] in self?.clearOldHistory() }
         return settingsModel
     }
@@ -283,6 +302,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
     }
 
+    /// ⌘O（#51）：收起面板，打开的应用来到前面。同一个应用要打开的几个网址一起交给它。
+    private func open(_ plan: OpenPlan) {
+        panel.hide()
+        var byApp: [String: [URL]] = [:]
+        for target in plan.targets {
+            guard let bundleID = target.appBundleID else {
+                NSWorkspace.shared.open(target.url)
+                continue
+            }
+            byApp[bundleID, default: []].append(target.url)
+        }
+        for (bundleID, urls) in byApp {
+            guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+                // 刚刚还在、这时却找不到了：按访达的规则用系统默认的方式打开。
+                urls.forEach { NSWorkspace.shared.open($0) }
+                continue
+            }
+            NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                if let error { NSLog("PasteMe: 用 \(bundleID) 打开失败：\(error)") }
+            }
+        }
+    }
+
     // MARK: - 菜单栏
 
     private func setUpStatusItem() {
@@ -294,12 +336,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         menu.delegate = self
 
         menu.addItem(accessibilityItem)
-        let open = NSMenuItem(title: "打开历史", action: #selector(showPanel), keyEquivalent: "")
-        open.showShortcut(.panel)
-        menu.addItem(open)
+        menu.addItem(openItem)
         menu.addItem(.separator())
         menu.addItem(pauseItem)
-        pasteStackItem.showShortcut(.pasteStack)
         menu.addItem(pasteStackItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ","))
@@ -342,6 +381,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     public func menuWillOpen(_ menu: NSMenu) {
+        // 快捷键可能在设置里改过（#50），每次打开菜单时按现在的组合显示。
+        openItem.showShortcut(shortcuts.combo(for: .panel))
+        pasteStackItem.showShortcut(shortcuts.combo(for: .pasteStack))
+        untilResumedItem.showShortcut(shortcuts.combo(for: .pause))
         updatePauseItem()
         pasteStackItem.state = pasteStack.stack.isActive ? .on : .off
         accessibilityItem.isHidden = Accessibility.isTrusted
@@ -366,10 +409,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             item.representedObject = minutes
             menu.addItem(item)
         }
-        let untilResumed = NSMenuItem(title: "直到手动恢复", action: #selector(pauseFromMenu(_:)), keyEquivalent: "")
-        untilResumed.target = self
-        untilResumed.showShortcut(.pause)
-        menu.addItem(untilResumed)
+        untilResumedItem.target = self
+        menu.addItem(untilResumedItem)
         return menu
     }
 
@@ -377,7 +418,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         if let until = recorder.pausedUntil, recorder.isPaused {
             pauseItem.submenu = nil
             pauseItem.action = #selector(resumeFromMenu)
-            pauseItem.showShortcut(.pause)
+            pauseItem.showShortcut(shortcuts.combo(for: .pause))
             pauseItem.title = until == .distantFuture ? "恢复记录" : "恢复记录（\(Self.timeFormat.string(from: until)) 自动恢复）"
         } else {
             pauseItem.action = nil
@@ -422,9 +463,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             toast.show("已恢复记录", symbol: "play.circle")
             return
         }
-        let detail = until == .distantFuture
-            ? "再按 \(GlobalShortcut.pause.symbol) 恢复"
-            : "\(Self.timeFormat.string(from: until)) 自动恢复"
+        let detail = until != .distantFuture ? "\(Self.timeFormat.string(from: until)) 自动恢复"
+            : shortcuts.symbol(for: .pause).map { "再按 \($0) 恢复" } ?? "在菜单栏菜单里恢复"
         toast.show("已暂停记录", detail: detail, symbol: "pause.circle")
     }
 

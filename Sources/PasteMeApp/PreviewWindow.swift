@@ -25,15 +25,26 @@ final class PreviewState {
 
     enum ZoomCommand { case fit, actualSize, zoomIn, zoomOut }
 
+    /// 按 ⌘E、右键「编辑…」打开的：链接这时显示网址编辑器，不显示网页。
+    private(set) var editing = false
+
     var isNewText: Bool { item == nil }
-    /// 文本、链接和新建的文本可以改正文。
-    var bodyIsEditable: Bool { item.map { $0.kind == .text || $0.kind == .link } ?? true }
+    /// 文本和新建的文本可以改正文；链接只在编辑时可以改，平时显示网页（#52）。
+    var bodyIsEditable: Bool {
+        guard let item else { return true }
+        return item.kind == .text || (item.kind == .link && !showsWebPage)
+    }
+    /// 链接平时显示网页（#52）。不是网页的链接（mailto: 这类）照旧显示网址。
+    var showsWebPage: Bool {
+        !editing && item?.kind == .link && WebPreviewPolicy.start(for: content?.text ?? "") != nil
+    }
     /// 正文按富文本编辑：复制时带着格式的文本。
     var isRichText: Bool { content?.rtf != nil && item?.kind == .text }
 
-    func load(_ item: ClipItem?, content: ClipContent?) {
+    func load(_ item: ClipItem?, content: ClipContent?, editing: Bool = false) {
         self.item = item
         self.content = content
+        self.editing = editing
         title = item?.title ?? ""
         originalTitle = title
         bodyEdited = false
@@ -76,6 +87,7 @@ final class PreviewState {
 final class PreviewController: NSObject, NSWindowDelegate {
     let window = AuxiliaryPanel()
     let state = PreviewState()
+    let web = WebPreviewLoader()
     private let model: HistoryModel
     /// 窗口失去键盘焦点。交给 `PanelController` 判断焦点去了哪里。
     var onResignKey: () -> Void = {}
@@ -91,7 +103,7 @@ final class PreviewController: NSObject, NSWindowDelegate {
         window.delegate = self
         // 点图片、按钮时不抢键盘焦点；点进正文、标题时才成为 key。
         window.becomesKeyOnlyIfNeeded = true
-        window.setContent(PreviewView(state: state, model: model, close: { [weak self] in self?.close() }))
+        window.setContent(PreviewView(state: state, model: model, web: web, close: { [weak self] in self?.close() }))
     }
 
     var isVisible: Bool { window.isVisible }
@@ -100,11 +112,14 @@ final class PreviewController: NSObject, NSWindowDelegate {
     func open(_ request: PreviewRequest, above panelFrame: NSRect) {
         if isVisible { saveEdits() }
         switch request {
-        case .show(let item), .edit(let item):
+        case .show(let item):
             state.load(item, content: model.content(of: item.id))
+        case .edit(let item):
+            state.load(item, content: model.content(of: item.id), editing: true)
         case .newText:
             state.load(nil, content: nil)
         }
+        showWebPage(after: 0)
         place(above: panelFrame)
         if !isVisible {
             window.alphaValue = 0
@@ -137,6 +152,16 @@ final class PreviewController: NSObject, NSWindowDelegate {
         guard isVisible, !state.isNewText, let item, item.id != state.item?.id else { return }
         saveEdits()
         state.load(item, content: model.content(of: item.id))
+        showWebPage(after: WebPreviewLoader.followDelay)
+    }
+
+    /// 预览的是链接时加载它的网页，否则停掉上一个网页。
+    private func showWebPage(after delay: TimeInterval) {
+        if state.showsWebPage, let address = state.content?.text {
+            web.show(address, after: delay)
+        } else {
+            web.stop()
+        }
     }
 
     /// 关闭预览，保存修改。
@@ -144,6 +169,7 @@ final class PreviewController: NSObject, NSWindowDelegate {
         guard isVisible else { return }
         saveEdits()
         window.orderOut(nil)
+        web.stop(clearingData: true)
         state.load(nil, content: nil)
         onClose()
     }
@@ -192,6 +218,7 @@ final class PreviewController: NSObject, NSWindowDelegate {
 private struct PreviewView: View {
     let state: PreviewState
     let model: HistoryModel
+    let web: WebPreviewLoader
     let close: () -> Void
 
     var body: some View {
@@ -250,7 +277,11 @@ private struct PreviewView: View {
                     LinkSummary(item: item)
                     Divider()
                 }
-                PreviewTextEditor(state: state)
+                if state.showsWebPage {
+                    WebPreviewPane(loader: web, address: state.content?.text ?? "")
+                } else {
+                    PreviewTextEditor(state: state)
+                }
             }
         case .image:
             if let data = state.content?.image, let image = NSImage(data: data) {
@@ -317,6 +348,7 @@ private struct PreviewView: View {
 
     private var hint: String {
         if state.isNewText { return "写好后按 esc，存进历史" }
+        if state.showsWebPage { return "空格 / esc 关闭   ← → 看其他卡片   ⌘E 改网址" }
         if state.bodyIsEditable { return "点进正文或标题即可修改，关闭时保存   空格 / esc 关闭" }
         return "空格 / esc 关闭   ← → 看其他卡片"
     }

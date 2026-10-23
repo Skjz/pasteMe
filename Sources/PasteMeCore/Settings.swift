@@ -95,6 +95,41 @@ public struct Settings {
         nonmutating set { defaults.set(newValue.rawValue, forKey: Key.historyRetention) }
     }
 
+    /// ⌘O 用什么打开文件（#51）。默认是文件自己默认的应用；存的值认不出来时也这样。
+    /// 选的应用后来删掉了，打开时按系统默认的方式（`OpenPlan`）。
+    public var fileApp: OpenApp {
+        get { defaults.string(forKey: Key.fileApp).flatMap(OpenApp.init(rawValue:)) ?? .systemDefault }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Key.fileApp) }
+    }
+
+    /// ⌘O 用什么打开文件夹（#51）。默认访达，规则和 `fileApp` 一样。
+    public var folderApp: OpenApp {
+        get { defaults.string(forKey: Key.folderApp).flatMap(OpenApp.init(rawValue:)) ?? .systemDefault }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Key.folderApp) }
+    }
+
+    /// 全局快捷键（#50）。没改过时是默认值，清除了是 nil。存的值认不出来时也按默认值处理。
+    public func shortcut(for action: GlobalAction) -> KeyCombo? {
+        guard let stored = defaults.dictionary(forKey: Key.shortcut(action)) else { return action.defaultCombo }
+        // 空的字典表示用户清除了这个快捷键。
+        if stored.isEmpty { return nil }
+        guard let keyCode = stored["keyCode"] as? Int, let modifiers = stored["modifiers"] as? Int else {
+            return action.defaultCombo
+        }
+        return KeyCombo(keyCode: keyCode, modifiers: KeyCombo.Modifiers(rawValue: modifiers))
+    }
+
+    /// 改成 `combo`；传 nil 是清除，这个功能就没有全局快捷键。
+    public func setShortcut(_ combo: KeyCombo?, for action: GlobalAction) {
+        let value: [String: Int] = combo.map { ["keyCode": $0.keyCode, "modifiers": $0.modifiers.rawValue] } ?? [:]
+        defaults.set(value, forKey: Key.shortcut(action))
+    }
+
+    /// 恢复默认的快捷键。
+    public func resetShortcut(for action: GlobalAction) {
+        defaults.removeObject(forKey: Key.shortcut(action))
+    }
+
     /// 最近一次固定条目用的 Pinboard，⌘P 固定到这里。没有时为 nil。
     public var lastPinboardID: Int64? {
         get { (defaults.object(forKey: Key.lastPinboardID) as? NSNumber)?.int64Value }
@@ -117,6 +152,12 @@ public struct Settings {
         static let lastPinboardID = "lastPinboardID"
         static let historyRetention = "historyRetention"
         static let playsSoundOnRecord = "playsSoundOnRecord"
+        static let fileApp = "fileApp"
+        static let folderApp = "folderApp"
+
+        static func shortcut(_ action: GlobalAction) -> String {
+            "shortcut." + action.rawValue
+        }
     }
 
     /// 发布版读写 `io.github.skjz.PasteMe`，其余都读写 `io.github.skjz.PasteMe.dev`（ADR 0009）。

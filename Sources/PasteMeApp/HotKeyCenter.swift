@@ -1,39 +1,13 @@
 import AppKit
 import Carbon.HIToolbox
-
-/// PasteMe 的全局快捷键：注册用的键码和修饰键，以及在菜单里显示的样子。
-struct GlobalShortcut {
-    var keyCode: Int
-    /// Carbon 修饰键组合，例如 `cmdKey | shiftKey`。
-    var carbonModifiers: Int
-    /// 菜单项上显示的按键。
-    var keyEquivalent: String
-    var modifierMask: NSEvent.ModifierFlags
-    /// 写在提示文字里的样子，例如 "⇧⌘V"。
-    var symbol: String
-
-    /// 呼出或收起面板。
-    static let panel = GlobalShortcut(
-        keyCode: kVK_ANSI_V, carbonModifiers: cmdKey | shiftKey,
-        keyEquivalent: "v", modifierMask: [.command, .shift], symbol: "⇧⌘V"
-    )
-    /// 暂停或恢复记录。不用 ⌥⇧⌘V：很多应用用它“粘贴并匹配样式”。
-    static let pause = GlobalShortcut(
-        keyCode: kVK_ANSI_V, carbonModifiers: cmdKey | shiftKey | controlKey,
-        keyEquivalent: "v", modifierMask: [.command, .shift, .control], symbol: "⌃⇧⌘V"
-    )
-    /// 开启或退出 Paste Stack。
-    static let pasteStack = GlobalShortcut(
-        keyCode: kVK_ANSI_C, carbonModifiers: cmdKey | shiftKey | controlKey,
-        keyEquivalent: "c", modifierMask: [.command, .shift, .control], symbol: "⌃⇧⌘C"
-    )
-}
+import PasteMeCore
 
 extension NSMenuItem {
-    /// 在菜单项右侧显示全局快捷键。只是提示，快捷键本身由 `HotKeyCenter` 注册。
-    func showShortcut(_ shortcut: GlobalShortcut) {
-        keyEquivalent = shortcut.keyEquivalent
-        keyEquivalentModifierMask = shortcut.modifierMask
+    /// 在菜单项右侧显示全局快捷键，nil 时不显示。只是提示，快捷键本身由 `HotKeyCenter` 注册。
+    @MainActor
+    func showShortcut(_ combo: KeyCombo?) {
+        keyEquivalent = combo?.keyEquivalent ?? ""
+        keyEquivalentModifierMask = combo?.modifierMask ?? []
     }
 }
 
@@ -57,12 +31,13 @@ final class HotKeyCenter {
     private var handlerRef: EventHandlerRef?
     private var nextID: UInt32 = 1
 
-    /// 注册一个全局快捷键。快捷键已被其他应用占用等原因注册失败时返回 nil，并记一条日志。
+    /// 注册一个全局快捷键。注册失败时返回 nil，并记一条日志。别的应用注册了同一个组合时注册照样成功
+    /// （选项是 0 还是 `kEventHotKeyExclusive` 都一样，在 macOS 27 上试过），所以查不出和别的应用冲突。
     @discardableResult
-    func register(_ shortcut: GlobalShortcut, action: @escaping () -> Void) -> ID? {
-        let id = register(keyCode: shortcut.keyCode, modifiers: shortcut.carbonModifiers, action: action)
+    func register(_ combo: KeyCombo, action: @escaping () -> Void) -> ID? {
+        let id = register(keyCode: combo.keyCode, modifiers: combo.carbonModifiers, action: action)
         if id == nil {
-            NSLog("PasteMe: \(shortcut.symbol) 注册失败，可能已被其他应用占用")
+            NSLog("PasteMe: \(combo.symbol) 注册失败")
         }
         return id
     }

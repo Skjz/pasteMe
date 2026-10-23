@@ -281,6 +281,14 @@ private struct CardContextMenu: View {
         }
         Button("拷贝") { model.copy(item) }
             .keyboardShortcut("c", modifiers: .command)
+        if let plan = model.openPlan(for: item) {
+            Button(plan.title + (plan.unavailableReason.map { "（\($0)）" } ?? "")) { model.open(item) }
+                .keyboardShortcut("o", modifiers: .command)
+                .disabled(plan.unavailableReason != nil)
+            if plan.unavailableReason == nil, item.kind == .file {
+                Menu("打开方式") { OpenWithMenuItems(item: item, model: model) }
+            }
+        }
         Divider()
         Button("预览") { model.preview(item) }
         if item.kind == .text || item.kind == .link {
@@ -343,6 +351,28 @@ private struct CardTitleField: View {
 
 /// 「转换」子菜单的内容（#27）。单独成一个视图：列出转换要读出完整内容，只在菜单打开时做。
 /// ⌘T 弹出的是同样内容的 `NSMenu`（`PanelController.showConversionMenu`）。
+/// 右键菜单「打开方式」（#51）：装了的应用都列出来，选了就用它打开这个条目里的文件和文件夹，不改设置。
+/// 系统默认的方式、编辑器、终端之间有分隔线。单独做成视图，子菜单打开时才查装了哪些应用。
+private struct OpenWithMenuItems: View {
+    let item: ClipItem
+    let model: HistoryModel
+
+    var body: some View {
+        let apps = model.openApps(for: item)
+        let onlyFolders = item.filePaths.allSatisfy { model.pathKind($0) == .folder }
+        ForEach(Array(apps.enumerated()), id: \.element) { index, app in
+            if index > 0, Self.group(of: apps[index - 1]) != Self.group(of: app) {
+                Divider()
+            }
+            Button(app.title(forFolders: onlyFolders)) { model.open(item, using: app) }
+        }
+    }
+
+    private static func group(of app: OpenApp) -> Int {
+        app == .systemDefault ? 0 : app.isTerminal ? 2 : 1
+    }
+}
+
 private struct ConversionMenuItems: View {
     let item: ClipItem
     let model: HistoryModel

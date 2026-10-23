@@ -44,6 +44,8 @@ final class PasteStackController {
     var isRecordingPaused: () -> Bool = { false }
     /// 开启或退出时调用，用于更新菜单栏图标。
     var onActiveChange: () -> Void = {}
+    /// 开启或退出 Paste Stack 的全局快捷键（例如 "⌃⇧⌘C"），浮窗底部的提示用。清除了是 nil（#50）。
+    var exitShortcut: () -> String? = { nil }
 
     var showsDuringScreenSharing = false {
         didSet { hud.showsDuringScreenSharing = showsDuringScreenSharing }
@@ -83,6 +85,7 @@ final class PasteStackController {
         }
         self.tap = tap
         stack.start()
+        hud.exitShortcut = exitShortcut()
         hud.show(rows: [])
         toast.show("Paste Stack 已开启", detail: "依次复制，再按 ⌘V 按顺序粘贴", symbol: "square.stack.3d.up")
         onActiveChange()
@@ -225,6 +228,12 @@ final class PasteStackHUD {
         didSet { panel.sharingType = showsDuringScreenSharing ? .readOnly : .none }
     }
 
+    /// 浮窗底部提示里退出用的快捷键。
+    var exitShortcut: String? {
+        get { state.exitShortcut }
+        set { state.exitShortcut = newValue }
+    }
+
     private let panel = HUDPanel()
     private let state = PasteStackHUDState()
     private lazy var hosting = NSHostingView(rootView: PasteStackView(state: state))
@@ -286,6 +295,7 @@ struct PasteStackRowItem {
 @MainActor
 private final class PasteStackHUDState {
     var rows: [PasteStackRowItem] = []
+    var exitShortcut: String?
     @ObservationIgnored var remove: (Int) -> Void = { _ in }
     @ObservationIgnored var close: () -> Void = {}
 }
@@ -332,7 +342,7 @@ private struct PasteStackView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Text("⌘V 粘贴下一条   esc 或 \(GlobalShortcut.pasteStack.symbol) 退出")
+            Text("⌘V 粘贴下一条   esc" + (state.exitShortcut.map { " 或 \($0)" } ?? "") + " 退出")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
         }

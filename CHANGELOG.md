@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- SHA-1 next to MD5 and SHA-256: in the 转换 menu (⌘T) for text and links, and as 计算 SHA-1 in the context menu of file cards. Results match `shasum`.
+- The three global shortcuts (show the panel, pause recording, Paste Stack) can be re-recorded on the 通用 page of the settings window: click a shortcut and press the new keys; esc cancels and ⌫ removes the shortcut. A shortcut needs ⌘, ⌃ or ⌥, can't be used twice, and is refused with the reason when it is a macOS shortcut. Clashes with other apps can't be detected, because macOS lets several apps register the same keys. Using a key the panel itself needs (such as ⌘P) is allowed with a warning. The status bar menu, the pause notice and the Paste Stack window show the new keys.
+- ⌘O in the panel opens the selected link in the default browser, a file with its default app, and a folder in Finder, then closes the panel. On the 面板 page of the settings window, files and folders can each be set to open in Visual Studio Code, Cursor, Terminal, iTerm2, Ghostty or Otty instead; only installed apps can be chosen. A terminal opens the folder a file is in, never the file itself, so scripts are not run. The card context menu has 打开 too, and file cards have an 打开方式 submenu to pick any installed app for one time. When the files are gone, the panel stays open and says so.
+- Pressing space on a link card now shows the web page itself in the preview, below the title and site. It runs the page's scripts but without your cookies, and nothing is kept after the preview closes; sound and video don't play on their own. Links that look single-use (with words like token, reset or verify) wait until you click 加载网页. While the preview is open, ← → loads the next link only after you stay on it for 0.3 s. Links clicked inside the page open in the default browser, and downloads are not started. Use ⌘E to edit the address.
+
 ### Fixed
 
 - The app in the release DMG no longer contains file paths from the machine it was built on, such as the builder's user name: release builds strip debug symbols, which also makes the app about 1 MB smaller. The v0.1.0 download was replaced with a stripped build of the same code.

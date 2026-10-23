@@ -444,6 +444,8 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             panel.makeFirstResponder(nil)
         case .copySelected:
             model.copy()
+        case .openSelected:
+            model.open()
         }
     }
 

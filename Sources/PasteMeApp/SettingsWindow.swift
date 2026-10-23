@@ -14,6 +14,8 @@ final class SettingsWindow {
     let model: SettingsModel
     private var window: NSWindow?
     private var activationObserver: NSObjectProtocol?
+    private var resignKeyObserver: NSObjectProtocol?
+    private var keyMonitor: Any?
 
     init(model: SettingsModel) {
         self.model = model
@@ -63,6 +65,21 @@ final class SettingsWindow {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.model.refreshSystemState() }
+        }
+        // 录制全局快捷键时（#50）窗口里的按键都交给录制：本地监视器在菜单的快捷键之前收到，⌘W、⌘Q 也能录。
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] event in
+            let recorded = MainActor.assumeIsolated { () -> Bool in
+                guard let self, self.model.recordingShortcut != nil, event.window === window else { return false }
+                self.model.recordKey(KeyCombo(keyCode: event.keyCode, flags: event.modifierFlags))
+                return true
+            }
+            return recorded ? nil : event
+        }
+        // 切到别的应用、关掉窗口，录了一半的快捷键算取消。
+        resignKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.cancelRecording() }
         }
         return window
     }
@@ -314,6 +331,8 @@ struct SettingsDivider: View {
 struct SettingsRow<Control: View>: View {
     let title: String
     var detail: String?
+    /// 说明是一条要用户注意的问题（例如录下的快捷键不能用），用红色。
+    var detailIsWarning = false
     @ViewBuilder let control: Control
 
     var body: some View {
@@ -323,7 +342,7 @@ struct SettingsRow<Control: View>: View {
                 if let detail {
                     Text(detail)
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(detailIsWarning ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -372,27 +391,45 @@ private struct GeneralPage: View {
                     }
                 }
             }
-            SettingsGroup(title: "全局快捷键") {
-                SettingsRow(title: "呼出或收起面板") { ShortcutText(GlobalShortcut.panel) }
-                SettingsDivider()
-                SettingsRow(title: "暂停或恢复记录") { ShortcutText(GlobalShortcut.pause) }
-                SettingsDivider()
-                SettingsRow(title: "开启或退出 Paste Stack") { ShortcutText(GlobalShortcut.pasteStack) }
+            SettingsGroup(title: "全局快捷键", footer: "点一下快捷键再按下新的组合。录制时按 esc 取消，按 ⌫ 清除；清除后可以在菜单栏菜单里使用这项功能。") {
+                ForEach(GlobalAction.allCases, id: \.self) { action in
+                    if action != GlobalAction.allCases.first {
+                        SettingsDivider()
+                    }
+                    let note = model.shortcutNotes[action]
+                    SettingsRow(title: action.title, detail: note?.text, detailIsWarning: note?.isProblem == true) {
+                        ShortcutRecorder(action: action, model: model)
+                    }
+                }
             }
         }
     }
 }
 
-private struct ShortcutText: View {
-    let shortcut: GlobalShortcut
+/// 一个全局快捷键（#50）：按钮上是现在的组合，点了开始录制，按键由 `SettingsWindow` 的事件监视器交给
+/// `SettingsModel.recordKey`。和默认值不同时旁边有「恢复默认」。
+private struct ShortcutRecorder: View {
+    let action: GlobalAction
+    let model: SettingsModel
 
-    init(_ shortcut: GlobalShortcut) {
-        self.shortcut = shortcut
-    }
+    private var recording: Bool { model.recordingShortcut == action }
 
     var body: some View {
-        Text(shortcut.symbol)
-            .foregroundStyle(.secondary)
+        HStack(spacing: 8) {
+            if !recording, model.shortcuts[action] != action.defaultCombo {
+                Button("恢复默认") { model.resetShortcut(action) }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .fixedSize()
+            }
+            Button { model.toggleRecording(action) } label: {
+                Text(recording ? "请按下快捷键" : model.shortcuts[action]?.symbol ?? "未设置")
+                    .foregroundStyle(recording ? Color.accentColor : model.shortcuts[action] == nil ? .secondary : .primary)
+                    .frame(minWidth: 92)
+            }
+            .accessibilityLabel("\(action.title)的快捷键")
+        }
+        .fixedSize()
     }
 }
 
@@ -429,7 +466,47 @@ private struct PanelPage: View {
                         .labelsHidden()
                 }
             }
+            SettingsGroup(title: "打开", footer: "选中卡片按 ⌘O 时用这里选的应用打开；右键菜单的「打开方式」里可以临时换一个。链接总是用默认的浏览器打开。") {
+                SettingsRow(title: "文件的打开方式", detail: "选终端时打开文件所在的文件夹。") {
+                    OpenAppPicker(title: "文件的打开方式", forFolders: false, model: model)
+                }
+                SettingsDivider()
+                SettingsRow(title: "文件夹的打开方式") {
+                    OpenAppPicker(title: "文件夹的打开方式", forFolders: true, model: model)
+                }
+            }
         }
+    }
+}
+
+/// 文件或文件夹的打开方式（#51）：系统默认的方式、编辑器、终端三组，没装的应用是灰的。
+private struct OpenAppPicker: View {
+    let title: String
+    let forFolders: Bool
+    let model: SettingsModel
+
+    var body: some View {
+        let selection = Binding(
+            get: { forFolders ? model.folderApp : model.fileApp },
+            set: { forFolders ? model.setFolderApp($0) : model.setFileApp($0) }
+        )
+        Picker(title, selection: selection) {
+            option(.systemDefault)
+            Divider()
+            ForEach(OpenApp.allCases.filter { $0 != .systemDefault && !$0.isTerminal }, id: \.self, content: option)
+            Divider()
+            ForEach(OpenApp.allCases.filter(\.isTerminal), id: \.self, content: option)
+        }
+        .labelsHidden()
+        .fixedSize()
+    }
+
+    private func option(_ app: OpenApp) -> some View {
+        let available = app.isAvailable(isInstalled: model.isInstalled)
+        let name = app.title(forFolders: forFolders)
+        return Text(available ? name : "\(name)（没有安装）")
+            .tag(app)
+            .disabled(!available)
     }
 }
 
@@ -484,7 +561,7 @@ private struct LinkPreviewPage: View {
 
     var body: some View {
         SettingsScroll {
-            SettingsGroup(footer: "本机和内网的地址都不会请求。打开以后，以前复制的链接不会补做，再复制一次就会获取。") {
+            SettingsGroup(footer: "这里管的是复制链接时在后台获取的预览。本机和内网的地址都不会请求。打开以后，以前复制的链接不会补做，再复制一次就会获取。按空格预览链接时会打开网页、执行网页里的脚本，不受这里的设置影响。") {
                 ForEach(LinkPreviewMode.allCases, id: \.self) { mode in
                     if mode != LinkPreviewMode.allCases.first {
                         SettingsDivider()

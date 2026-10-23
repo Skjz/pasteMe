@@ -23,14 +23,16 @@ public enum HashInput: Sendable, Equatable {
     }
 }
 
-/// 计算哈希值的算法（#37），结果是小写十六进制。
+/// 计算哈希值的算法（#37、#49），结果是小写十六进制。菜单按这里的顺序列出，按摘要从短到长。
 public enum HashAlgorithm: String, CaseIterable, Sendable {
     case md5
+    case sha1
     case sha256
 
     public var title: String {
         switch self {
         case .md5: "MD5"
+        case .sha1: "SHA-1"
         case .sha256: "SHA-256"
         }
     }
@@ -51,6 +53,7 @@ public enum HashAlgorithm: String, CaseIterable, Sendable {
     public func hex(of data: Data) -> String {
         switch self {
         case .md5: Self.hex(Insecure.MD5.hash(data: data))
+        case .sha1: Self.hex(Insecure.SHA1.hash(data: data))
         case .sha256: Self.hex(SHA256.hash(data: data))
         }
     }
@@ -59,6 +62,7 @@ public enum HashAlgorithm: String, CaseIterable, Sendable {
     public func hex(ofFileAt url: URL) throws -> String {
         switch self {
         case .md5: try Self.hash(fileAt: url, with: Insecure.MD5())
+        case .sha1: try Self.hash(fileAt: url, with: Insecure.SHA1())
         case .sha256: try Self.hash(fileAt: url, with: SHA256())
         }
     }

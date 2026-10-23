@@ -63,6 +63,8 @@ enum PanelCommand: Equatable {
     case cancelTitle
     /// ⌘C：把选中的条目拷贝到剪贴板，不粘贴（#35）。
     case copySelected
+    /// ⌘O：打开选中的链接、文件或文件夹（#51）。
+    case openSelected
 }
 
 /// 按键交给谁处理。
@@ -86,7 +88,8 @@ enum PanelKeyAction: Equatable {
 /// 在卡片标题栏里编辑标题时（#33），↩ 保存，esc 取消，其他按键都交给输入框。焦点在卡片上时 ⌘R 开始编辑标题，
 /// ⌘C 把选中的条目拷贝到剪贴板（#35）；焦点在搜索框时这两个键交给搜索框。
 ///
-/// 焦点在卡片上时空格打开预览，预览开着时空格和 esc 关掉它（#10）。⌘T 在选中的卡片下面弹出「转换」菜单（#27）。⌘← ⌘→ 在「历史」和各个 Pinboard
+/// 焦点在卡片上时空格打开预览，预览开着时空格和 esc 关掉它（#10）。⌘T 在选中的卡片下面弹出「转换」菜单（#27），
+/// ⌘O 打开选中的链接、文件或文件夹（#51），这两个在搜索框里也起作用。⌘← ⌘→ 在「历史」和各个 Pinboard
 /// 之间切换，规则和 ← → 一样：搜索框里有文字时交给搜索框移动插入点（#9）。
 enum PanelKeymap {
     /// 按着这些修饰键时卡片上显示 ⌘1…⌘9（#39）：⌘，或者 ⇧⌘（以纯文本粘贴）。还按着 ⌥ 或 ⌃ 时不显示。
@@ -132,6 +135,7 @@ enum PanelKeymap {
             case kVK_ANSI_E where !key.shift: return .run(.editSelected)
             case kVK_ANSI_J where !key.shift: return .run(.showInHistory)
             case kVK_ANSI_T where !key.shift: return .run(.showConversions)
+            case kVK_ANSI_O where !key.shift: return .run(.openSelected)
             case kVK_ANSI_R where !key.shift && onCards: return .run(.renameSelected)
             case kVK_ANSI_C where !key.shift && onCards: return .run(.copySelected)
             default: break
@@ -169,6 +173,25 @@ enum PanelKeymap {
             return .focusSearchThenPassThrough
         }
         return .passThrough
+    }
+
+    /// 面板开着时这个组合有没有用处（#50）：全局快捷键设成它时，面板里原来的功能会被全局快捷键拦下。
+    static func isUsedByPanel(_ combo: KeyCombo) -> Bool {
+        let key = PanelKey(
+            keyCode: combo.keyCode,
+            command: combo.modifiers.contains(.command),
+            shift: combo.modifiers.contains(.shift),
+            option: combo.modifiers.contains(.option),
+            control: combo.modifiers.contains(.control)
+        )
+        let contexts = [
+            PanelContext(focus: .cards, queryIsEmpty: true, canUndoDelete: true),
+            PanelContext(focus: .search, queryIsEmpty: true, canUndoDelete: true),
+        ]
+        return contexts.contains { context in
+            if case .run = action(for: key, in: context) { return true }
+            return false
+        }
     }
 
     /// 数字键 1…9 的键码。用键码而不是字符判断，按住 Shift 时 1 会变成 "!"。
