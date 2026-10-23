@@ -111,4 +111,20 @@ import Testing
         Settings(defaults: defaults).historyRetention = .never
         #expect(Settings(defaults: defaults).historyRetention == .never)
     }
+
+    @Test func filesAndFoldersOpenTheSystemWayByDefault() {
+        #expect(Settings(defaults: defaults).fileApp == .systemDefault)
+        #expect(Settings(defaults: defaults).folderApp == .systemDefault)
+        defaults.set("sublime", forKey: "folderApp")
+        #expect(Settings(defaults: defaults).folderApp == .systemDefault)
+    }
+
+    @Test func openAppsPersist() {
+        Settings(defaults: defaults).folderApp = .cursor
+        Settings(defaults: defaults).fileApp = .ghostty
+        #expect(Settings(defaults: defaults).folderApp == .cursor)
+        #expect(Settings(defaults: defaults).fileApp == .ghostty)
+        Settings(defaults: defaults).folderApp = .systemDefault
+        #expect(Settings(defaults: defaults).folderApp == .systemDefault)
+    }
 }

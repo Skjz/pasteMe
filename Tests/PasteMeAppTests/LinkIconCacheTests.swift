@@ -5,7 +5,7 @@ import PasteMeCore
 
 /// 链接卡片：图标四角透明时垫白底，带光晕的图标画成一张图；没有网页标题时从网址读出标题。
 @MainActor
-@Suite struct LinkBannerTests {
+@Suite struct LinkIconCacheTests {
     private func png(fillsCorners: Bool) -> Data {
         let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32, bitsPerSample: 8, samplesPerPixel: 4,

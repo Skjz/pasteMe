@@ -46,6 +46,24 @@ import PasteMeCore
         #expect(!settings.playsSoundOnRecord && !model.playsSoundOnRecord && soundsPlayed == 1)
     }
 
+    @Test func filesAndFoldersOpenWithAnInstalledApp() {
+        var changes: [String] = []
+        model.onOpenAppsChange = { changes.append("\($0.rawValue) \($1.rawValue)") }
+        model.isInstalled = { $0 == OpenApp.visualStudioCode.bundleID || $0 == OpenApp.ghostty.bundleID }
+
+        model.setFolderApp(.visualStudioCode)
+        model.setFileApp(.ghostty)
+        // 没装 Cursor：不能选，设置不变。
+        model.setFolderApp(.cursor)
+
+        #expect(settings.folderApp == .visualStudioCode && model.folderApp == .visualStudioCode)
+        #expect(settings.fileApp == .ghostty && model.fileApp == .ghostty)
+        #expect(changes == ["systemDefault visualStudioCode", "ghostty visualStudioCode"])
+        settings.folderApp = .systemDefault
+        model.reload()
+        #expect(model.folderApp == .systemDefault)
+    }
+
     @Test func reloadReadsTheSettingsAndTheSystemState() {
         settings.pasteImagesAsFiles = true
         settings.historyRetention = .month

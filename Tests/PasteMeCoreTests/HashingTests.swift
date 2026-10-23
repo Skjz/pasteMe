@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PasteMeCore
 
-/// 计算文本和文件的 MD5、SHA-256（#37）。期望值是本机 `md5`、`shasum -a 256` 算出的。
+/// 计算文本和文件的 MD5、SHA-1、SHA-256（#37、#49）。期望值是本机 `md5`、`shasum`、`shasum -a 256` 算出的。
 @Suite final class HashingTests {
     let directory: URL
 
@@ -25,11 +25,18 @@ import Testing
         #expect(try HashAlgorithm.md5.digest(of: .text("hello")) == "5d41402abc4b2a76b9719d911017c592")
         #expect(try HashAlgorithm.sha256.digest(of: .text("")) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
         #expect(try HashAlgorithm.sha256.digest(of: .text("hello")) == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+        #expect(try HashAlgorithm.sha1.digest(of: .text("")) == "da39a3ee5e6b4b0d3255bfef95601890afd80709")
+        #expect(try HashAlgorithm.sha1.digest(of: .text("hello")) == "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
+    }
+
+    @Test func menusListTheAlgorithmsByDigestLength() {
+        #expect(HashAlgorithm.allCases.map(\.title) == ["MD5", "SHA-1", "SHA-256"])
     }
 
     @Test func textIsHashedAsUTF8AndNotDecoded() throws {
         #expect(try HashAlgorithm.md5.digest(of: .text("你好")) == "7eca689f0d3389d9dea66ae112e5cfd7")
         #expect(try HashAlgorithm.sha256.digest(of: .text("你好")) == "670d9743542cae3ea7ebe36af56bd53648b0a1126162e78d81a32934a711302e")
+        #expect(try HashAlgorithm.sha1.digest(of: .text("你好")) == "440ee0853ad1e99f962b63e459ef992d7c211722")
         // Base64 的「aGVsbG8=」是 hello，但算的是这几个字符本身。
         #expect(try HashAlgorithm.md5.digest(of: .text("aGVsbG8=")) != "5d41402abc4b2a76b9719d911017c592")
     }
@@ -38,6 +45,7 @@ import Testing
         // 3 MB，比每次读的 1 MB 大。
         let big = try file("big.bin", Data(repeating: UInt8(ascii: "a"), count: 3_000_000))
         #expect(try HashAlgorithm.md5.digest(of: .files([big])) == "99ddc9a3a46ea62c95652bdf937a1fb8")
+        #expect(try HashAlgorithm.sha1.digest(of: .files([big])) == "e8935af087fafce14bf157d50ab992c861688ffa")
         let empty = try file("empty", Data())
         #expect(try HashAlgorithm.md5.digest(of: .files([empty])) == "d41d8cd98f00b204e9800998ecf8427e")
     }
@@ -56,6 +64,8 @@ import Testing
         #expect(HashInput.unavailableReason(forFiles: [present.path]) == nil)
         #expect(HashInput.unavailableReason(forFiles: [present.path, directory.appendingPathComponent("gone").path]) == "文件已经不在了")
         #expect(HashInput.unavailableReason(forFiles: [directory.path]) == "不能计算文件夹")
+        #expect(HashInput.includesFolder([present.path, directory.path]))
+        #expect(!HashInput.includesFolder([present.path, directory.appendingPathComponent("gone").path]))
         #expect(throws: (any Error).self) {
             try HashAlgorithm.md5.digest(of: .files([self.directory.appendingPathComponent("gone")]))
         }

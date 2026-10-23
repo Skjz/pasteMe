@@ -205,7 +205,14 @@ import Testing
             #expect(action(command(kVK_ANSI_E, "e"), context) == .run(.editSelected))
             #expect(action(command(kVK_ANSI_J, "j"), context) == .run(.showInHistory))
             #expect(action(command(kVK_ANSI_T, "t"), context) == .run(.showConversions))
+            #expect(action(command(kVK_ANSI_O, "o"), context) == .run(.openSelected))
         }
+    }
+
+    @Test func onlyPlainCommandOOpens() {
+        // ⇧⌘O、⌥⌘O 不是打开（#51）。
+        #expect(action(PanelKey(keyCode: kVK_ANSI_O, command: true, shift: true, characters: "O"), Self.onCards) != .run(.openSelected))
+        #expect(action(PanelKey(keyCode: kVK_ANSI_O, command: true, option: true, characters: "ø"), Self.onCards) != .run(.openSelected))
     }
 
     // MARK: 在卡片标题栏里编辑标题（#33）、拷贝（#35）

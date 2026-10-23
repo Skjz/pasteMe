@@ -148,5 +148,21 @@ import PasteMeCore
         #expect(model.hashUnavailableReason(for: try item(gone)) == "文件已经不在了")
         #expect(model.computeHash(try item(gone), using: .md5) == nil)
         #expect(model.computeHash(try item(image), using: .md5) == nil)
+        // 文件不在了：菜单里照样列出，写明原因；图片不列出。
+        #expect(model.offersHash(for: try item(gone)))
+        #expect(!model.offersHash(for: try item(image)))
+    }
+
+    @Test func foldersDoNotListHashing() throws {
+        let file = directory.appendingPathComponent("a.txt")
+        try Data("a".utf8).write(to: file)
+        let folder = try store.insert(ClipContent(kind: .file, text: directory.path), source: nil)
+        let mixed = try store.insert(ClipContent(kind: .file, text: [file.path, directory.path].joined(separator: "\n")), source: nil)
+        let plain = try store.insert(ClipContent(kind: .file, text: file.path), source: nil)
+        model.didShow()
+
+        #expect(!model.offersHash(for: try item(folder)))
+        #expect(!model.offersHash(for: try item(mixed)))
+        #expect(model.offersHash(for: try item(plain)))
     }
 }

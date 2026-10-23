@@ -7,7 +7,7 @@
 ```text
 PasteMe        可执行文件，只有 main.swift
 └─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、全局快捷键、监听 ⌘V、发送 ⌘V、面板、浮窗、视图
-   └─ PasteMeCore  不依赖界面：AppVariant、ClipStore、ClipQuery、AppNames、Recorder、RecordChime、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter
+   └─ PasteMeCore  不依赖界面：AppVariant、ClipStore、ClipQuery、AppNames、Recorder、RecordChime、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter、OpenPlan（OpenApp）、KeyCombo（GlobalAction、ShortcutRules）、WebPreviewPolicy
 ```
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
@@ -21,7 +21,9 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - `ClipboardMonitor` 只轮询剪贴板：发现变化后跳过 PasteMe 自己写入的内容和敏感内容，读出内容和来源应用，交给 `Recorder.record(_:from:)`。暂停时它连剪贴板都不读。
 - `Recorder` 决定记不记录（暂停），入库后调用 `onRecord`。设置里打开了「复制时播放提示音」（#25）时，入库后、`onRecord` 之前先播放提示音（`RecordSoundPlaying`）；没有走到 `Recorder` 的内容（暂停、敏感内容、PasteMe 自己写入的）不会响。生产实现 `SystemRecordSound` 用系统音效服务播放，遵守系统设置里的「播放用户界面音效」；系统音效服务只能播放文件，所以 `RecordChime` 在代码里合成的声音（纸滑进剪贴板的夹子，4 个版本由 `TakeRotation` 轮流，不连续重复）在第一次播放时写成缓存目录里的 .wav。音色和响度是和用户试听十几轮选定的，否掉的方向写在 `RecordChime` 的注释里，改之前先试听。暂停只在内存里：`pausedUntil` 为 `.distantFuture` 表示直到手动恢复，定时暂停由 `Recorder` 自己的定时器到时恢复，`onPauseChange` 通知应用换菜单栏图标、显示提示。测试用注入的时钟（`RecorderTests`）。
 - 菜单栏图标由 `AppDelegate.updateStatusIcon()` 决定：暂停记录优先，其次 Paste Stack。屏幕上的短暂提示用 `Toast`。
-- 全局快捷键都通过 `HotKeyCenter.register(_:action:)` 注册，按键组合定义在 `GlobalShortcut`。Carbon 会把每个快捷键事件发给所有已安装的处理器，所以只装一个处理器，读出事件里的快捷键 id 再分发；`HotKeyCenterTests` 直接调用 `dispatch` 模拟按键。
+- 全局快捷键都通过 `HotKeyCenter.register(_:action:)` 注册。Carbon 会把每个快捷键事件发给所有已安装的处理器，所以只装一个处理器，读出事件里的快捷键 id 再分发；`HotKeyCenterTests` 直接调用 `dispatch` 模拟按键。
+- 三个功能（`GlobalAction`）的组合存在 `Settings.shortcut(for:)`（#50）：没改过时是 `defaultCombo`，清除了是 nil（存成空字典）。`KeyCombo` 是键码加修饰键，在 Core 里，不引入 Carbon；Carbon 修饰键、菜单项的按键和「⇧⌘V」这样的符号在 `KeyComboDisplay.swift`，字符按当前键盘布局取（`UCKeyTranslate`），所以键码是物理位置，换了键盘布局显示的字符跟着变。`GlobalShortcuts` 按设置注册、改了以后重新注册，菜单栏菜单、暂停的 Toast、Paste Stack 浮窗每次用时从它读组合，不另存。
+- 录制在设置窗口里：`SettingsWindow` 的本地事件监视器在录制时把窗口里的 keyDown 都交给 `SettingsModel.recordKey`（在主菜单之前收到，⌘W、⌘Q 也能录），esc 取消，⌫ 清除。录制开始时 `GlobalShortcuts.suspend()` 注销 PasteMe 自己的全部快捷键，不然按下现在的组合会被 Carbon 拦下、窗口收不到。检查规则在 `ShortcutRules.problem`（要带 ⌘⌃⌥、不能和另一项重复、不能是系统快捷键）。查不出和别的应用冲突：别的应用注册了同一个组合时 `RegisterEventHotKey` 照样成功，选项是 0 还是 `kEventHotKeyExclusive` 都一样（在 macOS 27 上试过），别的应用菜单里的快捷键更查不到；注册失败时（`GlobalShortcuts.failed`）设置页只说没有生效，不猜原因。系统快捷键用 `CopySymbolicHotKeys` 读：新的 SDK 不带它的头文件，`SystemShortcuts.current()` 用 `dlsym` 找到它，比较时只看 ⌃⌥⇧⌘（系统记的修饰键里还有 fn 位）。和面板里的按键相同时只提醒（`PanelKeymap.isUsedByPanel` 直接问按键映射）：全局快捷键在 PasteMe 自己是前台时也会先被拦下。
 
 ## Paste Stack
 
@@ -37,9 +39,9 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 
 - `EnrichmentQueue` 依次运行一组 `Enricher`：图片中的文字（`TextRecognitionEnricher`）和链接预览（`LinkPreviewEnricher`）。每个 `Enricher` 在主线程从 `ClipStore` 读出输入（不需要处理时返回 nil），在后台算出结果，回到主线程写库（ADR 0003）。`Recorder` 记下图片、文件和链接后调用 `enqueue(id)`，改过网址的链接由 `HistoryModel.onEdited` 再交给它。启动 3 秒后 `AppDelegate` 调用 `backfill()` 补做旧图片的文字识别。队列一次只处理一个条目，新复制的排在前面，补做的每条之间停 0.5 秒。
 - 图片中的文字：`VisionTextRecognizer` 自己用 `Task.detached` 切到后台。`ocr_text` 为 NULL 表示还没识别，空字符串表示识别过但没有文字或识别失败，以后不再识别。图片文件识别原文件，原文件不在了识别缩略图（缩略图只有 480 像素，效果差一些）。测试用 `FakeRecognizer`（`TextRecognitionTests.swift`），另有一个测试真的调用 Vision 识别画出来的中英文。
-- 链接预览（#11）是 PasteMe 唯一联网的地方，默认关闭，分「只取网站图标」和「完整预览」两档（`Settings.linkPreviewMode`，`LinkPreviewEnricher` 每次读输入时重新读）。请求哪个网址由 `LinkPreviewPolicy.request(for:mode:)` 决定，先去掉分享时附带的跟踪参数（`withoutTracking`，否则 `si`、`share_id` 这类随机字符会被当成令牌）：本机、内网后缀、私有网段和 100.64.0.0/10、IPv6 字面地址、没有点的主机名都不请求；「只取网站图标」和看起来像一次性的网址（`looksSingleUse`：路径里的登录、重置、验证类词，像令牌的参数名，16 个以上字母数字混合的连续字符或 UUID）只请求网站首页。关闭和内网这两种情况都不做标记，打开后再复制一次就会获取。判断宁可多认：认错只少了网页标题，漏认可能让链接失效。
+- 链接预览（#11）是 PasteMe 在后台联网的唯一地方（另一处是用户按空格预览网页，见「预览和附属窗口」），默认关闭，分「只取网站图标」和「完整预览」两档（`Settings.linkPreviewMode`，`LinkPreviewEnricher` 每次读输入时重新读）。请求哪个网址由 `LinkPreviewPolicy.request(for:mode:)` 决定，先去掉分享时附带的跟踪参数（`withoutTracking`，否则 `si`、`share_id` 这类随机字符会被当成令牌）：本机、内网后缀、私有网段和 100.64.0.0/10、IPv6 字面地址、没有点的主机名都不请求；「只取网站图标」和看起来像一次性的网址（`looksSingleUse`：路径里的登录、重置、验证类词，像令牌的参数名，16 个以上字母数字混合的连续字符或 UUID）只请求网站首页。关闭和内网这两种情况都不做标记，打开后再复制一次就会获取。判断宁可多认：认错只少了网页标题，漏认可能让链接失效。
 - 获取用 `HTMLPreviewFetcher`，不用 LinkPresentation：`LPMetadataProvider` 用 WebKit 加载整个网页，会加载页面上的资源、可能执行脚本。`HTMLPreviewFetcher` 用不带 Cookie、不缓存的 `URLSession` 只读 HTML，读到 `</head>` 为止（最多 2 MB），从 `og:title`、`twitter:title`、`<title>` 取标题，从 `og:image` 取预览图，从 `<link rel="apple-touch-icon"/"icon">` 和 `/favicon.ico` 取图标。不是网页的链接只看响应头不下载，图片链接用图片本身。每次请求带一个 `RedirectGuard`：重定向到内网地址不跟；打开复制的网址时，重定向到像一次性的网址也不跟（短链接跳到重置密码的链接），退回只取网站图标。只读 HTML 拿不到信息的网站在 `KnownSite` 里单独处理：Reddit 的网页要执行脚本才出内容，有的网络还整个被拦，帖子标题改从 oEmbed 接口取，其他页面从网址读出版块名，图标用固定地址。预览图缩成 480 像素存进 `thumbnail`，图标缩成 128 像素存进 `link_icon`（候选里有 `fluid-icon` 和惯例的 `/apple-touch-icon.png`，尽量拿到大图标）；只取网站图标时不存首页的标题，免得卡片把它当成这个链接的标题。`link_title` 和 `ocr_text` 的约定一样：NULL 是还没获取，空字符串是获取过（失败、没有标题或只取了图标），以后不再重试。旧链接不补做，免得打开开关后一下子发出很多请求。测试：`FakeLinkFetcher`（`LinkPreviewTests.swift`）测档位和规则，`StubURLProtocol`（`HTMLPreviewFetcherTests.swift`）给 `HTMLPreviewFetcher` 一个假的网络，测 Cookie、重定向、大小上限、编码和 Reddit 的 oEmbed。
-- 有预览的链接卡片是海报样式（`LinkCardContent`）：居中的衬线标题（`EditorialFont`：New York，中文换成宋体，按字号缓存）和夹在细线中间的网站名，上面是预览图或带光晕的网站图标。没有网页标题时由 `LinkText` 从网址读出标题。图标的主色（`IconColor.dominant`）、四角是否透明由 `LinkIconCache` 按条目算一次；光晕不在运行时画，`LinkIconCache.posterIcon` 把圆角、白底、描边和光晕画成一张比图标大一圈的图，原因和标题栏图标一样（见「卡片外观」）。预览窗口里的小图（`LinkBanner`）用图标主色铺底。截图检查浅色外观时用 `PASTEME_SNAPSHOT_APPEARANCE=light`。
+- 有预览的链接卡片是海报样式（`LinkCardContent`）：居中的衬线标题（`EditorialFont`：New York，中文换成宋体，按字号缓存）和夹在细线中间的网站名，上面是预览图或带光晕的网站图标。没有网页标题时由 `LinkText` 从网址读出标题。图标的主色（`IconColor.dominant`）、四角是否透明由 `LinkIconCache` 按条目算一次；光晕不在运行时画，`LinkIconCache.posterIcon` 把圆角、白底、描边和光晕画成一张比图标大一圈的图，原因和标题栏图标一样（见「卡片外观」）。截图检查浅色外观时用 `PASTEME_SNAPSHOT_APPEARANCE=light`。
 - 缩略图仍在 `ClipStore.insert` 里同步生成，没有移进队列：复制图片后卡片要马上能显示缩略图。
 
 ## 文本子类型、转换和代码着色
@@ -48,7 +50,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - **存储**：`clips.text_subtype`（第 7 级迁移，为什么不是新的类型见 ADR 0008）存 `TextSubtype.rawValue`（`base64`、`code:swift`），只有文本条目有：NULL 是还没识别，空字符串是识别过、不是任何子类型。`ClipStore.insert` 记录时算，`updateText` 改完重算；再次复制相同内容时，新的结果为空就保留原来的（同一段代码从编辑器复制时认得出语言，从别处复制时可能认不出）。升级前的文本条目由 `AppDelegate.backfillTextSubtypes` 在启动 3 秒后每批 100 条、间隔 0.2 秒补算（`ClipStore.backfillTextSubtypes`），不在迁移里算，免得历史很多时启动变慢。
 - **筛选**：`ClipQuery.textSubtypes`（`.code` 用 `LIKE 'code:%'` 包含所有语言），`PanelFilters.subtypes`，`FilterSuggestion.subtype`。子类型没有常驻的按钮，从 `@` 选了才在类型按钮后面出现（`SubtypeChip`）。搜索框里的 `type:` 对得上类型时只按类型筛选，子类型都是文本，取并集只剩类型。
 - **转换**（#27）：`TextConverter.options(for:subtype:)` 按子类型列出转换（做不了的带原因，菜单里照样列出），`convert` 做转换，都是纯函数（`TextConversionTests` 用本机 `hexdump -C`、`xxd -i` 的真实输出做期望值）。`HistoryModel.convert` 把结果当成 ⌘N 新建的文本那样记录（不记来源应用），再用 `showInHistory` 回到没有筛选的「历史」选中它，所以在 Pinboard 里或有筛选时也看得到。右键菜单里的「转换」是单独的视图（`ConversionMenuItems`），列出转换要读完整内容，只在菜单打开时做；⌘T 弹出同样内容的 `NSMenu`（`PanelController.showConversionMenu`），位置取 `CardDust` 记下的卡片布局，它的视图盖在卡片列表上，坐标一致。
-- **哈希值**（#37）：`HashAlgorithm.digest(of:)`（`Hashing.swift`）算 MD5、SHA-256，文本按 UTF-8 编码后的字节、不解码子类型，文件用 `FileHandle` 每次读 1 MB。`HistoryModel.computeHash` 在主线程读出输入，用 `Task.detached` 在后台算，回到主线程按转换的规则记录（`record`，和 `convert` 共用）。它不在 `TextConverter` 里：转换是同步的纯函数、有 1 MB 的上限，哈希值没有上限、文件可能很大。菜单里放在转换后面，文件卡片在右键菜单里，文件不在或是文件夹时写明原因（`HashInput.unavailableReason`）。
+- **哈希值**（#37、#49）：`HashAlgorithm.digest(of:)`（`Hashing.swift`）算 MD5、SHA-1、SHA-256（菜单按 `allCases` 的顺序列出，摘要从短到长），文本按 UTF-8 编码后的字节、不解码子类型，文件用 `FileHandle` 每次读 1 MB。`HistoryModel.computeHash` 在主线程读出输入，用 `Task.detached` 在后台算，回到主线程按转换的规则记录（`record`，和 `convert` 共用）。它不在 `TextConverter` 里：转换是同步的纯函数、有 1 MB 的上限，哈希值没有上限、文件可能很大。菜单里放在转换后面，文件卡片在右键菜单里。有文件夹的条目不列出这几项（`HistoryModel.offersHash`）：文件夹永远算不了，列出来只是几行灰字；文件不在了时照样列出，写明原因（`HashInput.unavailableReason`），用户以为能算，要知道为什么不行。
 - **识别代码**（#28）：`CodeDetector` 只看前 4000 个字符、80 行，逐行比较字节，不用正则（release 下 15 行代码约 80 µs，一段散文约 13 µs）。顺序：确定的标记（shebang、`<?php`、`<?xml`、能解析的 JSON）→ 排除散文和 Markdown → HTML/XML、YAML → 按 `CodeSignals.swift` 的表给各语言打分。注释行不打分；C++、Objective-C 的分加在 C 上，TypeScript 加在 JavaScript 上；最高分要过门槛（编辑器 3、终端 4、其他 6）并且比第二名多 2 分。加一种语言：在 `CodeLanguage` 加一项（`rawValue` 存进数据库，不能改），在 `CodeSignals` 写只有它才有的写法，在 `LexerRules` 和 `Keywords` 写词法，再在 `CodeDetectorTests` 加正例和会混淆的反例。改规则后最好拿一批真实文字检查误认：例如把仓库里的文档按段落、源码按 15 行切开跑一遍，文档段落一条都不应该认成代码。
 - **着色**：`SyntaxHighlighter.segments(of:language:)` 返回覆盖整段文字的片段。多数语言用 C 风格的 `Lexer`，只换 `LexerRules`；HTML/XML、CSS、JSON、YAML 各有自己的扫描。卡片只着色显示的部分：`CodeSnippet.displayText` 取前 11 行、tab 换成 4 个空格、去掉共同的缩进，`CodeSnippet.truncating` 把超出卡片宽度的部分截掉换成「…」（中日韩文字算两列）。不让文字超出卡片再靠圆角裁掉，原因和标题栏图标一样（见「卡片外观」）。`CodeHighlightCache` 按条目、预览文字、语言和深浅外观缓存 `AttributedString`；视图读 `colorScheme`，外观换了就取另一份。单张代码卡片从创建到画出来和普通文本卡片一样（release 下都约 8 ms，主要花在创建视图上）。
 
@@ -67,9 +69,15 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 
 - 预览窗口（`PreviewController`，#10）和 Pinboard 编辑窗口（`PinboardEditorController`）都是 `AuxiliaryPanel`：和面板一样不激活 PasteMe、层级相同、`sharingType` 跟着面板（`PanelController.showsDuringScreenSharing`）。
 - 键盘焦点：面板失去 key 时以前直接收起。现在附属窗口也会成为 key（输入标题、改正文），所以 `PanelController.keyMovedAway` 等这次切换做完（下一轮事件循环）再看 `NSApp.keyWindow`：还是面板或附属窗口就不收起，是 nil（去了别的应用）才收起。附属窗口关掉后 `takeKeyBack` 把 key 还给面板。
-- 预览打开时不取得 key（`becomesKeyOnlyIfNeeded`，点图片和按钮不抢焦点，点进正文或标题才抢），所以面板上的空格、esc、← → 和 ↩ 照常起作用，预览跟着选中项换内容（`HistoryModel.onSelectionChange`）。窗口第一次上屏时 AppKit 会让标题框成为第一响应者，`PreviewController.open` 把它清掉，否则标题看起来是选中的。
+- 预览打开时不取得 key（`becomesKeyOnlyIfNeeded`，点图片和按钮不抢焦点，点进正文或标题才抢），所以面板上的空格、esc、← → 和 ↩ 照常起作用，预览跟着选中项换内容（`HistoryModel.onSelectionChange`）。
+- 第一下点击：窗口不是 key 时，AppKit 默认只拿第一下点击让窗口成为 key，点到的视图收不到，要再点一下。面板和附属窗口在 `sendEvent` 里先调用 `NSWindow.takeKeyForFirstClick`：点到的视图接受第一下点击（`acceptsFirstMouse`）就照常交给它，窗口不抢键盘；不接受就先 `makeKey()`，这一下点击接着交给它。面板和预览的 SwiftUI 内容是 `FirstClickHostingView`，图片是 `FirstClickImageView`、`ZoomingScrollView`、`CenteringClipView`，网页是 `PreviewWebView`（它另外要成为 key，好让按键给网页）。但 SwiftUI 的按钮点中的是它里面不接受第一下点击的内部视图，预览照样会成为 key：所以点完以后第一响应者还是窗口自己（没有正文、标题框、网页、Quick Look 接过键盘）时，`AuxiliaryPanel.onClickWithoutKeyboard` 把键盘还给面板，空格和 ← → 照常作用于面板。Pinboard 编辑窗口不设它：失去 key 就会关掉。预览是 key 时点面板上的卡片也走这条路，第一下就选中。测试在 `FirstClickTests`：窗口要先上屏（`orderFrontRegardless`），`sendEvent` 才会分发点击。
+- 预览开着时点面板的空白处关掉预览，分两块。搜索栏那一行、底部的留白：`HistoryView` 根视图背后垫了一层接单击的透明底（`HistoryModel.blankClicked`），控件和卡片在它前面，点中它们时轮不到它；右边的按键提示 `allowsHitTesting(false)`，点上去也算空白。卡片那一排被滚动区域挡着，这层底收不到：同一个本地事件监视器也收 leftMouseDown，点在面板上时用 `CardListClick.isBlank` 判断，在卡片那一排的高度以内、又不在任何一张卡片上（卡片按 `CardDust.frames` 的布局，只有选中的那张按放大 5% 后的大小算，其余按原大小，不然两张卡片之间只剩 6 点宽，很难点中）就关。点击照样交给面板。没用 SwiftUI 的手势：滚动区域会把空白处的点击吃掉，卡片的单击、双击和外面的单击也会互相抢。
 - 预览是 key 时，按键由同一个本地事件监视器按 `event.window` 分给 `PreviewController.handle`（esc 关闭，输入法组字时除外），其余交给正文或标题。
 - 修改在预览关闭、换内容或面板收起时保存（`PreviewState.markSaved` 先记下已保存，保存引起的重新查询再回来时不会存第二次）。正文是 `NSTextView`，有 RTF 的文本按富文本编辑、画在白底上（富文本常带黑色文字），其他按纯文本编辑；关掉了引号、破折号替换和拼写纠正。`ClipStore.updateText` 改完内容哈希会变，和另一条相同时合并（规则见它的注释和 `ClipEditingTests`）。
+- 链接的预览显示网页（#52，`WebPreview.swift`）：`PreviewState.showsWebPage` 时（链接、不是 ⌘E 打开的编辑、`WebPreviewPolicy.start` 认得是 http/https）下面是 `WebPreviewPane`，否则仍是网址编辑器。`WebPreviewLoader` 持有唯一的 `WKWebView`，第一次预览链接时才建（要启动网页进程），之后复用。它用 `.nonPersistent()` 的数据存储，关掉预览时 `stop(clearingData:)` 再清一次，所以下次预览不是登录状态。打开预览马上加载，`follow` 换过来的等 `followDelay`（0.3 秒）再加载，期间换走就取消。这里和链接预览不同：是用户按了空格，所以不看「链接预览」设置、本机和内网地址也加载，只有 `looksSingleUse` 的链接等用户点「加载网页」。主框架里用户点的链接和新窗口交给 `NSWorkspace` 打开，页面自己跳到非网页地址（`zoommtg://`）拦下（`WebPreviewPolicy.navigation`），要下载的文件不下载。网页视图不主动取得键盘焦点，预览窗口照旧不是 key；点进网页后窗口成为 key，esc 由 `PreviewController.handle` 关闭预览，空格交给网页滚动。
+- 预览顶上是一条 `PreviewLayout.barHeight` 高的窄栏，和窗口同一层玻璃、没有分隔线：左边标题输入框（没有标题时占位文字是网站、文件名或字数），右边这种内容的按钮和关闭，平时 `.tertiary`，鼠标进来是 `.secondary`。内容从窄栏下面开始，其余三边铺满。试过让控件做成浮在内容上的胶囊：Quick Look 显示的文本、网页的导航栏开头几行会被挡住，内容的边距又不归我们管，所以控件不叠在内容上。图片识别出的文字排在图片下面，也不叠。
+- 窗口大小由 `PreviewLayout` 按内容算，都加上窄栏的高度，最小 360×220：网页用面板上方能用的整块地方（最宽是屏幕的 80%）；图片按比例缩进去、不放大；文本用 `boundingRect` 量出高度（太长的不量，直接用最大高度）。文件按类型（`content(forFileAt:)`）：图片按像素大小，256 KB 以内的文本和代码按 Quick Look 的等宽字体估高度，文件夹和应用是固定的小窗口，其余（PDF、视频）用整块地方。换内容（`follow`）时按新内容重新定大小。
+- 几个文件的条目：`PreviewState.fileIndex` 是正在预览的文件，换条目时回到第一个还在的文件，`showFile(at:)` 超出两头时从另一头接着数。顶栏右边的切换器和 ⌥← ⌥→ 都走 `PreviewController.showFile`，换文件后按这个文件重新定大小。⌥← ⌥→ 在面板是 key 时由 `PanelKeymap`（`previewHasSeveralFiles`，搜索框里有文字时交给搜索框按词移动）处理，点进 Quick Look 以后由 `PreviewController.handle` 处理。
 - 截图模式里 `PASTEME_SNAPSHOT_PREVIEW=1` / `PASTEME_SNAPSHOT_EDITOR=1` 把这两个窗口另存成图片。
 
 ## 窗口背景
@@ -77,6 +85,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 面板、附属窗口、Paste Stack 浮窗和 Toast 的背景都由 `WindowBackground.make` 建（#41）：macOS 26 起是 Liquid Glass（`NSGlassEffectView`），之前是毛玻璃材质（`NSVisualEffectView`）。新加的浮动窗口也用它，版本分支只写在这一处。`@` 的候选列表画在面板里面，用 SwiftUI 的 `glassEffect`（`SuggestionListBackground`）。
 - 玻璃只当背景：`make` 返回一个普通容器，下面是玻璃，上面是按同样圆角裁剪的内容，内容不放进玻璃的 `contentView`（原因见 `make` 的注释）。窗口的 `contentView` 因此不是 SwiftUI 内容的直接父视图，要用内容视图时自己留着引用（`AuxiliaryPanel.hosting`）。
 - 截图模式用 `cacheDisplay` 画面板，画不出窗口后面的内容，截图里看不出玻璃的效果，要在真实屏幕上看。
+- 玻璃跟着窗口是不是当前窗口（key 或 main）变：两样都不是时，玻璃里带 `vibrantColorMatrix` 滤镜的那层高光变成透明，像切到了别的应用。面板和附属窗口之间换键盘焦点时，`WindowActivity.keepActive` 把不是 key 的那个开着的窗口设成 main（`ClipPanel`、`AuxiliaryPanel` 都允许成为 main），两块玻璃都不变。时机：`WindowActivity.link` 让两种窗口在 `makeKey()`、`makeKeyAndOrderFront(_:)` 和点击的 `sendEvent(_:)` 里，`super` 返回以后调用它（`KeepsCompanionActive.onKeyChange`），`PanelController` 打开预览和编辑窗口后也调用一次。试过推迟到下一轮事件循环：中间那一帧有一个窗口两样都不是，两块玻璃先暗一下再亮回来，看起来在闪。也试过在「成为 key」的通知里设：太早，AppKit 发完通知还会调整 main，把它改掉。两种窗口自己是 key 时都不当 main（`canBecomeMain`），main 留给另一个。`NSGlassEffectView` 没有 `NSVisualEffectView.state` 那样的开关，SwiftUI 的 `appearsActive` 也改不了它，都试过。`WindowActivityTests` 读那层高光的不透明度来检查：窗口要先上屏，再转一下 run loop。
 - 设置窗口是普通的有标题栏的窗口，不用 `WindowBackground`，外观照着 Alcove 的设置窗口：整个窗口铺一层侧栏材质（`WindowMaterial`，窗口不在前台时也透出桌面的颜色），侧栏和内容共用它，中间一条细线；分组是一层很淡的前景色加细边（`SettingsLayout`）。窗口带一个空的工具栏，标题栏和红绿灯是带工具栏窗口的尺寸，页面标题和红绿灯在同一行。
 
 ## 拖出卡片
@@ -93,7 +102,8 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 焦点在卡片上时打字，需要让这次按键直接进入搜索框。本地事件监视器在事件分发之前回调，所以 `PanelController` 在监视器里同步把搜索框设为第一响应者，再把事件放行。搜索框是在视图层级里找到的第一个可编辑 `NSTextField`。
 - 输入法组字时（搜索框的字段编辑器 `hasMarkedText()`），所有按键都交给输入法：↩、方向键和 esc 是用来选字和取消的。
 - 删除时 `ClipStore.delete(id:)` 返回 `DeletedClip`（Pinboard 里是 `unpin` 返回 `UnpinnedClip`），`HistoryModel` 保存到面板关闭或切换标签为止，⌘Z 放回原来的 id、时间、缩略图和 Pinboard 里的位置。删除和撤销的动画见「删除动画」。
-- 焦点在卡片上时空格打开、关闭预览（预览开着时 esc 也关闭它），⌘P、⌘N、⌘E、⌘J、⌘T 在两种焦点下都起作用。⌘R、⌘C 只在焦点在卡片上时起作用，在搜索框里交给输入框（⌘C 拷贝选中的文字）。
+- 焦点在卡片上时空格打开、关闭预览（预览开着时 esc 也关闭它），⌘P、⌘N、⌘E、⌘J、⌘T、⌘O 在两种焦点下都起作用。
+- ⌘O（#51）：`HistoryModel.openPlan(for:)` 读条目的完整内容（卡片的 `preview` 只有前 2000 个字符），交给 `OpenPlan.make` 决定每个网址用什么打开：链接用系统默认的浏览器，文件用 `Settings.fileApp`，文件夹用 `Settings.folderApp`（`OpenApp`：系统默认的方式、编辑器或终端，没装就按系统默认的方式），应用、.rtfd 这类文件包算文件。终端只接收文件夹，用终端打开文件时交给它的是文件所在的文件夹，几个文件在同一个文件夹里只开一次：终端会直接执行交给它的脚本。右键菜单的「打开方式」（`OpenWithMenuItems`）列出装了的应用，选了就把它同时当作文件和文件夹的打开方式，不改设置。文件都不在了只提示、面板不收起；否则 `onOpen` 由 `AppDelegate.open` 收起面板再用 `NSWorkspace` 打开，同一个编辑器的几个文件夹一次交给它。右键菜单的「打开」也用 `openPlan`，菜单项的文字（「在浏览器中打开」「用 Cursor 打开」）是 `OpenPlan.title`。⌘R、⌘C 只在焦点在卡片上时起作用，在搜索框里交给输入框（⌘C 拷贝选中的文字）。
 - 在卡片标题栏里编辑标题（#33）是第三种焦点 `.title`：`HistoryModel.rename` 记下 `titleEditingID`，`HistoryView` 只给这一张卡片的标题栏放 `CardTitleField`（其他卡片的画法不变），它出现后自己取得第一响应者。`PanelKeymap` 这时只处理 ↩（保存）和 esc（取消），其余按键都交给输入框。焦点离开 `.title`（点进搜索框、点了别的卡片）、切换标签、卡片被筛选掉、面板收起都按保存处理；卡片的点击、双击和拖动在编辑时不起作用，免得点输入框时选中、粘贴或拖走卡片。开始编辑前先关掉预览，否则预览关闭时会把它记着的旧标题存回去。截图模式里 `PASTEME_SNAPSHOT_RENAME=1` 画出编辑标题时的面板。
 - ⌘1…⌘9（#39）从最左边一张完整显示的卡片数起，卡片上的编号只在按住 ⌘ 时显示，两者用同一个起点（`HistoryModel.firstShortcutIndex`）。起点由 `HistoryView` 在卡片列表上用 `onGeometryChange` 按它在滚动区域里的位置算出（`firstFullyVisibleCard`），只在跨过一张卡片时写进 `HistoryModel.firstVisibleCard`；没按住 ⌘ 时视图不读它，滚动时卡片列表不用重新计算。这依赖卡片宽度和间距固定，和光标一样。呼出面板时滚回最前面，所以 ⌘1 还是最新的一条；只在上次滚到了后面时才滚（`HistoryView.scrolledPastFirst`），已经在最前面时再 `scrollTo` 一次，呼出动画的缺帧中位数多 1 帧左右。修饰键由 `PanelController` 的本地监视器收 `flagsChanged` 事件，规则在 `PanelKeymap.showsShortcutHints`；`HistoryModel.shortcutKeysChanged` 按住 0.2 秒后才显示（测试替换 `HistoryModel.schedule`）。编号从卡片下边缘外滑进来、滑回去，由卡片自己的 `.animation(_:value:)` 按有没有编号触发（`ShortcutHint.animation`），模型改状态时不用包 `withAnimation`，滚动时新进入或离开 ⌘1…⌘9 的编号也有动画。不能把动画挂在过渡上（`.transition(….animation(…))`）：那样只有透明度会动，位移直接跳到终点，`SwiftUIAssumptionTests.shortcutHintsSlideInAndOutOnTheirOwn` 检查这一点。编号盖在卡片底部右端，不改底部文字的排版。收起面板时已经显示的编号跟着面板滑出去，收起动画播完（`HistoryModel.panelDidHide`）才去掉，免得在收起或下次呼出的动画里淡出。截图模式里 `PASTEME_SNAPSHOT_HINTS=n` 画出往右选了 n 张、按住 ⌘ 时的面板。
 - ⌘C（#35）用 `Paster.copyToPasteboard(_:touching: false)` 只写剪贴板，面板不收起，卡片也不动；`HistoryModel.copiedID` 记下最后拷贝的条目，`panelWillHide` 时才 `touch` 到历史最前。
@@ -178,6 +188,8 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 | `CardRemovalEffect` | `CardDust`（App） | `FakeRemovalEffect`（`FakeRemovalEffect.swift`） |
 | `HistoryModel.animate` | `withAnimation` | 先检查视图可见的状态再执行（`PanelFlushTests`、`PanelSimulator`） |
 | `CardDust.now`、`CardDust.schedule` | `CACurrentMediaTime`、`DispatchQueue.main.asyncAfter` | 虚拟时钟（`PanelSimulator`），配合 `DustView.advance()` 逐帧推进 |
+| `HistoryModel.isInstalled`、`HistoryModel.pathKind`、`SettingsModel.isInstalled` | `NSWorkspace.urlForApplication`、`OpenPlan.pathKind(atPath:)` | 固定的结果（`OpenFromPanelTests`、`SettingsWindowTests`） |
+| `SettingsModel.isReservedBySystem`、`failedShortcuts` | `SystemShortcuts`、`GlobalShortcuts.failed` | 固定的结果（`GlobalShortcutsTests`） |
 | `AppNames(systemNames:)` | `AppBundleNames.names(ofBundleID:)`（Core，读已安装应用的本地化名字） | 固定的字典（`AppNamesTests`、`AppAliasesTests`） |
 | `PasteboardWriting` | `GeneralPasteboard`（Core，`PasteboardCodec` 写 `NSPasteboard.general`） | `FakePasteboard`（`PasterTests.swift`） |
 | `PasteKeystrokeSending` | `CGEventPasteKeystroke`（App） | `FakeKeystroke`（`PasterTests.swift`） |
@@ -208,7 +220,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 
 全局快捷键、面板、真正发送 ⌘V 这些行为，单元测试覆盖不到。改动涉及它们时，按下面的步骤运行应用确认。
 
-1. 用 `pgrep -fl PasteMe` 检查用户是否已经开着 PasteMe（用户装在「应用程序」里的发布版也算）。两个实例会争抢全局快捷键（⇧⌘V、⌃⇧⌘V、⌃⇧⌘C），复制的内容两边都会记录，需要先和用户确认能否退出。
+1. 用 `pgrep -fl PasteMe` 检查用户是否已经开着 PasteMe（用户装在「应用程序」里的发布版也算）。两个实例会争抢全局快捷键（默认是 ⇧⌘V、⌃⇧⌘V、⌃⇧⌘C；开发版也可以在设置里改成别的，两边就不冲突了），复制的内容两边都会记录，需要先和用户确认能否退出。
 2. 运行 `scripts/bundle.sh` 打包。打出的是开发版「PasteMe Dev」（ADR 0009），在辅助功能里和用户的 PasteMe 是两项，第一次要单独允许；用 Apple Development 证书签名时，权限在重新打包后仍然有效。SwiftPM 链接出的二进制把 SDK 版本记成和部署目标一样的 14.0，macOS 26 起系统会按旧设计运行它（旧的红绿灯、开关和菜单），所以 `bundle.sh` 链接时用 `-platform_version` 按真实的 SDK 版本声明并检查；`swift run`、`scripts/bench-panel.sh` 构建的二进制仍是旧设计。
 3. 把 home 指向临时目录再启动，这样不会碰到用户真实的历史：
 
@@ -221,7 +233,13 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
    历史数据库在 `$TMPDIR/pasteme-home/Library/Application Support/PasteMe Dev/history.sqlite`，可以用 `sqlite3` 直接查。拿用户历史的副本来测时，也要放进 `PasteMe Dev` 目录。不设 `CFFIXED_USER_HOME` 时，开发版用 `~/Library/Application Support/PasteMe Dev`，同样碰不到用户的历史。
    设置不随 `CFFIXED_USER_HOME` 隔离（cfprefsd 按真实用户读写），但开发版有自己的偏好域 `io.github.skjz.PasteMe.dev`，改不到用户的 PasteMe（`defaults read io.github.skjz.PasteMe.dev` 可以查看）。所有开发版实例共用这一份设置。
 4. 用 `pbcopy` 造测试数据时加上 `LANG=en_US.UTF-8`。不设 `LANG` 时，含中文的内容会被写成空字符串，PasteMe 会直接跳过它。
-5. 用截图检查时，面板可能不出现在截图里（例如 computer-use 只截授权应用的窗口）。这时看操作结果：目标应用里粘贴出的文字，以及数据库里条目的增删和顺序。面板默认不出现在录屏里（`sharingType = .none`），请用户录屏反馈动画问题时，要先在设置窗口的「面板」页打开「共享屏幕时显示面板」，否则录到的只有面板后面的桌面。
+5. 用截图检查时，面板可能不出现在截图里（例如 computer-use 只截授权应用的窗口）。这时看操作结果：目标应用里粘贴出的文字，以及数据库里条目的增删和顺序。
+   要用计算机操作工具点 PasteMe 的窗口时：
+   - 它只列出普通应用，找不到只在菜单栏里的 PasteMe。临时把 `Sources/PasteMe/main.swift` 的激活策略改成 `.regular` 再打包，验证完改回来，不提交。
+   - 先 `defaults write io.github.skjz.PasteMe.dev showDuringScreenSharing -bool true`，截图里才有面板和预览窗口。
+   - 全局快捷键只认真实的按键，要用全屏操作发。开发版可以先在设置里录一个和用户 PasteMe 不冲突的组合（工具不让发带 ⌘C、⌘V 的组合）。
+   - 网页预览里的事件看不清时，起一个本机测试页，把 `wheel`、`click`、`keydown` 用 `fetch` 报回本机服务器，比看截图可靠：工具发出的「向下滚」到网页里是 `deltaY` 为负。
+   - 验证完 `defaults delete io.github.skjz.PasteMe.dev`，改回激活策略。面板默认不出现在录屏里（`sharingType = .none`），请用户录屏反馈动画问题时，要先在设置窗口的「面板」页打开「共享屏幕时显示面板」，否则录到的只有面板后面的桌面。
 6. 验证完在仓库根目录用完整路径退出测试实例，以免误关用户自己的 PasteMe：`pkill -f "$PWD/build/PasteMe.app/Contents/MacOS/PasteMe"`。然后删除临时目录。
 
 ## 发布

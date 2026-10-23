@@ -6,6 +6,14 @@ public enum HashInput: Sendable, Equatable {
     case text(String)
     case files([URL])
 
+    /// 有没有文件夹。文件夹永远算不了哈希值，菜单里不列出这几项，不像文件不在了那样写明原因。
+    public static func includesFolder(_ paths: [String]) -> Bool {
+        paths.contains { path in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
+    }
+
     /// 文件条目算不了哈希值的原因，菜单里写在后面。都能算时为 nil。
     public static func unavailableReason(forFiles paths: [String]) -> String? {
         for path in paths {
@@ -23,14 +31,16 @@ public enum HashInput: Sendable, Equatable {
     }
 }
 
-/// 计算哈希值的算法（#37），结果是小写十六进制。
+/// 计算哈希值的算法（#37、#49），结果是小写十六进制。菜单按这里的顺序列出，按摘要从短到长。
 public enum HashAlgorithm: String, CaseIterable, Sendable {
     case md5
+    case sha1
     case sha256
 
     public var title: String {
         switch self {
         case .md5: "MD5"
+        case .sha1: "SHA-1"
         case .sha256: "SHA-256"
         }
     }
@@ -51,6 +61,7 @@ public enum HashAlgorithm: String, CaseIterable, Sendable {
     public func hex(of data: Data) -> String {
         switch self {
         case .md5: Self.hex(Insecure.MD5.hash(data: data))
+        case .sha1: Self.hex(Insecure.SHA1.hash(data: data))
         case .sha256: Self.hex(SHA256.hash(data: data))
         }
     }
@@ -59,6 +70,7 @@ public enum HashAlgorithm: String, CaseIterable, Sendable {
     public func hex(ofFileAt url: URL) throws -> String {
         switch self {
         case .md5: try Self.hash(fileAt: url, with: Insecure.MD5())
+        case .sha1: try Self.hash(fileAt: url, with: Insecure.SHA1())
         case .sha256: try Self.hash(fileAt: url, with: SHA256())
         }
     }

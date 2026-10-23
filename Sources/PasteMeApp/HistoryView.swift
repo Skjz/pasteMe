@@ -20,7 +20,7 @@ struct HistoryView: View {
     /// 卡片列表左右两端的留白。选中的卡片放大、外面再套一圈光标后，离面板边缘仍有约 20 点。
     private static let sideMargin: CGFloat = 30
     /// 选中的卡片放大到的比例。
-    static let selectedScale: CGFloat = 1.05
+    nonisolated static let selectedScale: CGFloat = 1.05
     /// 卡片和空位都不做淡入淡出：删除时卡片变成同一位置上的空位，颗粒接替了它；空位去掉时本来就看不见，
     /// 而且要立即移除，之后撤销放回同一个条目时才是新视图（`SwiftUIAssumptionTests` 检查）；
     /// 撤销删除时放回的卡片先藏起来（`HistoryModel.hiddenIDs`），等颗粒拼好再显示。
@@ -41,6 +41,13 @@ struct HistoryView: View {
             }
         }
         .coordinateSpace(.named(CardDust.space))
+        // 面板上没有控件的地方（搜索栏那一行的空隙、底部的留白）：点了关掉预览。控件和卡片在它前面，
+        // 点中它们时轮不到这里。卡片那一排的空隙被滚动区域挡着，由 `PanelController` 按卡片的位置判断（`CardListClick`）。
+        .background {
+            Color.clear
+                .contentShape(.rect)
+                .onTapGesture { model.blankClicked() }
+        }
         .overlay {
             DustOverlay(view: dust.view)
                 .allowsHitTesting(false)
@@ -93,6 +100,8 @@ struct HistoryView: View {
                 .lineLimit(1)
                 // 面板窄时先截掉提示，不挤占搜索框和筛选按钮。
                 .layoutPriority(-1)
+                // 只是说明：点在上面和点在空白处一样（`HistoryModel.blankClicked`）。
+                .allowsHitTesting(false)
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
@@ -281,6 +290,14 @@ private struct CardContextMenu: View {
         }
         Button("拷贝") { model.copy(item) }
             .keyboardShortcut("c", modifiers: .command)
+        if let plan = model.openPlan(for: item) {
+            Button(plan.title + (plan.unavailableReason.map { "（\($0)）" } ?? "")) { model.open(item) }
+                .keyboardShortcut("o", modifiers: .command)
+                .disabled(plan.unavailableReason != nil)
+            if plan.unavailableReason == nil, item.kind == .file {
+                Menu("打开方式") { OpenWithMenuItems(item: item, model: model) }
+            }
+        }
         Divider()
         Button("预览") { model.preview(item) }
         if item.kind == .text || item.kind == .link {
@@ -291,7 +308,7 @@ private struct CardContextMenu: View {
         if item.kind == .text || item.kind == .link {
             Menu("转换") { ConversionMenuItems(item: item, model: model) }
         }
-        if item.kind == .file {
+        if model.offersHash(for: item) {
             let reason = model.hashUnavailableReason(for: item)
             ForEach(HashAlgorithm.allCases, id: \.self) { algorithm in
                 Button("计算 \(algorithm.title)" + (reason.map { "（\($0)）" } ?? "")) {
@@ -343,6 +360,28 @@ private struct CardTitleField: View {
 
 /// 「转换」子菜单的内容（#27）。单独成一个视图：列出转换要读出完整内容，只在菜单打开时做。
 /// ⌘T 弹出的是同样内容的 `NSMenu`（`PanelController.showConversionMenu`）。
+/// 右键菜单「打开方式」（#51）：装了的应用都列出来，选了就用它打开这个条目里的文件和文件夹，不改设置。
+/// 系统默认的方式、编辑器、终端之间有分隔线。单独做成视图，子菜单打开时才查装了哪些应用。
+private struct OpenWithMenuItems: View {
+    let item: ClipItem
+    let model: HistoryModel
+
+    var body: some View {
+        let apps = model.openApps(for: item)
+        let onlyFolders = item.filePaths.allSatisfy { model.pathKind($0) == .folder }
+        ForEach(Array(apps.enumerated()), id: \.element) { index, app in
+            if index > 0, Self.group(of: apps[index - 1]) != Self.group(of: app) {
+                Divider()
+            }
+            Button(app.title(forFolders: onlyFolders)) { model.open(item, using: app) }
+        }
+    }
+
+    private static func group(of app: OpenApp) -> Int {
+        app == .systemDefault ? 0 : app.isTerminal ? 2 : 1
+    }
+}
+
 private struct ConversionMenuItems: View {
     let item: ClipItem
     let model: HistoryModel

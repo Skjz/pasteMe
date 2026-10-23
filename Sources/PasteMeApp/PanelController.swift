@@ -33,7 +33,47 @@ final class ClipPanel: NSPanel {
     var allowsKey = true
 
     override var canBecomeKey: Bool { allowsKey }
-    override var canBecomeMain: Bool { false }
+    // 预览窗口是 key 时面板当 main，玻璃才保持当前窗口的样子；自己是 key 时不当，main 留给预览（`WindowActivity`）。
+    override var canBecomeMain: Bool { allowsKey && !isKeyWindow }
+
+    var onKeyChange: () -> Void = {}
+
+    override func makeKey() {
+        super.makeKey()
+        onKeyChange()
+    }
+
+    override func makeKeyAndOrderFront(_ sender: Any?) {
+        super.makeKeyAndOrderFront(sender)
+        onKeyChange()
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        // 预览是 key 时点面板上的卡片，第一下就要选中它，不能只是让面板成为 key。
+        takeKeyForFirstClick(event)
+        super.sendEvent(event)
+        if NSWindow.clickTypes.contains(event.type) { onKeyChange() }
+    }
+}
+
+extension ClipPanel: KeepsCompanionActive {}
+
+/// 面板上的一下点击是不是落在卡片列表的空白处：卡片那一排的高度以内（上下各多 `margin`），又不在任何一张卡片上，
+/// 比如卡片之间的空隙、最后一张卡片右边。卡片的位置是 `CardDust` 记下的布局（放大之前）；只有选中的那张放大了，
+/// 它按放大后的大小算，其他卡片按原大小，卡片之间的空隙才有 18 点宽。
+enum CardListClick {
+    static let margin: CGFloat = 10
+
+    static func isBlank(_ point: CGPoint, cardFrames: [CGRect], selected: CGRect?) -> Bool {
+        guard let top = cardFrames.map(\.minY).min(), let bottom = cardFrames.map(\.maxY).max(),
+              point.y >= top - margin, point.y <= bottom + margin
+        else { return false }
+        if let selected {
+            let grow = (HistoryView.selectedScale - 1) / 2
+            if selected.insetBy(dx: -selected.width * grow, dy: -selected.height * grow).contains(point) { return false }
+        }
+        return !cardFrames.contains { $0.contains(point) }
+    }
 }
 
 /// 管理历史面板的显示、隐藏、位置、动画、键盘操作和拖出卡片，以及面板上方的预览窗口和 Pinboard 编辑窗口。
@@ -45,7 +85,7 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
     private let panel = ClipPanel()
     private let model: HistoryModel
     private let dust = CardDust()
-    private let hosting: NSHostingView<HistoryView>
+    private let hosting: FirstClickHostingView<HistoryView>
     private let preview: PreviewController
     private let pinboardEditor: PinboardEditorController
     private var keyMonitor: Any?
@@ -77,7 +117,7 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
 
     init(model: HistoryModel) {
         self.model = model
-        hosting = NSHostingView(rootView: HistoryView(model: model, dust: dust))
+        hosting = FirstClickHostingView(rootView: HistoryView(model: model, dust: dust))
         preview = PreviewController(model: model)
         pinboardEditor = PinboardEditorController(model: model)
         super.init()
@@ -91,6 +131,7 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             self.preview.follow(self.model.selectedItem)
         }
         model.onWillEditTitle = { [weak self] in self?.preview.close() }
+        model.onBlankClick = { [weak self] in self?.preview.close() }
         preview.onResignKey = { [weak self] in self?.keyMovedAway() }
         pinboardEditor.onResignKey = { [weak self] in
             // 点回面板时编辑窗口关掉，当作取消。
@@ -98,9 +139,20 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             self?.keyMovedAway()
         }
         preview.onClose = { [weak self] in self?.takeKeyBack() }
+        // 点预览上的按钮（换文件、缩放）不需要键盘：点完键盘回到面板，空格和 ← → 照常作用于面板。
+        preview.window.onClickWithoutKeyboard = { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.panel.makeKey()
+        }
         pinboardEditor.onClose = { [weak self] in self?.takeKeyBack() }
         panel.contentView = WindowBackground.make(cornerRadius: 16, material: .popover, content: hosting)
         panel.delegate = self
+        WindowActivity.link(panel: panel, auxiliaries: [preview.window, pinboardEditor.window])
+    }
+
+    /// 面板和上方的附属窗口都保持当前窗口的样子：谁是 key，另一个就是 main（见 `WindowActivity`）。
+    private func keepWindowsActive() {
+        WindowActivity.keepActive(panel: panel, auxiliaries: [preview.window, pinboardEditor.window])
     }
 
     /// 应用启动后调用一次，提前做好第一次呼出时才会做的准备工作。
@@ -246,12 +298,15 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
         guard isVisible else { return }
         pinboardEditor.close()
         preview.open(request, above: panel.frame)
+        // 只是看的预览不取得 key：让它当 main，一出来就是当前窗口的样子，点它时玻璃不变。
+        keepWindowsActive()
     }
 
     private func openPinboardEditor(_ request: PinboardEditRequest) {
         guard isVisible else { return }
         preview.close()
         pinboardEditor.open(request, above: panel.frame)
+        keepWindowsActive()
     }
 
     // MARK: - 拖出卡片
@@ -322,9 +377,13 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         // 本地事件监视器总是在主线程上回调。
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged, .leftMouseDown]) { [weak self] event in
             let handled = MainActor.assumeIsolated { () -> Bool in
                 guard let self else { return false }
+                if event.type == .leftMouseDown {
+                    self.mouseDown(event)
+                    return false
+                }
                 if event.type == .flagsChanged {
                     // 预览或编辑窗口在前面时，⌘数字 不是粘贴面板上的卡片，不显示提示。
                     self.shortcutKeysChanged(event.window === self.panel ? event.modifierFlags : [])
@@ -335,6 +394,18 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
                 return false
             }
             return handled ? nil : event
+        }
+    }
+
+    /// 预览开着时点卡片列表的空白处，关掉预览，和按 esc 一样。点卡片是换预览的内容，点搜索框、按钮照常。
+    /// 这一下点击照样交给面板。
+    private func mouseDown(_ event: NSEvent) {
+        guard event.window === panel, preview.isVisible else { return }
+        let point = dust.view.convert(event.locationInWindow, from: nil)
+        let cards = model.cards.filter { !$0.isGap }.compactMap { dust.frames[$0.item.id] }
+        let selected = model.selectedID.flatMap { dust.frames[$0] }
+        if CardListClick.isBlank(point, cardFrames: cards, selected: selected) {
+            preview.close()
         }
     }
 
@@ -371,7 +442,8 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             suggestionsShown: model.showsSuggestions,
             // 编辑搜索框时第一响应者是它的字段编辑器。
             composing: (panel.firstResponder as? NSTextView)?.hasMarkedText() == true,
-            previewShown: preview.isVisible
+            previewShown: preview.isVisible,
+            previewHasSeveralFiles: preview.isVisible && preview.state.fileURLs.count > 1
         )
 
         switch PanelKeymap.action(for: key, in: context) {
@@ -444,6 +516,10 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             panel.makeFirstResponder(nil)
         case .copySelected:
             model.copy()
+        case .openSelected:
+            model.open()
+        case .previewFile(let offset):
+            preview.showFile(by: offset)
         }
     }
 
