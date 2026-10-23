@@ -717,6 +717,12 @@ final class HistoryModel {
 
     // MARK: - 哈希值（#37）
 
+    /// 右键菜单里列不列出「计算 MD5」这几项：文件条目才有；有文件夹时不列出，文件夹永远算不了。
+    /// 文件不在了时照样列出，后面写明原因（`hashUnavailableReason`）：用户以为能算，要知道为什么不行。
+    func offersHash(for item: ClipItem) -> Bool {
+        item.kind == .file && !HashInput.includesFolder(item.filePaths)
+    }
+
     /// 文件条目算不了哈希值的原因（文件不在了、是文件夹），菜单里写在后面。能算时为 nil。
     func hashUnavailableReason(for item: ClipItem) -> String? {
         item.kind == .file ? HashInput.unavailableReason(forFiles: item.filePaths) : nil

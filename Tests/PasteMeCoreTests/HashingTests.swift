@@ -64,6 +64,8 @@ import Testing
         #expect(HashInput.unavailableReason(forFiles: [present.path]) == nil)
         #expect(HashInput.unavailableReason(forFiles: [present.path, directory.appendingPathComponent("gone").path]) == "文件已经不在了")
         #expect(HashInput.unavailableReason(forFiles: [directory.path]) == "不能计算文件夹")
+        #expect(HashInput.includesFolder([present.path, directory.path]))
+        #expect(!HashInput.includesFolder([present.path, directory.appendingPathComponent("gone").path]))
         #expect(throws: (any Error).self) {
             try HashAlgorithm.md5.digest(of: .files([self.directory.appendingPathComponent("gone")]))
         }

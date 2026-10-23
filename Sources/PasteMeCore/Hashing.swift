@@ -6,6 +6,14 @@ public enum HashInput: Sendable, Equatable {
     case text(String)
     case files([URL])
 
+    /// 有没有文件夹。文件夹永远算不了哈希值，菜单里不列出这几项，不像文件不在了那样写明原因。
+    public static func includesFolder(_ paths: [String]) -> Bool {
+        paths.contains { path in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
+    }
+
     /// 文件条目算不了哈希值的原因，菜单里写在后面。都能算时为 nil。
     public static func unavailableReason(forFiles paths: [String]) -> String? {
         for path in paths {

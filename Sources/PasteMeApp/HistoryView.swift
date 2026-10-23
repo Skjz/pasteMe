@@ -299,7 +299,7 @@ private struct CardContextMenu: View {
         if item.kind == .text || item.kind == .link {
             Menu("转换") { ConversionMenuItems(item: item, model: model) }
         }
-        if item.kind == .file {
+        if model.offersHash(for: item) {
             let reason = model.hashUnavailableReason(for: item)
             ForEach(HashAlgorithm.allCases, id: \.self) { algorithm in
                 Button("计算 \(algorithm.title)" + (reason.map { "（\($0)）" } ?? "")) {
