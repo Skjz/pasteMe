@@ -1,0 +1,122 @@
+<!doctype html>
+<!-- PROTOTYPE：文件卡片设计方向对比页，FileCardPrototype 测试把渲染好的卡片填进 DATA。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文件卡片原型</title>
+<style>
+  :root {
+    --bg: linear-gradient(160deg, #eef0f4, #dde2ea);
+    --panel: rgba(255, 255, 255, 0.45);
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --bar: rgba(30, 30, 32, 0.92);
+    --bar-text: #f5f5f7;
+  }
+  :root[data-theme="dark"] {
+    --bg: linear-gradient(160deg, #2a2d33, #17181c);
+    --panel: rgba(255, 255, 255, 0.06);
+    --text: #f5f5f7;
+    --muted: #a1a1a6;
+    --bar: rgba(245, 245, 247, 0.94);
+    --bar-text: #1d1d1f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); background-attachment: fixed; color: var(--text);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; padding: 28px 16px 110px;
+  }
+  header { max-width: 1120px; margin: 0 auto 18px; }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
+  header p { margin: 0; color: var(--muted); max-width: 720px; }
+  .strip {
+    max-width: 1120px; margin: 0 auto; background: var(--panel); border-radius: 26px; padding: 14px;
+    display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;
+    box-shadow: inset 0 0 0 0.5px rgba(127, 127, 127, 0.25);
+  }
+  figure { margin: 0; text-align: center; }
+  figure img { width: 250px; height: 260px; display: block; }
+  figcaption { color: var(--muted); font-size: 11px; margin-top: -2px; }
+  table { border-collapse: separate; border-spacing: 4px 0; margin: 0 auto; }
+  th { font-weight: 600; font-size: 12px; padding: 4px 0 2px; }
+  td.case { color: var(--muted); font-size: 11px; writing-mode: vertical-rl; text-align: center; }
+  .wrap { overflow-x: auto; max-width: 100%; }
+  .bar {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px;
+    background: var(--bar); color: var(--bar-text); border-radius: 999px; padding: 6px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+    font-size: 13px; white-space: nowrap;
+  }
+  .bar button {
+    border: 0; background: transparent; color: inherit; font: inherit; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  }
+  .bar button:hover { background: rgba(127, 127, 127, 0.2); }
+  .bar .label { min-width: 96px; text-align: center; font-weight: 600; }
+  .bar .sep { width: 1px; height: 18px; background: currentColor; opacity: 0.2; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+  <p id="note"></p>
+</header>
+<main id="main"></main>
+<div class="bar">
+  <button id="prev" aria-label="上一个方向">‹</button>
+  <span class="label" id="label"></span>
+  <button id="next" aria-label="下一个方向">›</button>
+  <span class="sep"></span>
+  <button id="mode"></button>
+  <button id="theme"></button>
+</div>
+<script>
+const DATA = /*DATA*/null;
+const params = new URLSearchParams(location.search);
+let variant = Math.max(0, DATA.variants.findIndex(v => v.key === params.get("variant")));
+let theme = params.get("theme") === "dark" ? "dark" : "light";
+let mode = params.get("mode") === "compare" ? "compare" : "single";
+
+function src(v, i) { return "data:image/png;base64," + DATA.images[`${v}-${i}-${theme}`]; }
+
+function render() {
+  document.documentElement.dataset.theme = theme;
+  const v = DATA.variants[variant];
+  const main = document.getElementById("main");
+  if (mode === "single") {
+    document.getElementById("title").textContent = v.title;
+    document.getElementById("note").textContent = v.note;
+    main.innerHTML = `<div class="strip">${DATA.names.map((name, i) =>
+      `<figure><img src="${src(v.key, i)}" alt="${name}"><figcaption>${name}</figcaption></figure>`).join("")}</div>`;
+  } else {
+    document.getElementById("title").textContent = "四种方向并排";
+    document.getElementById("note").textContent = "每行是一种卡片，每列是一个方向。";
+    const head = `<tr><th></th>${DATA.variants.map(x => `<th>${x.title}</th>`).join("")}</tr>`;
+    const rows = DATA.names.map((name, i) => `<tr><td class="case">${name}</td>${DATA.variants.map(x =>
+      `<td><img src="${src(x.key, i)}" alt="${x.title} ${name}" width="250" height="260"></td>`).join("")}</tr>`).join("");
+    main.innerHTML = `<div class="strip wrap"><table>${head}${rows}</table></div>`;
+  }
+  document.getElementById("label").textContent = mode === "single" ? v.title : "并排";
+  document.getElementById("mode").textContent = mode === "single" ? "并排对比" : "逐个看";
+  document.getElementById("theme").textContent = theme === "dark" ? "浅色" : "深色";
+  const next = new URLSearchParams({ variant: v.key, theme, mode });
+  history.replaceState(null, "", "?" + next);
+}
+
+function step(delta) {
+  mode = "single";
+  variant = (variant + delta + DATA.variants.length) % DATA.variants.length;
+  render();
+}
+document.getElementById("prev").onclick = () => step(-1);
+document.getElementById("next").onclick = () => step(1);
+document.getElementById("mode").onclick = () => { mode = mode === "single" ? "compare" : "single"; render(); };
+document.getElementById("theme").onclick = () => { theme = theme === "dark" ? "light" : "dark"; render(); };
+addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea, [contenteditable]")) return;
+  if (e.key === "ArrowLeft") step(-1);
+  if (e.key === "ArrowRight") step(1);
+});
+render();
+</script>
+</body>
+</html>

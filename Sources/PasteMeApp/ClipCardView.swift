@@ -110,6 +110,9 @@ struct ClipCardView: View {
             }
         case .file:
             let paths = item.filePaths
+            if let prototype = FileCardPrototypeHook.content {
+                prototype(item)
+            } else {
             VStack(spacing: 6) {
                 if let data = item.thumbnail, let image = NSImage(data: data) {
                     // 图片文件：显示复制时生成的缩略图，只留一行文件名。
@@ -134,6 +137,7 @@ struct ClipCardView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 
@@ -209,9 +213,16 @@ struct ClipCardView: View {
         case .text: "\(item.textLength) 个字符"
         case .link: item.sourceName ?? ""
         case .image: item.sourceName ?? ""
-        case .file: item.filePaths.count == 1 ? "1 个文件" : "\(item.filePaths.count) 个文件"
+        case .file: FileCardPrototypeHook.detail?(item) ?? (item.filePaths.count == 1 ? "1 个文件" : "\(item.filePaths.count) 个文件")
         }
     }
+}
+
+/// PROTOTYPE（文件卡片重新设计）：渲染原型时替换文件卡片的内容区和底部文字，见 `FileCardPrototype` 测试。
+@MainActor
+enum FileCardPrototypeHook {
+    static var content: (@MainActor (ClipItem) -> AnyView)?
+    static var detail: (@MainActor (ClipItem) -> String)?
 }
 
 /// 卡片右下角的 ⌘n（#39）。按住 ⌘ 时从卡片下边缘外面滑进来，从左到右依次出现；松开时滑回去。
