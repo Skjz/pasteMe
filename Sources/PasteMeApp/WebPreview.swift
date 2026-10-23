@@ -186,7 +186,7 @@ extension WebPreviewLoader: WKNavigationDelegate, WKUIDelegate {
     }
 }
 
-/// 预览里显示网页的地方：网页本身，加载时上面一条进度，像一次性的链接、加载失败时在中间说明。
+/// 预览里显示网页的地方：网页铺满窗口，加载时顶边一条细的进度线，像一次性的链接、加载失败时在中间说明。
 struct WebPreviewPane: View {
     let loader: WebPreviewLoader
     let address: String
@@ -207,9 +207,14 @@ struct WebPreviewPane: View {
                     }
                 }
             case .loading:
-                ProgressView(value: max(loader.progress, 0.05))
-                    .progressViewStyle(.linear)
-                    .controlSize(.small)
+                // 贴着窗口顶边的一条细线，不占网页的地方。
+                GeometryReader { geometry in
+                    Rectangle()
+                        .fill(Color.accentColor)
+                        .frame(width: geometry.size.width * max(loader.progress, 0.05), height: 2)
+                        .animation(.easeOut(duration: 0.2), value: loader.progress)
+                }
+                .frame(height: 2)
             case .idle, .waiting, .loaded:
                 EmptyView()
             }

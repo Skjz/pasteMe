@@ -3,6 +3,7 @@ import Observation
 import PasteMeCore
 import Quartz
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 预览窗口正在显示的内容和没保存的修改（#10）。
 @Observable
@@ -27,6 +28,22 @@ final class PreviewState {
 
     /// 按 ⌘E、右键「编辑…」打开的：链接这时显示网址编辑器，不显示网页。
     private(set) var editing = false
+    /// 文件条目里正在预览第几个文件。换条目时回到第一个还在的文件。
+    private(set) var fileIndex = 0
+
+    var fileURLs: [URL] { content?.fileURLs ?? [] }
+
+    /// 正在预览的文件。不是文件条目时为 nil。
+    var currentFileURL: URL? {
+        fileURLs.indices.contains(fileIndex) ? fileURLs[fileIndex] : nil
+    }
+
+    /// 换成第 `index` 个文件，超出两头时从另一头接着数。
+    func showFile(at index: Int) {
+        let count = fileURLs.count
+        guard count > 0 else { return }
+        fileIndex = (index % count + count) % count
+    }
 
     var isNewText: Bool { item == nil }
     /// 文本和新建的文本可以改正文；链接只在编辑时可以改，平时显示网页（#52）。
@@ -48,6 +65,7 @@ final class PreviewState {
         title = item?.title ?? ""
         originalTitle = title
         bodyEdited = false
+        fileIndex = fileURLs.firstIndex { FileManager.default.fileExists(atPath: $0.path) } ?? 0
         revision += 1
         zoomCommand = .fit
         zoomRevision += 1
@@ -94,8 +112,8 @@ final class PreviewController: NSObject, NSWindowDelegate {
     /// 预览关掉了。键盘焦点在预览上时，要还给面板。
     var onClose: () -> Void = {}
 
-    static let maxSize = CGSize(width: 760, height: 560)
-    static let minHeight: CGFloat = 260
+    /// 上次放预览时面板的位置。换内容时按新内容重新定大小。
+    private var panelFrame: NSRect?
 
     init(model: HistoryModel) {
         self.model = model
@@ -103,7 +121,11 @@ final class PreviewController: NSObject, NSWindowDelegate {
         window.delegate = self
         // 点图片、按钮时不抢键盘焦点；点进正文、标题时才成为 key。
         window.becomesKeyOnlyIfNeeded = true
-        window.setContent(PreviewView(state: state, model: model, web: web, close: { [weak self] in self?.close() }))
+        window.setContent(PreviewView(
+            state: state, model: model, web: web,
+            close: { [weak self] in self?.close() },
+            showFile: { [weak self] index in self?.showFile(at: index) }
+        ))
     }
 
     var isVisible: Bool { window.isVisible }
@@ -153,6 +175,19 @@ final class PreviewController: NSObject, NSWindowDelegate {
         saveEdits()
         state.load(item, content: model.content(of: item.id))
         showWebPage(after: WebPreviewLoader.followDelay)
+        if let panelFrame { place(above: panelFrame) }
+    }
+
+    /// 几个文件的条目：换成预览第 `index` 个，窗口按这个文件重新定大小。
+    func showFile(at index: Int) {
+        guard isVisible, state.fileURLs.count > 1 else { return }
+        state.showFile(at: index)
+        if let panelFrame { place(above: panelFrame) }
+    }
+
+    /// 上一个、下一个文件（⌥← ⌥→）。
+    func showFile(by offset: Int) {
+        showFile(at: state.fileIndex + offset)
     }
 
     /// 预览的是链接时加载它的网页，否则停掉上一个网页。
@@ -196,16 +231,47 @@ final class PreviewController: NSObject, NSWindowDelegate {
             close()
             return true
         }
+        // 点进 Quick Look 以后按键在预览上：⌥← ⌥→ 照样换文件。
+        let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if flags == .option, state.fileURLs.count > 1, event.keyCode == 123 || event.keyCode == 124 {
+            showFile(by: event.keyCode == 123 ? -1 : 1)
+            return true
+        }
         return false
     }
 
+    /// 放在面板上方正中，大小按内容（`PreviewLayout`）。
     private func place(above panelFrame: NSRect) {
+        self.panelFrame = panelFrame
         let screen = NSScreen.screens.first { $0.frame.intersects(panelFrame) } ?? NSScreen.main
-        let top = screen?.visibleFrame.maxY ?? panelFrame.maxY + Self.maxSize.height
-        let width = min(Self.maxSize.width, panelFrame.width - 40)
-        let height = max(Self.minHeight, min(Self.maxSize.height, top - panelFrame.maxY - 24))
-        let frame = NSRect(x: panelFrame.midX - width / 2, y: panelFrame.maxY + 12, width: width, height: height)
+        guard let visible = screen?.visibleFrame else { return }
+        let available = PreviewLayout.available(above: panelFrame, in: visible)
+        let size = PreviewLayout.size(for: layoutContent(), available: available)
+        let frame = NSRect(x: panelFrame.midX - size.width / 2, y: panelFrame.maxY + 12, width: size.width, height: size.height)
         window.setFrame(frame, display: true)
+    }
+
+    private func layoutContent() -> PreviewLayout.Content {
+        switch state.item?.kind {
+        case .link where state.showsWebPage:
+            return .page
+        case .file:
+            guard let url = state.currentFileURL, FileManager.default.fileExists(atPath: url.path) else { return .text(height: 80) }
+            return PreviewLayout.content(forFileAt: url)
+        case .image:
+            let extra = (state.item?.recognizedText ?? "").isEmpty ? 0 : PreviewLayout.recognizedTextHeight
+            return (state.content?.image).flatMap(NSImage.init(data:)).map { .fitted($0.size, extra: extra) } ?? .page
+        case nil where state.isNewText:
+            return .text(height: PreviewLayout.newTextHeight)
+        default:
+            let text: NSAttributedString
+            if state.isRichText, let rtf = state.content?.rtf, let rich = NSAttributedString(rtf: rtf, documentAttributes: nil) {
+                text = rich
+            } else {
+                text = NSAttributedString(string: state.content?.text ?? "", attributes: [.font: PreviewLayout.textFont])
+            }
+            return .text(height: PreviewLayout.height(of: text))
+        }
     }
 
     nonisolated func windowDidResignKey(_ notification: Notification) {
@@ -213,58 +279,256 @@ final class PreviewController: NSObject, NSWindowDelegate {
     }
 }
 
+/// 预览窗口的大小：网页和放不进别的规则的文件用面板上方能用的整块地方；图片按原来的比例放进去，不放大；
+/// 文本按内容的高度，宽度适合阅读。都加上顶上那条窄栏的高度。
+@MainActor
+enum PreviewLayout {
+    enum Content: Equatable {
+        case page
+        /// 内容想要的大小（点），按比例缩进能用的地方，不放大。`extra` 是内容下面另外要的高度（图片里识别出的文字）。
+        case fitted(CGSize, extra: CGFloat)
+        /// 正文排好版的高度。
+        case text(height: CGFloat)
+    }
+
+    static let minSize = CGSize(width: 360, height: 220)
+    static let barHeight: CGFloat = 40
+    static let textWidth: CGFloat = 720
+    static let textFont = NSFont.systemFont(ofSize: 13)
+    static let textInset = NSSize(width: 16, height: 10)
+    static let newTextHeight: CGFloat = 220
+    /// 图片下面识别出的文字那一栏最高多高。
+    static let recognizedTextHeight: CGFloat = 90
+    /// 文件夹、应用这类文件包：Quick Look 只显示一个大图标和几行信息。
+    static let folderSize = CGSize(width: 560, height: 360)
+    /// 超过这么长的文字不再量高度，直接用能用的最大高度。
+    static let measuredLength = 20_000
+    /// 不超过这么大的文本文件才读出来量高度。
+    static let measuredFileSize = 256 * 1024
+    /// Quick Look 显示文本文件用的字体和边距，量高度时照着估。
+    static let codeFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    static let codeInset = NSSize(width: 24, height: 16)
+
+    /// 面板上方能用的地方：宽度最多是屏幕的 80%，高度到屏幕顶端，留出 24 点。
+    static func available(above panelFrame: NSRect, in visibleFrame: NSRect) -> CGSize {
+        CGSize(width: min(panelFrame.width - 40, visibleFrame.width * 0.8), height: visibleFrame.maxY - panelFrame.maxY - 24)
+    }
+
+    static func size(for content: Content, available: CGSize) -> CGSize {
+        let available = CGSize(width: max(available.width, minSize.width), height: max(available.height, minSize.height))
+        switch content {
+        case .page:
+            return available
+        case .fitted(let size, let extra):
+            let room = CGSize(width: available.width, height: max(1, available.height - barHeight - extra))
+            guard size.width > 0, size.height > 0 else { return available }
+            let scale = min(1, room.width / size.width, room.height / size.height)
+            return CGSize(
+                width: max(minSize.width, (size.width * scale).rounded()),
+                height: max(minSize.height, (size.height * scale).rounded() + barHeight + extra)
+            )
+        case .text(let height):
+            let wanted = (height + barHeight).rounded(.up)
+            return CGSize(width: min(textWidth, available.width), height: min(available.height, max(minSize.height, wanted)))
+        }
+    }
+
+    /// 正文在 `textWidth` 宽的编辑器里排好版的高度，包括上下的边距。
+    static func height(of text: NSAttributedString, inset: NSSize = textInset) -> CGFloat {
+        guard text.length <= measuredLength else { return .greatestFiniteMagnitude }
+        // NSTextView 的文字左右各有 5 点的 lineFragmentPadding。
+        let width = textWidth - inset.width * 2 - 10
+        let rect = text.boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        return rect.height + inset.height * 2
+    }
+
+    /// 文件按类型：图片按图片的大小，文本和代码按行数，文件夹和应用是一个小窗口，其余（PDF、视频……）用整块地方。
+    static func content(forFileAt url: URL) -> Content {
+        let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey, .isDirectoryKey])
+        if values?.isDirectory == true {
+            return .fitted(folderSize, extra: 0)
+        }
+        guard let type = values?.contentType else { return .page }
+        if type.conforms(to: .image),
+           let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+           let height = properties[kCGImagePropertyPixelHeight] as? CGFloat {
+            return .fitted(CGSize(width: width, height: height), extra: 0)
+        }
+        if type.conforms(to: .text), (values?.fileSize ?? .max) <= measuredFileSize,
+           let text = try? String(contentsOf: url, encoding: .utf8) {
+            let measured = height(of: NSAttributedString(string: text, attributes: [.font: codeFont]), inset: codeInset)
+            return .text(height: measured)
+        }
+        return .page
+    }
+}
+
 // MARK: - 视图
 
+/// 预览窗口：顶上一条窄栏，下面是内容，左、右、下三边铺满。窄栏和窗口是同一层玻璃，没有分隔线，
+/// 左边是标题（没有标题时是网站、文件名这类说明，点进去就能起标题），右边是这种内容的几个按钮和关闭，
+/// 平时颜色很淡，鼠标进来才深一点。控件不叠在内容上，免得挡住网页、代码开头那几行。
 private struct PreviewView: View {
     let state: PreviewState
     let model: HistoryModel
     let web: WebPreviewLoader
     let close: () -> Void
+    /// 几个文件的条目换成预览第几个文件。
+    let showFile: (Int) -> Void
+
+    @State private var hovering = false
+    @FocusState private var titleFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            bar
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
-            footer
+            if state.item?.kind == .image, let text = state.item?.recognizedText, !text.isEmpty {
+                RecognizedTextBar(text: text, model: model)
+            }
         }
+        .onHover { hovering = $0 }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
+    // MARK: 窄栏
+
+    private var bar: some View {
+        HStack(spacing: 8) {
+            icon
+            TextField(label, text: Bindable(state).title)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .focused($titleFocused)
+                .help(state.isNewText ? "起个标题" : "点这里起标题、改标题")
+            Spacer(minLength: 8)
+            if let hint {
+                Text(hint)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            if state.fileURLs.count > 1 {
+                fileSwitcher
+            }
+            actions
+                .foregroundStyle(hovering || titleFocused ? .secondary : .tertiary)
+                .animation(.easeOut(duration: 0.15), value: hovering)
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .frame(height: PreviewLayout.barHeight)
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        if state.item?.kind == .link, let data = state.item?.linkIcon, let image = NSImage(data: data) {
+            Image(nsImage: image)
+                .resizable()
+                .frame(width: 16, height: 16)
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+        } else {
             Image(systemName: state.item?.kind.symbolName ?? ClipKind.text.symbolName)
                 .foregroundStyle((state.item?.kind ?? .text).color)
-                .frame(width: 18)
-            TextField(state.isNewText ? "新建文本，可以起个标题" : "添加标题", text: Bindable(state).title)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15, weight: .semibold))
-            Spacer(minLength: 8)
-            Text(details)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Button(action: close) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("关闭预览（esc）")
         }
-        .padding(.horizontal, 16)
-        .frame(height: 44)
     }
 
-    /// 类型、长度、来源和时间。
-    private var details: String {
-        guard let item = state.item else { return "PasteMe" }
-        var parts = [item.typeTitle]
-        if item.kind == .text { parts.append("\(item.textLength) 个字符") }
-        if let source = item.sourceName { parts.append("来自\(source)") }
-        parts.append(item.createdAt.formatted(.relative(presentation: .named)))
-        return parts.joined(separator: " · ")
+    /// 没有标题时标题框里的说明：网站、文件名或文本的长度。来源应用和时间卡片上已经有了，这里不再写。
+    private var label: String {
+        guard let item = state.item else { return "新建文本，可以起个标题" }
+        switch item.kind {
+        case .link:
+            return (state.content?.text).flatMap { URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines))?.host() } ?? item.typeTitle
+        case .file:
+            // 几个文件时，正在看哪一个写在右边的切换器上。
+            let urls = state.fileURLs
+            return urls.count > 1 ? "\(urls.count) 个文件" : urls.first?.lastPathComponent ?? item.typeTitle
+        case .text:
+            return "\(item.typeTitle) · \(item.textLength) 个字符"
+        case .image:
+            return item.typeTitle
+        }
     }
+
+    /// 几个文件时换着看：两边的箭头是上一个、下一个（⌥← ⌥→），点文件名列出所有文件。
+    private var fileSwitcher: some View {
+        let urls = state.fileURLs
+        return HStack(spacing: 0) {
+            action("chevron.left", "上一个文件（⌥←）") { showFile(state.fileIndex - 1) }
+            Menu {
+                ForEach(Array(urls.enumerated()), id: \.offset) { index, url in
+                    Toggle(url.lastPathComponent, isOn: Binding(get: { index == state.fileIndex }, set: { _ in showFile(index) }))
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(state.currentFileURL?.lastPathComponent ?? "")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text("\(state.fileIndex + 1) / \(urls.count)")
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                }
+                .font(.system(size: 12))
+                .frame(maxWidth: 240)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("选择要预览的文件")
+            action("chevron.right", "下一个文件（⌥→）") { showFile(state.fileIndex + 1) }
+        }
+        .foregroundStyle(hovering || titleFocused ? .secondary : .tertiary)
+    }
+
+    /// 新建和编辑文本时的提示，别的时候没有。
+    private var hint: String? {
+        if state.isNewText { return "写好后按 esc，存进历史" }
+        if state.editing { return "关闭时保存" }
+        return nil
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        HStack(spacing: 0) {
+            switch state.item?.kind {
+            case .link where state.showsWebPage:
+                if let url = URL(string: (state.content?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    action("safari", "在浏览器中打开") { NSWorkspace.shared.open(url) }
+                }
+            case .image:
+                action("minus.magnifyingglass", "缩小") { state.zoom(.zoomOut) }
+                action("plus.magnifyingglass", "放大") { state.zoom(.zoomIn) }
+                action("arrow.down.right.and.arrow.up.left", "适合窗口") { state.zoom(.fit) }
+                action("1.magnifyingglass", "实际大小") { state.zoom(.actualSize) }
+            case .file:
+                if let item = state.item {
+                    action("arrow.up.forward.app", "打开（⌘O）") { model.open(item) }
+                }
+            default:
+                EmptyView()
+            }
+            action("xmark", "关闭（空格 / esc）", close)
+        }
+    }
+
+    private func action(_ symbol: String, _ help: String, _ perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 28, height: 28)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+
+    // MARK: 内容
 
     @ViewBuilder
     private var content: some View {
@@ -272,45 +536,22 @@ private struct PreviewView: View {
         case nil, .text:
             PreviewTextEditor(state: state)
         case .link:
-            VStack(spacing: 0) {
-                if let item = state.item {
-                    LinkSummary(item: item)
-                    Divider()
-                }
-                if state.showsWebPage {
-                    WebPreviewPane(loader: web, address: state.content?.text ?? "")
-                } else {
-                    PreviewTextEditor(state: state)
-                }
+            if state.showsWebPage {
+                WebPreviewPane(loader: web, address: state.content?.text ?? "")
+            } else {
+                PreviewTextEditor(state: state)
             }
         case .image:
             if let data = state.content?.image, let image = NSImage(data: data) {
-                VStack(spacing: 0) {
-                    ZoomableImage(image: image, state: state)
-                    if let text = state.item?.recognizedText, !text.isEmpty {
-                        Divider()
-                        RecognizedTextBar(text: text, model: model)
-                    }
-                }
+                ZoomableImage(image: image, state: state)
             } else {
                 missing("图片读不出来")
             }
         case .file:
-            let urls = state.content?.fileURLs ?? []
-            if let url = urls.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
-                VStack(spacing: 0) {
-                    QuickLookView(url: url)
-                    if urls.count > 1 {
-                        Divider()
-                        Text(urls.map(\.lastPathComponent).joined(separator: "、"))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .padding(8)
-                    }
-                }
+            if let url = state.currentFileURL, FileManager.default.fileExists(atPath: url.path) {
+                QuickLookView(url: url)
             } else {
-                missing("文件已经不在原来的地方了\n" + urls.map(\.path).joined(separator: "\n"))
+                missing("文件已经不在原来的地方了\n" + (state.currentFileURL?.path ?? ""))
             }
         }
     }
@@ -321,77 +562,9 @@ private struct PreviewView: View {
             .foregroundStyle(.secondary)
             .padding()
     }
-
-    private var footer: some View {
-        HStack(spacing: 10) {
-            if state.item?.kind == .image {
-                zoomButton("minus.magnifyingglass", "缩小", .zoomOut)
-                zoomButton("plus.magnifyingglass", "放大", .zoomIn)
-                Button("适合窗口") { state.zoom(.fit) }
-                Button("实际大小") { state.zoom(.actualSize) }
-            }
-            Spacer()
-            Text(hint)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .buttonStyle(.borderless)
-        .controlSize(.small)
-        .padding(.horizontal, 16)
-        .frame(height: 32)
-    }
-
-    private func zoomButton(_ symbol: String, _ help: String, _ command: PreviewState.ZoomCommand) -> some View {
-        Button { state.zoom(command) } label: { Image(systemName: symbol) }
-            .help(help)
-    }
-
-    private var hint: String {
-        if state.isNewText { return "写好后按 esc，存进历史" }
-        if state.showsWebPage { return "空格 / esc 关闭   ← → 看其他卡片   ⌘E 改网址" }
-        if state.bodyIsEditable { return "点进正文或标题即可修改，关闭时保存   空格 / esc 关闭" }
-        return "空格 / esc 关闭   ← → 看其他卡片"
-    }
 }
 
-/// 链接的网页标题、预览图和网址，以及「在浏览器中打开」。
-private struct LinkSummary: View {
-    let item: ClipItem
-
-    var body: some View {
-        HStack(spacing: 12) {
-            if LinkBanner.hasContent(item) {
-                LinkBanner(item: item)
-                    .frame(width: 120)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                if let title = item.linkTitle, !title.isEmpty {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(2)
-                }
-                HStack(spacing: 4) {
-                    if let data = item.linkIcon, let icon = NSImage(data: data) {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .frame(width: 14, height: 14)
-                    }
-                    Text(item.preview.flatMap(URL.init(string:))?.host() ?? "")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-            if let url = item.preview.flatMap(URL.init(string:)) {
-                Button("在浏览器中打开") { NSWorkspace.shared.open(url) }
-                    .controlSize(.small)
-            }
-        }
-        .padding(12)
-    }
-}
-
-/// 图片里识别出的文字，可以选中，也可以一键拷贝。
+/// 图片里识别出的文字，可以选中，也可以一键拷贝。排在图片下面，不叠在图片上。
 private struct RecognizedTextBar: View {
     let text: String
     let model: HistoryModel
@@ -406,7 +579,8 @@ private struct RecognizedTextBar: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 70)
+            .frame(maxHeight: PreviewLayout.recognizedTextHeight - 20)
+            .fixedSize(horizontal: false, vertical: true)
             Button("拷贝文字") {
                 // 带着 PasteMe 自己的标记，不会再被记成一条新的条目。
                 PasteboardCodec.write(ClipContent(kind: .text, text: text), to: .general)
@@ -414,7 +588,8 @@ private struct RecognizedTextBar: View {
             }
             .controlSize(.small)
         }
-        .padding(10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 }
 
@@ -437,7 +612,7 @@ private struct PreviewTextEditor: NSViewRepresentable {
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.isContinuousSpellCheckingEnabled = false
         textView.usesFindBar = true
-        textView.textContainerInset = NSSize(width: 12, height: 10)
+        textView.textContainerInset = PreviewLayout.textInset
         state.textView = textView
         load(into: textView, context: context)
         return scroll
@@ -461,7 +636,7 @@ private struct PreviewTextEditor: NSViewRepresentable {
         textView.backgroundColor = .white
         textView.appearance = rich ? NSAppearance(named: .aqua) : nil
         let plainAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13),
+            .font: PreviewLayout.textFont,
             .foregroundColor: NSColor.textColor,
         ]
         textView.typingAttributes = plainAttributes

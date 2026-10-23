@@ -34,6 +34,8 @@ struct PanelContext: Equatable {
     var composing = false
     /// 预览窗口开着。
     var previewShown = false
+    /// 预览的是几个文件的条目，可以用 ⌥← ⌥→ 换着看。
+    var previewHasSeveralFiles = false
 }
 
 enum PanelCommand: Equatable {
@@ -65,6 +67,8 @@ enum PanelCommand: Equatable {
     case copySelected
     /// ⌘O：打开选中的链接、文件或文件夹（#51）。
     case openSelected
+    /// ⌥← ⌥→：预览几个文件的条目时换成上一个、下一个文件。
+    case previewFile(by: Int)
 }
 
 /// 按键交给谁处理。
@@ -123,6 +127,11 @@ enum PanelKeymap {
         if context.previewShown {
             if key.keyCode == kVK_Escape { return .run(.closePreview) }
             if key.keyCode == kVK_Space, onCards, !key.command { return .run(.closePreview) }
+            // 搜索框里有文字时 ⌥← ⌥→ 按词移动插入点，交给搜索框。
+            if context.previewHasSeveralFiles, key.option, !key.command, !key.control, onCards || context.queryIsEmpty,
+               key.keyCode == kVK_LeftArrow || key.keyCode == kVK_RightArrow {
+                return .run(.previewFile(by: key.keyCode == kVK_LeftArrow ? -1 : 1))
+            }
         }
 
         if key.command, !key.control, !key.option {

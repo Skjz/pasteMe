@@ -371,7 +371,8 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             suggestionsShown: model.showsSuggestions,
             // 编辑搜索框时第一响应者是它的字段编辑器。
             composing: (panel.firstResponder as? NSTextView)?.hasMarkedText() == true,
-            previewShown: preview.isVisible
+            previewShown: preview.isVisible,
+            previewHasSeveralFiles: preview.isVisible && preview.state.fileURLs.count > 1
         )
 
         switch PanelKeymap.action(for: key, in: context) {
@@ -446,6 +447,8 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             model.copy()
         case .openSelected:
             model.open()
+        case .previewFile(let offset):
+            preview.showFile(by: offset)
         }
     }
 

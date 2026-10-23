@@ -2,44 +2,6 @@ import AppKit
 import PasteMeCore
 import SwiftUI
 
-/// 预览窗口里链接摘要左边的一块图：有预览图时是预览图；只有网站图标时用图标的主色铺一块淡色底、图标放在中间。
-/// 什么都没有时不占地方。
-struct LinkBanner: View {
-    let item: ClipItem
-    var height: CGFloat = 66
-    var iconSize: CGFloat = 36
-
-    static func hasContent(_ item: ClipItem) -> Bool {
-        item.thumbnail != nil || item.linkIcon != nil
-    }
-
-    var body: some View {
-        if let data = item.thumbnail, let image = NSImage(data: data) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity)
-                .frame(height: height)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-        } else if let data = item.linkIcon, let style = LinkIconCache.style(for: item.id, icon: data) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(LinearGradient(
-                        colors: [style.tint.opacity(0.32), style.tint.opacity(0.14)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ))
-                    // 灰色系的图标在浅色模式下底色很淡，加一圈描边，不和背景融在一起。
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.08)))
-                SiteIcon(style: style, size: iconSize)
-                    .shadow(color: .black.opacity(0.18), radius: 4, y: 1)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: height)
-        }
-    }
-}
-
 /// 链接图标的图片、主色和四角是否透明，以及卡片上带光晕的图标。每个条目的图标只算一次、画一次。
 @MainActor
 enum LinkIconCache {
