@@ -136,6 +136,24 @@ public struct Settings {
         nonmutating set { defaults.set(newValue.map { NSNumber(value: $0) }, forKey: Key.lastPinboardID) }
     }
 
+    /// 每天自动检查一次有没有新版本（ADR 0010）。默认 true：只向 GitHub 查最新的发布，不发送任何内容。
+    public var checksForUpdates: Bool {
+        get { defaults.object(forKey: Key.checksForUpdates) as? Bool ?? true }
+        nonmutating set { defaults.set(newValue, forKey: Key.checksForUpdates) }
+    }
+
+    /// 上一次成功检查更新的时间，没查过为 nil。
+    public var lastUpdateCheck: Date? {
+        get { defaults.object(forKey: Key.lastUpdateCheck) as? Date }
+        nonmutating set { defaults.set(newValue, forKey: Key.lastUpdateCheck) }
+    }
+
+    /// 用户点了「跳过这个版本」的版本号。自动检查不再提示它，手动检查照样提示。
+    public var skippedUpdateVersion: String? {
+        get { defaults.string(forKey: Key.skippedUpdateVersion) }
+        nonmutating set { defaults.set(newValue, forKey: Key.skippedUpdateVersion) }
+    }
+
     /// 改一个应用的别名，其他应用的不变。
     public func setAliases(_ aliases: [String], for bundleID: String) {
         var all = appAliases
@@ -154,6 +172,9 @@ public struct Settings {
         static let playsSoundOnRecord = "playsSoundOnRecord"
         static let fileApp = "fileApp"
         static let folderApp = "folderApp"
+        static let checksForUpdates = "checksForUpdates"
+        static let lastUpdateCheck = "lastUpdateCheck"
+        static let skippedUpdateVersion = "skippedUpdateVersion"
 
         static func shortcut(_ action: GlobalAction) -> String {
             "shortcut." + action.rawValue

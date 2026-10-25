@@ -32,6 +32,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private let accessibilityItem = NSMenuItem(title: "辅助功能权限未开启（点此设置）", action: #selector(openAccessibilitySettings), keyEquivalent: "")
     private let settings = Settings()
     private let recordSound = SystemRecordSound()
+    private lazy var updater = Updater(settings: settings, toast: toast)
+    /// 查到新版本时显示在菜单最前面（`Updater.available`）。
+    private let updateItem = NSMenuItem(title: "", action: #selector(offerUpdate), keyEquivalent: "")
+    private let checkUpdateItem = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
 
     override public init() {
         super.init()
@@ -149,11 +153,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             self?.removeExpiredFiles()
             self?.clearOldHistory()
         }
-        // 以文件粘贴、拖出图片时生成的临时文件，过一天删掉；打开了自动清除时清除旧的历史。
+        // 自动检查更新等启动时的事都做完了再查。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            self?.updater.checkIfDue()
+        }
+        // 以文件粘贴、拖出图片时生成的临时文件，过一天删掉；打开了自动清除时清除旧的历史；
+        // 距上次检查更新满一天时再查一次。
         let timer = Timer(timeInterval: 60 * 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.removeExpiredFiles()
                 self?.clearOldHistory()
+                self?.updater.checkIfDue()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -221,6 +231,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         settingsModel.isReservedBySystem = { combo in SystemShortcuts.contains(combo, in: SystemShortcuts.current()) }
         settingsModel.failedShortcuts = { [weak self] in self?.shortcuts.failed ?? [] }
         settingsModel.onRetentionChange = { [weak self] in self?.clearOldHistory() }
+        settingsModel.onCheckForUpdates = { [weak self] in self?.updater.checkNow() }
+        settingsModel.onAutoUpdateChange = { [weak self] in self?.updater.checkIfDue() }
         return settingsModel
     }
 
@@ -335,12 +347,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let menu = NSMenu()
         menu.delegate = self
 
+        menu.addItem(updateItem)
         menu.addItem(accessibilityItem)
         menu.addItem(openItem)
         menu.addItem(.separator())
         menu.addItem(pauseItem)
         menu.addItem(pasteStackItem)
         menu.addItem(.separator())
+        menu.addItem(checkUpdateItem)
         menu.addItem(NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "退出 PasteMe", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -388,6 +402,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         updatePauseItem()
         pasteStackItem.state = pasteStack.stack.isActive ? .on : .off
         accessibilityItem.isHidden = Accessibility.isTrusted
+        updateItem.isHidden = updater.available == nil
+        updateItem.title = updater.available.map { "更新到 PasteMe \($0.version)…" } ?? ""
+        updateItem.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
+    }
+
+    @objc private func offerUpdate() {
+        if let release = updater.available { updater.offer(release) }
+    }
+
+    @objc private func checkForUpdates() {
+        updater.checkNow()
     }
 
     @objc private func showPanel() {

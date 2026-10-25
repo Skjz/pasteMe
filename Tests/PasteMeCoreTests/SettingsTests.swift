@@ -127,4 +127,23 @@ import Testing
         Settings(defaults: defaults).folderApp = .systemDefault
         #expect(Settings(defaults: defaults).folderApp == .systemDefault)
     }
+
+    @Test func updatesAreCheckedByDefault() {
+        let settings = Settings(defaults: defaults)
+        #expect(settings.checksForUpdates == true)
+        #expect(settings.lastUpdateCheck == nil)
+        #expect(settings.skippedUpdateVersion == nil)
+    }
+
+    @Test func updateSettingsPersist() {
+        let checked = Date(timeIntervalSince1970: 1_800_000_000)
+        Settings(defaults: defaults).checksForUpdates = false
+        Settings(defaults: defaults).lastUpdateCheck = checked
+        Settings(defaults: defaults).skippedUpdateVersion = "0.2.0"
+        #expect(Settings(defaults: defaults).checksForUpdates == false)
+        #expect(Settings(defaults: defaults).lastUpdateCheck == checked)
+        #expect(Settings(defaults: defaults).skippedUpdateVersion == "0.2.0")
+        Settings(defaults: defaults).skippedUpdateVersion = nil
+        #expect(Settings(defaults: defaults).skippedUpdateVersion == nil)
+    }
 }

@@ -46,6 +46,21 @@ import PasteMeCore
         #expect(!settings.playsSoundOnRecord && !model.playsSoundOnRecord && soundsPlayed == 1)
     }
 
+    @Test func updateChecksCanBeTurnedOffAndRunByHand() {
+        var checks: [String] = []
+        model.onAutoUpdateChange = { checks.append("auto") }
+        model.onCheckForUpdates = { checks.append("now") }
+        model.reload()
+        #expect(model.checksForUpdates)
+
+        model.setChecksForUpdates(false)
+        #expect(!settings.checksForUpdates && !model.checksForUpdates)
+        // 重新打开时马上查一次（满一天才会真的去查）。
+        model.setChecksForUpdates(true)
+        model.checkForUpdates()
+        #expect(settings.checksForUpdates && checks == ["auto", "now"])
+    }
+
     @Test func filesAndFoldersOpenWithAnInstalledApp() {
         var changes: [String] = []
         model.onOpenAppsChange = { changes.append("\($0.rawValue) \($1.rawValue)") }

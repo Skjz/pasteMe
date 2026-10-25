@@ -7,7 +7,7 @@
 ```text
 PasteMe        可执行文件，只有 main.swift
 └─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、全局快捷键、监听 ⌘V、发送 ⌘V、面板、浮窗、视图
-   └─ PasteMeCore  不依赖界面：AppVariant、ClipStore、ClipQuery、AppNames、Recorder、RecordChime、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter、OpenPlan（OpenApp）、KeyCombo（GlobalAction、ShortcutRules）、WebPreviewPolicy
+   └─ PasteMeCore  不依赖界面：AppVariant、ClipStore、ClipQuery、AppNames、Recorder、RecordChime、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter、OpenPlan（OpenApp）、KeyCombo（GlobalAction、ShortcutRules）、WebPreviewPolicy、Updates（AppVersion、UpdateRelease、UpdateSignature、UpdateClient、UpdateInstaller）
 ```
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
@@ -39,7 +39,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 
 - `EnrichmentQueue` 依次运行一组 `Enricher`：图片中的文字（`TextRecognitionEnricher`）和链接预览（`LinkPreviewEnricher`）。每个 `Enricher` 在主线程从 `ClipStore` 读出输入（不需要处理时返回 nil），在后台算出结果，回到主线程写库（ADR 0003）。`Recorder` 记下图片、文件和链接后调用 `enqueue(id)`，改过网址的链接由 `HistoryModel.onEdited` 再交给它。启动 3 秒后 `AppDelegate` 调用 `backfill()` 补做旧图片的文字识别。队列一次只处理一个条目，新复制的排在前面，补做的每条之间停 0.5 秒。
 - 图片中的文字：`VisionTextRecognizer` 自己用 `Task.detached` 切到后台。`ocr_text` 为 NULL 表示还没识别，空字符串表示识别过但没有文字或识别失败，以后不再识别。图片文件识别原文件，原文件不在了识别缩略图（缩略图只有 480 像素，效果差一些）。测试用 `FakeRecognizer`（`TextRecognitionTests.swift`），另有一个测试真的调用 Vision 识别画出来的中英文。
-- 链接预览（#11）是 PasteMe 在后台联网的唯一地方（另一处是用户按空格预览网页，见「预览和附属窗口」），默认关闭，分「只取网站图标」和「完整预览」两档（`Settings.linkPreviewMode`，`LinkPreviewEnricher` 每次读输入时重新读）。请求哪个网址由 `LinkPreviewPolicy.request(for:mode:)` 决定，先去掉分享时附带的跟踪参数（`withoutTracking`，否则 `si`、`share_id` 这类随机字符会被当成令牌）：本机、内网后缀、私有网段和 100.64.0.0/10、IPv6 字面地址、没有点的主机名都不请求；「只取网站图标」和看起来像一次性的网址（`looksSingleUse`：路径里的登录、重置、验证类词，像令牌的参数名，16 个以上字母数字混合的连续字符或 UUID）只请求网站首页。关闭和内网这两种情况都不做标记，打开后再复制一次就会获取。判断宁可多认：认错只少了网页标题，漏认可能让链接失效。
+- 链接预览（#11）是 PasteMe 在后台联网的两个地方之一（另一个是每天检查一次更新，见「检查更新」；用户按空格预览网页也联网，见「预览和附属窗口」），默认关闭，分「只取网站图标」和「完整预览」两档（`Settings.linkPreviewMode`，`LinkPreviewEnricher` 每次读输入时重新读）。请求哪个网址由 `LinkPreviewPolicy.request(for:mode:)` 决定，先去掉分享时附带的跟踪参数（`withoutTracking`，否则 `si`、`share_id` 这类随机字符会被当成令牌）：本机、内网后缀、私有网段和 100.64.0.0/10、IPv6 字面地址、没有点的主机名都不请求；「只取网站图标」和看起来像一次性的网址（`looksSingleUse`：路径里的登录、重置、验证类词，像令牌的参数名，16 个以上字母数字混合的连续字符或 UUID）只请求网站首页。关闭和内网这两种情况都不做标记，打开后再复制一次就会获取。判断宁可多认：认错只少了网页标题，漏认可能让链接失效。
 - 获取用 `HTMLPreviewFetcher`，不用 LinkPresentation：`LPMetadataProvider` 用 WebKit 加载整个网页，会加载页面上的资源、可能执行脚本。`HTMLPreviewFetcher` 用不带 Cookie、不缓存的 `URLSession` 只读 HTML，读到 `</head>` 为止（最多 2 MB），从 `og:title`、`twitter:title`、`<title>` 取标题，从 `og:image` 取预览图，从 `<link rel="apple-touch-icon"/"icon">` 和 `/favicon.ico` 取图标。不是网页的链接只看响应头不下载，图片链接用图片本身。每次请求带一个 `RedirectGuard`：重定向到内网地址不跟；打开复制的网址时，重定向到像一次性的网址也不跟（短链接跳到重置密码的链接），退回只取网站图标。只读 HTML 拿不到信息的网站在 `KnownSite` 里单独处理：Reddit 的网页要执行脚本才出内容，有的网络还整个被拦，帖子标题改从 oEmbed 接口取，其他页面从网址读出版块名，图标用固定地址。预览图缩成 480 像素存进 `thumbnail`，图标缩成 128 像素存进 `link_icon`（候选里有 `fluid-icon` 和惯例的 `/apple-touch-icon.png`，尽量拿到大图标）；只取网站图标时不存首页的标题，免得卡片把它当成这个链接的标题。`link_title` 和 `ocr_text` 的约定一样：NULL 是还没获取，空字符串是获取过（失败、没有标题或只取了图标），以后不再重试。旧链接不补做，免得打开开关后一下子发出很多请求。测试：`FakeLinkFetcher`（`LinkPreviewTests.swift`）测档位和规则，`StubURLProtocol`（`HTMLPreviewFetcherTests.swift`）给 `HTMLPreviewFetcher` 一个假的网络，测 Cookie、重定向、大小上限、编码和 Reddit 的 oEmbed。
 - 有预览的链接卡片是海报样式（`LinkCardContent`）：居中的衬线标题（`EditorialFont`：New York，中文换成宋体，按字号缓存）和夹在细线中间的网站名，上面是预览图或带光晕的网站图标。没有网页标题时由 `LinkText` 从网址读出标题。图标的主色（`IconColor.dominant`）、四角是否透明由 `LinkIconCache` 按条目算一次；光晕不在运行时画，`LinkIconCache.posterIcon` 把圆角、白底、描边和光晕画成一张比图标大一圈的图，原因和标题栏图标一样（见「卡片外观」）。截图检查浅色外观时用 `PASTEME_SNAPSHOT_APPEARANCE=light`。
 - 缩略图仍在 `ClipStore.insert` 里同步生成，没有移进队列：复制图片后卡片要马上能显示缩略图。
@@ -199,6 +199,9 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 | `RecordSoundPlaying` | `SystemRecordSound`（App） | `FakeSound`（`RecorderTests.swift`） |
 | `LinkPreviewFetching` | `HTMLPreviewFetcher`（Core） | `FakeLinkFetcher`（`LinkPreviewTests.swift`） |
 | `HTMLPreviewFetcher(configuration:)` | `HTMLPreviewFetcher.defaultConfiguration()` | 加上 `StubURLProtocol` 的配置（`HTMLPreviewFetcherTests.swift`） |
+| `UpdateClient(configuration:latestURL:publicKey:)` | `UpdateClient.defaultConfiguration()`、GitHub 的 latest 接口、`UpdateSignature.publicKey` | `StubURLProtocol` 和测试里临时生成的钥匙（`UpdatesTests`） |
+| `UpdateInstaller(app:)` | `Bundle.main.bundleURL` | 临时目录里用 `/usr/bin/true` 拼出来、临时签名的应用和 `hdiutil` 现做的 DMG（`UpdatesTests`） |
+| `Updater(latest:)` | `UpdateClient.latest()` | 固定的回复（`UpdaterTests`） |
 | `TemporaryFiles(directory:)` | `TemporaryFiles.defaultDirectory()` | 每个测试一个临时目录（`TemporaryFilesTests`） |
 | `ClipStore(path:)` | `ClipStore.defaultPath()` | `ClipStore(path: ":memory:")` |
 | `Settings(defaults:)` | 发布版的偏好域 `io.github.skjz.PasteMe`，开发版的 `io.github.skjz.PasteMe.dev`（`AppVariant`），取法见 ADR 0006、0009 | 每个测试一个随机名字的 suite，结束时删除 |
@@ -245,11 +248,20 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
    - 验证完 `defaults delete io.github.skjz.PasteMe.dev`，改回激活策略。面板默认不出现在录屏里（`sharingType = .none`），请用户录屏反馈动画问题时，要先在设置窗口的「面板」页打开「共享屏幕时显示面板」，否则录到的只有面板后面的桌面。
 6. 验证完在仓库根目录用完整路径退出测试实例，以免误关用户自己的 PasteMe：`pkill -f "$PWD/build/PasteMe.app/Contents/MacOS/PasteMe"`。然后删除临时目录。
 
+## 检查更新
+
+做法和为什么自己写、为什么要自己的签名见 ADR 0010。
+
+- `AppDelegate` 在启动 10 秒后和每小时的定时器里调用 `Updater.checkIfDue()`：只有发布版、`Settings.checksForUpdates` 打开、距 `lastUpdateCheck` 满一天（`UpdateSchedule`）才真的查，查失败不记时间，下一个小时再试。手动检查（菜单栏菜单的「检查更新…」、设置「关于」页的「立即检查」）不看这些条件，结果都弹窗说。
+- 自动检查查到的新版本放进 `Updater.available`，菜单栏菜单在 `menuWillOpen` 里据此显示「更新到 PasteMe x.y.z…」，再显示一次 Toast，不弹窗：PasteMe 在后台，弹窗会抢走用户正在打字的窗口。跳过的版本（`skippedUpdateVersion`）自动检查不再提示。
+- `UpdateRelease.parse` 按名字找 `PasteMe-<版本>.dmg` 和 `.dmg.sig`，缺了就 `canInstall == false`：自动检查不提示，手动检查弹出「没有通过签名校验」的警告（`Updater.warnUnsigned`），不给下载页面；下载后签名对不上（`UpdateError.badSignature`）也一样。拿到 GitHub 发布权限的人可以故意不传或传错 `.sig`，要是这时让用户去下载页面，用户照着安装说明点「仍要打开」就绕过了校验。`canInstall` 只说明两个文件都在，不说明签名对，所以给用户手动安装的路都在验签之后：这台 Mac 换不了应用时（开发版、`UpdateInstaller.unavailableReason`：从 DMG 或 App Translocation 里运行、没有写权限），按钮是「下载安装包」，照样显示进度、验签，再用 `UpdateInstaller.inspect` 挂载检查里面的应用（和自动替换同一套 `check`：bundle id、版本和 tag 一样、`codesign`），都过了才由 `VerifiedDMG.keep` 放进「下载」文件夹并打开。哪一步失败都不打开发布页：签名只覆盖这一个 DMG，发布页上的别的文件没签过。应用不对（`unexpectedApp`，例如旧版本的签名包顶着新 tag）弹警告，其余失败只说稍后再试。弹窗里的发布说明去掉了链接：它出现在验签之前，文本视图里的链接一点就交给系统打开（`file://` 也行）。`.sig` 最多读 1 KB，解出来必须正好 64 字节；DMG 最多 200 MB，每读一个字节都检查。
+- 安装：`Updater.step` 记着下载了多少（`UpdateClient.download` 每 64 KB 回报一次，回到主线程后只往前走）和是否在安装，`UpdateWindow` 按它显示进度条；下载时点取消或关窗口取消外面的 Task，`UpdateClient` 读每一块时检查取消，抛出 `CancellationError` 后窗口关掉、不提示；开始换应用以后不能取消。`UpdateClient.download` 验签后才写盘；`UpdateInstaller.install` 在后台挂载 DMG（`hdiutil`，macOS 27 上提示已弃用，但 macOS 14 没有替代的 `diskutil image`）、拷到同一个卷的临时目录、检查 bundle id、版本和 `codesign --verify`，再 `replaceItemAt`。之后 `Updater.relaunch` 交给 `/bin/sh` 等这个进程结束再 `open`，然后退出。`UpdatesTests` 里换应用的那个测试要现做 DMG、挂载两次，大约 9 秒。
+
 ## 发布
 
 版本号按 SemVer，tag 写成 `v0.1.0` 这样。
 
 1. 改 `Resources/Info.plist` 的 `CFBundleShortVersionString`，`CFBundleVersion` 加一；README「功能」标题里的版本号一起改。CHANGELOG 把 Unreleased 下的条目移到新版本的标题 `## [x.y.z] - 日期` 下，文末的比较链接加上新版本。这些改动走 PR 合进 main。
-2. 在合并后的 main 上运行 `scripts/make-dmg.sh`，得到 `build/PasteMe-x.y.z.dmg`。它带 `PASTEME_RELEASE=1` 打包，bundle id 保持 `io.github.skjz.PasteMe`，接得上用户已有的设置和历史；应用是通用二进制、临时签名，原因写在脚本开头。
+2. 在合并后的 main 上运行 `scripts/make-dmg.sh`，得到 `build/PasteMe-x.y.z.dmg` 和自动更新用的签名 `build/PasteMe-x.y.z.dmg.sig`（私钥在发布者的钥匙串里，没有就停下，见 ADR 0010）。它带 `PASTEME_RELEASE=1` 打包，bundle id 保持 `io.github.skjz.PasteMe`，接得上用户已有的设置和历史；应用是通用二进制、临时签名，原因写在脚本开头。
 3. 发布前挂载 DMG（`hdiutil attach -nobrowse -readonly`）检查：`lipo -info` 有 x86_64 和 arm64；`xcrun vtool -show-build` 里每个架构的 `sdk` 都是真实的 SDK 版本；`codesign -dv` 是 `Signature=adhoc`；二进制里搜不到本机路径（`bundle.sh` 打发布版时用 `strip -S` 去掉调试符号，搜到 `$HOME/` 就报错退出）；Info.plist 的 `CFBundleIdentifier` 是 `io.github.skjz.PasteMe`，不是 `.dev`。用临时 home 把两个架构各启动一次（`arch -x86_64` 要装了 Rosetta 的 Mac）。这要从 shell 直接运行，会弹署名为终端或 Claude 的授权框（见「在真实应用里验证」第 3 步），先告诉用户，弹出后点「拒绝」。
-4. `gh release create vx.y.z build/PasteMe-x.y.z.dmg --target main`，tag 打在合并后的 main 上。发布说明写中文：这一版的主要变化、安装步骤（第一次打开要在「隐私与安全性」里点「仍要打开」，升级后要重新允许辅助功能）、系统要求，以及 DMG 的 SHA-256。
+4. `gh release create vx.y.z build/PasteMe-x.y.z.dmg build/PasteMe-x.y.z.dmg.sig --target main`，两个文件都要传，少了 `.sig` 用户的 PasteMe 只能提示、不能自动安装，tag 打在合并后的 main 上。发布说明写中文：这一版的主要变化、安装步骤（第一次打开要在「隐私与安全性」里点「仍要打开」，升级后要重新允许辅助功能）、系统要求，以及 DMG 的 SHA-256。
