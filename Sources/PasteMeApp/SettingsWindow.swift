@@ -196,7 +196,7 @@ struct SettingsView: View {
         case .linkPreview: LinkPreviewPage(model: model)
         case .history: HistoryPage(model: model)
         case .aliases: AppAliasesView(model: model.aliases)
-        case .about: AboutPage()
+        case .about: AboutPage(model: model)
         }
     }
 }
@@ -651,6 +651,8 @@ private struct HistoryPage: View {
 }
 
 private struct AboutPage: View {
+    let model: SettingsModel
+
     private var version: String {
         let info = Bundle.main.infoDictionary
         guard let short = info?["CFBundleShortVersionString"] as? String else { return "开发版本" }
@@ -672,6 +674,16 @@ private struct AboutPage: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
+            }
+            SettingsGroup {
+                SettingsRow(title: "自动检查更新", detail: "每天向 GitHub 查一次有没有新版本，不发送任何内容。有新版本时在菜单栏菜单里更新。") {
+                    Toggle("自动检查更新", isOn: Binding(get: { model.checksForUpdates }, set: model.setChecksForUpdates))
+                        .labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(title: "检查更新") {
+                    Button("立即检查") { model.checkForUpdates() }
+                }
             }
             SettingsGroup {
                 AboutLink(title: "项目主页", value: "github.com/Skjz/pasteMe", url: "https://github.com/Skjz/pasteMe")

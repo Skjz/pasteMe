@@ -43,6 +43,7 @@ final class SettingsModel {
     private(set) var folderApp = OpenApp.systemDefault
     private(set) var linkPreviewMode = LinkPreviewMode.off
     private(set) var historyRetention = HistoryRetention.never
+    private(set) var checksForUpdates = true
     private(set) var pendingRetention: PendingRetention?
     /// 等用户确认的清空历史，值是会保留下来的 Pinboard 条目数。
     private(set) var pendingClear: Int?
@@ -74,6 +75,10 @@ final class SettingsModel {
     @ObservationIgnored var onOpenAppsChange: (OpenApp, OpenApp) -> Void = { _, _ in }
     /// 这个 bundle id 的应用装了没有：没装的编辑器和终端在「打开」里不能选。测试替换它。
     @ObservationIgnored var isInstalled: (String) -> Bool = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
+    /// 用户点了「检查更新」。
+    @ObservationIgnored var onCheckForUpdates: () -> Void = {}
+    /// 打开了自动检查更新：到时间了就马上查一次。
+    @ObservationIgnored var onAutoUpdateChange: () -> Void = {}
     /// 换了自动清除的期限：按新的期限马上清除一次。
     @ObservationIgnored var onRetentionChange: () -> Void = {}
     /// 开始（true）或结束（false）录制快捷键：录制时先注销 PasteMe 自己的全局快捷键，结束后按设置重新注册。
@@ -106,6 +111,7 @@ final class SettingsModel {
         folderApp = settings.folderApp
         linkPreviewMode = settings.linkPreviewMode
         historyRetention = settings.historyRetention
+        checksForUpdates = settings.checksForUpdates
         reloadShortcuts()
         shortcutNotes = [:]
         for action in failedShortcuts() {
@@ -134,6 +140,18 @@ final class SettingsModel {
         settings.playsSoundOnRecord = on
         playsSoundOnRecord = on
         if on { onPlaySound() }
+    }
+
+    // MARK: - 关于
+
+    func setChecksForUpdates(_ on: Bool) {
+        settings.checksForUpdates = on
+        checksForUpdates = on
+        if on { onAutoUpdateChange() }
+    }
+
+    func checkForUpdates() {
+        onCheckForUpdates()
     }
 
     func openAccessibilitySettings() {

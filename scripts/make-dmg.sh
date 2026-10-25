@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 打包发布用的 DMG：build/PasteMe-<版本>.dmg，里面是 PasteMe.app 和「应用程序」文件夹的替身，拖进去就装好了。
+# 同时生成自动更新要验证的签名 build/PasteMe-<版本>.dmg.sig，两个都要传到 GitHub 的发布里。
 # 版本号取 Resources/Info.plist 的 CFBundleShortVersionString。发布的步骤见 docs/architecture.md 的「发布」。
 #
 # 用法：scripts/make-dmg.sh
@@ -23,5 +24,8 @@ ln -s /Applications "$STAGE/Applications"
 hdiutil create -volname "PasteMe $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
 rm -rf "$STAGE"
 
-echo "已生成 $DMG"
+# 自动更新只装签名验证得过的 DMG（ADR 0010）。签名钥匙在发布者的钥匙串里，没有就停下，不发不能自动更新的版本。
+swift scripts/update-signing.swift sign "$DMG"
+
+echo "已生成 $DMG 和 $DMG.sig"
 shasum -a 256 "$DMG"
