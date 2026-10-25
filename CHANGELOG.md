@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-25
+
 ### Added
 
 - PasteMe is now released under the MIT License (see LICENSE). Before, the repository had no license, so the code could be read but not reused.
@@ -148,6 +150,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The paste flow moved from `AppDelegate` into `Paster` in `PasteMeCore`. `paste(_:as:into:)` takes `.original` or `.plainText` and a target app, and returns `.pasted` or `.copiedOnly` (no accessibility permission). Writing the pasteboard and sending ⌘V are injected adapters, so tests run against in-memory fakes. The app hides the panel before calling it.
 - New `Settings` type in `PasteMeCore`, stored in the `io.github.skjz.PasteMe` defaults domain, where every user-facing switch is defined.
 
-[Unreleased]: https://github.com/Skjz/pasteMe/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Skjz/pasteMe/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Skjz/pasteMe/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Skjz/pasteMe/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Skjz/pasteMe/releases/tag/v0.1.0
