@@ -6,9 +6,19 @@
 # 用法：scripts/make-dmg.sh
 #
 # 这是发布版：bundle id 保持 io.github.skjz.PasteMe，和用户已有的设置、历史接得上（ADR 0009）。
-# 应用编成通用二进制（Apple 芯片和 Intel），用临时签名：没有 Developer ID 证书，发布版本来就不能公证，
-# 用 Apple Development 证书签名还会把证书上的名字带进应用。临时签名的代价是用户每次升级后要重新打开辅助功能权限。
+# 应用编成通用二进制（Apple 芯片和 Intel），用自签名证书「PasteMe Release」签名（ADR 0011）：没有 Developer ID 证书，
+# 发布版本来就不能公证；用 Apple Development 证书签名会把证书上的名字带进应用；临时签名每次构建都不一样，
+# 用户每次升级后都要重新授权辅助功能。固定的证书让系统认得出这是同一个应用，授权在升级后仍然有效。
 set -euo pipefail
+
+IDENTITY="PasteMe Release"
+# 系统按证书的 SHA-1（designated requirement 里的 certificate leaf）认应用，不按名字。换了一张同名的证书，
+# 用户更新后授权就没了，所以签完核对它。scripts/release-certificate.sh create 打印的就是这个值。
+CERTIFICATE_SHA1="712284cfaa92f8c43b961438cd9dc0e83a0d983b"
+if ! security find-identity -p codesigning | grep -q "\"$IDENTITY\""; then
+  echo "钥匙串里没有「$IDENTITY」证书。第一次发布先运行 scripts/release-certificate.sh create，以后从备份恢复，不要重新生成" >&2
+  exit 1
+fi
 
 cd "$(dirname "$0")/.."
 
@@ -18,7 +28,11 @@ DMG="build/PasteMe-$VERSION.dmg"
 
 rm -rf "$STAGE" "$DMG"
 mkdir -p "$STAGE"
-PASTEME_APP="$STAGE/PasteMe.app" PASTEME_RELEASE=1 PASTEME_UNIVERSAL=1 PASTEME_SIGN_IDENTITY=- scripts/bundle.sh release
+PASTEME_APP="$STAGE/PasteMe.app" PASTEME_RELEASE=1 PASTEME_UNIVERSAL=1 PASTEME_SIGN_IDENTITY="$IDENTITY" scripts/bundle.sh release
+if ! codesign -d -r- "$STAGE/PasteMe.app" 2>&1 | grep -qi "certificate leaf = H\"$CERTIFICATE_SHA1\""; then
+  echo "应用不是用那张「$IDENTITY」证书签的（SHA-1 应为 $CERTIFICATE_SHA1）：钥匙串里的证书换过了，用户更新后要重新授权辅助功能。从备份恢复原来的证书" >&2
+  exit 1
+fi
 ln -s /Applications "$STAGE/Applications"
 
 hdiutil create -volname "PasteMe $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null

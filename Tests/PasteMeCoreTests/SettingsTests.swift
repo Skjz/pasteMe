@@ -146,4 +146,10 @@ import Testing
         Settings(defaults: defaults).skippedUpdateVersion = nil
         #expect(Settings(defaults: defaults).skippedUpdateVersion == nil)
     }
+
+    @Test func accessibilityRequirementPersists() {
+        #expect(Settings(defaults: defaults).accessibilityRequirement == nil)
+        Settings(defaults: defaults).accessibilityRequirement = #"identifier "io.github.skjz.PasteMe""#
+        #expect(Settings(defaults: defaults).accessibilityRequirement == #"identifier "io.github.skjz.PasteMe""#)
+    }
 }

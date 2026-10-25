@@ -114,7 +114,7 @@ final class Updater {
         if let reason {
             text += "\(reason)，不能自动替换。PasteMe 会下载安装包、核对签名，放进「下载」文件夹并打开，把里面的 PasteMe 拖进「应用程序」就行。"
         } else {
-            text += "更新后 PasteMe 会重新打开。之后要在「系统设置 → 隐私与安全性 → 辅助功能」里删掉旧的 PasteMe，再重新允许。"
+            text += "更新后 PasteMe 会重新打开，辅助功能的授权仍然有效。"
         }
         alert.informativeText = text
         if !release.notes.isEmpty { alert.accessoryView = Self.notesView(release.notes) }
