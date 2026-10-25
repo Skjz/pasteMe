@@ -11,8 +11,8 @@ extension NSMenuItem {
     }
 
     /// 让菜单项展开 `menu`。挂子菜单时 AppKit 只在 action 为 nil 时把它设成 `submenuAction:`，
-    /// 挂的是已经挂着的同一个子菜单时什么都不做；action 留着别的值或 nil，菜单打开时这一项会是灰的（#61），
-    /// 所以这里自己设 action。
+    /// 挂的是已经挂着的同一个子菜单时什么都不做。action 留在 nil 时，菜单打开时这一项是灰的（#61）；
+    /// 留着「恢复记录」的 action 时，父项会带着不该有的 action。所以这里自己设 action。
     @MainActor
     func showSubmenu(_ menu: NSMenu) {
         submenu = menu

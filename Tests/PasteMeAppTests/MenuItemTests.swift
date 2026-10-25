@@ -33,6 +33,7 @@ import Testing
         for _ in 0..<3 {
             item.showSubmenu(submenu)
             #expect(isEnabledWhenOpened())
+            #expect(item.action == #selector(NSMenu.submenuAction(_:)))
         }
     }
 
