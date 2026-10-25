@@ -15,6 +15,27 @@ enum Accessibility {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    /// 删掉系统设置里这个应用失效的辅助功能条目（ADR 0011）。
+    ///
+    /// 系统按签名记授权。签名变了（从临时签名换成 PasteMe Release 证书、证书换了）以后，列表里旧的 PasteMe
+    /// 还开着开关却不起作用，`requestTrust` 也不会再把新的加进去，用户得自己删掉旧的、点加号找应用。
+    /// 先删掉它，接着的 `requestTrust` 就会把新的 PasteMe 加进列表，用户只要打开开关。
+    /// 只在启动时、没有授权时调用：有效的授权不会被删，用户关掉的开关会变成重新询问一次。
+    static func forgetStaleGrant(bundleID: String? = Bundle.main.bundleIdentifier) {
+        guard let bundleID else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+        process.arguments = ["reset", "Accessibility", bundleID]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            NSLog("PasteMe: 清除失效的辅助功能条目失败：\(error)")
+        }
+    }
+
     static func openSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)

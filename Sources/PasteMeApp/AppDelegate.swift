@@ -141,6 +141,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         #endif
 
         if !Accessibility.isTrusted {
+            Accessibility.forgetStaleGrant()
             Accessibility.requestTrust()
         }
 
