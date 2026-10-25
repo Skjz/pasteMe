@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- An English README (README.en.md), linked from the top of the Chinese one.
+- A 30-second demo video under the opening picture of both READMEs, with captions in Chinese and English.
+
+### Changed
+
+- The README is now a short tour: what PasteMe looks like, six features with a picture each, privacy, the keys you use most and how to install. The full feature reference moved to docs/guide.md, grouped by topic, and the build and development notes moved to docs/development.md.
+
 ## [0.2.0] - 2026-10-25
 
 ### Added
