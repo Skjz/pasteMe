@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The README is now a short tour: what PasteMe looks like, six features with a picture each, privacy, the keys you use most and how to install. The full feature reference moved to docs/guide.md, grouped by topic, and the build and development notes moved to docs/development.md.
 
+### Fixed
+
+- 暂停记录 in the status bar menu was greyed out from the second time the menu was opened, so recording could only be paused with the shortcut (#61).
+- The settings window sometimes opened behind the app you were using, with the keyboard still in that app (#62).
+
 ## [0.2.0] - 2026-10-25
 
 ### Added
