@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 打包发布用的 DMG：build/PasteMe-<版本>.dmg，里面是 PasteMe.app 和「应用程序」文件夹的替身，拖进去就装好了。
 # 同时生成自动更新要验证的签名 build/PasteMe-<版本>.dmg.sig，两个都要传到 GitHub 的发布里。
-# 版本号取 Resources/Info.plist 的 CFBundleShortVersionString。发布的步骤见 docs/architecture.md 的「发布」。
+# 版本号取 Resources/Info.plist 的 CFBundleShortVersionString。发布的步骤见 docs/releasing.md。
 #
 # 用法：scripts/make-dmg.sh
 #
