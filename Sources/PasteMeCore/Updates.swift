@@ -46,13 +46,6 @@ public struct UpdateRelease: Equatable, Sendable {
     /// DMG 和签名都有，能下载下来验证、自动安装。没有签名的发布不能装，也不给下载页面（`Updater.warnUnsigned`）。
     public var canInstall: Bool { dmg != nil && signature != nil }
 
-    /// 让用户手动下载时打开的页面。发布页的地址来自 GitHub 的回复，只认 `https://github.com/Skjz/pasteMe/` 下面的，
-    /// 别的一律换成项目的发布列表。
-    public var downloadPage: URL {
-        let releases = URL(string: "https://github.com/Skjz/pasteMe/releases")!
-        guard page.scheme == "https", page.host() == "github.com", page.path().hasPrefix("/Skjz/pasteMe/") else { return releases }
-        return page
-    }
 
     /// 要不要告诉用户这次发布：比正在运行的版本新，自动检查时还要不是用户跳过的版本。
     public func isWorthOffering(current: AppVersion, skipped: String?, manual: Bool) -> Bool {
@@ -270,6 +263,20 @@ public struct UpdateInstaller: Sendable {
         return nil
     }
 
+    /// 不换应用，只看 DMG 里的 PasteMe.app 对不对（和 `install` 同一套检查），给「下载安装包」用：
+    /// 签名只证明 DMG 是发布者签过的某一版，旧版本的签名包可以顶着新的 tag。
+    public static func inspect(dmg: URL, expecting version: AppVersion, bundleID: String = AppVariant.releaseBundleID) throws {
+        let mount = FileManager.default.temporaryDirectory.appendingPathComponent("PasteMe-inspect-\(UUID().uuidString)")
+        try run("/usr/bin/hdiutil", ["attach", dmg.path, "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount.path])
+        defer {
+            try? run("/usr/bin/hdiutil", ["detach", mount.path, "-force"])
+            try? FileManager.default.removeItem(at: mount)
+        }
+        let source = mount.appendingPathComponent("PasteMe.app")
+        guard FileManager.default.fileExists(atPath: source.path) else { throw UpdateError.unexpectedApp("找不到 PasteMe.app") }
+        try check(source, version: version, bundleID: bundleID)
+    }
+
     /// 从 DMG 里取出应用、检查，再换掉 `app`。
     public func install(dmg: URL, expecting version: AppVersion, bundleID: String = AppVariant.releaseBundleID) throws {
         let staging = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: app, create: true)
@@ -293,7 +300,11 @@ public struct UpdateInstaller: Sendable {
         guard (info?["CFBundleShortVersionString"] as? String).flatMap(AppVersion.init) == version else {
             throw UpdateError.unexpectedApp("版本不是 \(version)")
         }
-        try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
+        do {
+            try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
+        } catch {
+            throw UpdateError.unexpectedApp("应用的代码签名校验不过")
+        }
     }
 
     @discardableResult

@@ -43,7 +43,8 @@ struct UpdateProgressView: View {
     let updater: Updater
     let version: AppVersion
 
-    private var isInstalling: Bool { updater.step == .installing }
+    /// 下载完以后不能取消。
+    private var isInstalling: Bool { updater.step == .installing || updater.step == .checking }
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -51,7 +52,7 @@ struct UpdateProgressView: View {
                 .resizable()
                 .frame(width: 56, height: 56)
             VStack(alignment: .leading, spacing: 8) {
-                Text(isInstalling ? "正在安装 PasteMe \(version)" : "正在下载 PasteMe \(version)")
+                Text(title)
                     .font(.headline)
                 progress
                 HStack {
@@ -67,6 +68,14 @@ struct UpdateProgressView: View {
         .frame(width: 400)
     }
 
+    private var title: String {
+        switch updater.step {
+        case .checking: "正在检查 PasteMe \(version)"
+        case .installing: "正在安装 PasteMe \(version)"
+        case .downloading, nil: "正在下载 PasteMe \(version)"
+        }
+    }
+
     @ViewBuilder private var progress: some View {
         switch updater.step {
         case .downloading(let received, let total?) where total > 0:
@@ -75,6 +84,9 @@ struct UpdateProgressView: View {
         case .downloading(let received, _):
             ProgressView().progressViewStyle(.linear)
             detail(Self.size(received))
+        case .checking:
+            ProgressView().progressViewStyle(.linear)
+            detail("核对安装包里的应用，完成后放进「下载」文件夹并打开")
         case .installing, nil:
             ProgressView().progressViewStyle(.linear)
             detail("检查安装包并替换应用，完成后 PasteMe 会重新打开")

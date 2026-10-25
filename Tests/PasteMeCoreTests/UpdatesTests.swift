@@ -33,13 +33,6 @@ import Testing
         #expect(UpdateRelease.parse(latestRelease: Self.releaseJSON(tag: "v0.2.0", prerelease: true)) == nil)
         #expect(UpdateRelease.parse(latestRelease: Self.releaseJSON(tag: "nightly")) == nil)
         #expect(UpdateRelease.parse(latestRelease: Data("not json".utf8)) == nil)
-
-        // 手动下载只去这个项目的 GitHub 页面。
-        #expect(release.downloadPage == release.page)
-        for page in ["https://evil.test/Skjz/pasteMe/releases", "http://github.com/Skjz/pasteMe/releases", "https://github.com/someone/pasteMe/releases"] {
-            let other = UpdateRelease(version: release.version, notes: "", page: URL(string: page)!, dmg: nil, signature: nil)
-            #expect(other.downloadPage.absoluteString == "https://github.com/Skjz/pasteMe/releases", "\(page)")
-        }
     }
 
     @Test func onlyTheReleaseKeyCanSignAnUpdate() throws {
@@ -192,6 +185,13 @@ import Testing
         #expect(throws: UpdateError.unexpectedApp("bundle id 不是 io.github.skjz.PasteMe")) {
             try UpdateInstaller.check(dev, version: AppVersion("0.2.0")!, bundleID: AppVariant.releaseBundleID)
         }
+
+        // 「下载安装包」交给用户之前做同样的检查，不换应用。
+        try UpdateInstaller.inspect(dmg: dmg, expecting: AppVersion("0.2.0")!)
+        #expect(throws: UpdateError.unexpectedApp("版本不是 0.3.0")) {
+            try UpdateInstaller.inspect(dmg: dmg, expecting: AppVersion("0.3.0")!)
+        }
+        #expect(Self.version(of: installed) == "0.1.0")
 
         try installer.install(dmg: dmg, expecting: AppVersion("0.2.0")!)
         #expect(Self.version(of: installed) == "0.2.0")

@@ -23,6 +23,8 @@ final class Updater {
     enum InstallStep: Equatable {
         /// 正在下载 DMG：已经读到的字节数、总大小（服务器没给时为 nil）。
         case downloading(received: Int64, total: Int64?)
+        /// 下载完了，正在检查安装包里的应用（换不了应用、只把安装包交给用户时）。
+        case checking
         /// 下载完了，正在验证、挂载、换应用。这一步不能取消。
         case installing
     }
@@ -153,10 +155,9 @@ final class Updater {
         return installer.unavailableReason
     }
 
-    /// 下载并验签。`replacing` 时换掉应用、重新打开；否则把验过的 DMG 放进「下载」文件夹打开。
+    /// 下载并验签。`replacing` 时换掉应用、重新打开；否则检查过 DMG 里的应用后放进「下载」文件夹打开。
     ///
-    /// 验签之前的失败（下载不完整、超过大小上限、网络错误）不给下载页面：这时还不知道这次发布是不是发布者的，
-    /// 让用户去手动下载，等于绕过了签名。验签通过之后才失败的，才给项目的发布页。
+    /// 失败时都不给发布页：发布页上的文件没有一个是验过的，让用户去手动下载等于绕过签名。
     private func install(_ release: UpdateRelease, replacing: Bool) async {
         guard !isInstalling else { return }
         isInstalling = true
@@ -179,6 +180,10 @@ final class Updater {
             }
             verified = true
             guard replacing else {
+                // 和自动替换一样，先看 DMG 里的应用对不对（bundle id、版本和 tag 一样、codesign），再交给用户。
+                step = .checking
+                let version = release.version
+                try await Task.detached { try UpdateInstaller.inspect(dmg: dmg, expecting: version) }.value
                 let downloads = try FileManager.default.url(for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 let kept = try VerifiedDMG.keep(dmg, in: downloads)
                 window.close()
@@ -200,21 +205,22 @@ final class Updater {
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
             return
-        } catch where !verified {
+        } catch UpdateError.unexpectedApp(let reason) {
+            // 签名对、里面的应用不对：比如拿一个旧版本的签名包顶着新的 tag。签名只覆盖这一个文件，发布页上的别的文件没签过，所以也不给发布页。
             window.close()
-            NSLog("PasteMe: 下载更新失败：\(error)")
-            inform("没有下载完 PasteMe \(release.version)", "\(error)。现在用的 PasteMe 没有变，稍后再试一次。")
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "PasteMe \(release.version) 的安装包不对"
+            alert.informativeText = "\(reason)，没有安装。请不要手动下载安装这一版。现在用的 PasteMe 没有变。"
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
             return
         } catch {
+            // 网络、挂载、拷贝、替换出错。不给发布页：手动安装只能走「下载安装包」，它总是先验签、再查内容。
             window.close()
-            NSLog("PasteMe: 安装更新失败：\(error)")
-            let alert = NSAlert()
-            alert.messageText = "没有装上 PasteMe \(release.version)"
-            alert.informativeText = "\(error)。安装包的签名是对的，现在用的 PasteMe 没有变，可以到发布页手动下载。"
-            alert.addButton(withTitle: "打开下载页面")
-            alert.addButton(withTitle: "关闭")
-            NSApp.activate(ignoringOtherApps: true)
-            if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(release.downloadPage) }
+            NSLog("PasteMe: 更新失败：\(error)")
+            inform(verified ? "没有装上 PasteMe \(release.version)" : "没有下载完 PasteMe \(release.version)",
+                   "\(error)。现在用的 PasteMe 没有变，稍后再试一次。")
             return
         }
         relaunch()
@@ -254,11 +260,15 @@ final class Updater {
         alert.runModal()
     }
 
-    /// 发布说明：按 Markdown 显示粗体、链接和代码，保留换行，太长时可以滚动。
-    private static func notesView(_ notes: String) -> NSView {
+    /// 发布说明：按 Markdown 去掉标记、保留换行，太长时可以滚动。
+    ///
+    /// 链接去掉，只留文字：弹窗出现时还没有下载、没有验签，发布说明和 `.sig` 一样可能是别人传的，
+    /// 文本视图里的链接一点就交给系统打开（`file://` 也行），用户会装上没验过的东西。
+    static func notesView(_ notes: String) -> NSView {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         let text = (try? NSMutableAttributedString(AttributedString(markdown: notes, options: options), including: \.appKit))
             ?? NSMutableAttributedString(string: notes)
+        text.removeAttribute(.link, range: NSRange(location: 0, length: text.length))
         text.addAttributes([.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.labelColor],
                            range: NSRange(location: 0, length: text.length))
         let scroll = NSTextView.scrollableTextView()

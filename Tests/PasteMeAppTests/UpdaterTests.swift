@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import PasteMeApp
@@ -69,6 +70,19 @@ import PasteMeCore
         updater.checkIfDue()
         await updater.checking?.value
         #expect(requests == 1 && updater.available == nil)
+    }
+
+    @Test func releaseNotesHaveNoLinks() throws {
+        // 弹窗出现在验签之前，发布说明里的链接一点就会打开（file:// 也行）。
+        let view = Updater.notesView("**新功能**：下载 [这个](file:///Applications/Calculator.app) 或 https://evil.test")
+        let text = try #require((view as? NSScrollView)?.documentView as? NSTextView)
+        let storage = try #require(text.textStorage)
+        #expect(storage.string == "新功能：下载 这个 或 https://evil.test")
+        var links = 0
+        storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+            if value != nil { links += 1 }
+        }
+        #expect(links == 0)
     }
 
     @Test func turnedOffOrDevelopmentBuildsNeverAsk() async {
