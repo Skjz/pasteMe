@@ -41,6 +41,11 @@ import Testing
         ] {
             #expect(StaleGrant.action(for: situation(app: app)) == .nothing, "\(app)")
         }
+        // LaunchServices 登记的也正是这份副本时（比如只在 DMG 里打开过、还没拖进「应用程序」），路径相等，
+        // 也要靠 /Volumes 和 App Translocation 的判断挡住。
+        for app in ["/Volumes/PasteMe 0.2.0/PasteMe.app", "/private/var/folders/x/AppTranslocation/1234/d/PasteMe.app"] {
+            #expect(StaleGrant.action(for: situation(app: app, registered: app)) == .nothing, "\(app)")
+        }
         // 系统还没登记这个 bundle id（应用放在临时目录里），tccutil 也删不了。
         #expect(StaleGrant.action(for: situation(registered: nil)) == .nothing)
         #expect(StaleGrant.action(for: situation(requirement: nil)) == .nothing)
