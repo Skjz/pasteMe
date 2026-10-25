@@ -26,5 +26,5 @@
 - 清理只在启动时、没有授权、这份签名没处理过时做：有效的授权不会被删；用户自己关掉开关、或者在提示里拒绝了，以后启动不会再删它的条目；没有授权时启动照样弹系统的授权提示（`requestTrust`），和以前一样。`tccutil` 失败（例如 -10814）写进日志，下次启动再试。
 - 系统按证书的 SHA-1 认应用，不按名字。`make-dmg.sh` 签完核对 `certificate leaf` 是 `CERTIFICATE_SHA1`，换了一张同名的证书会停下。
 - 证书的私钥导入时允许 `/usr/bin/codesign` 不弹窗使用（`-T`），本机任何调用 `codesign` 的进程都能用它签名。私钥被人拿走时，用它签的同 bundle id 程序会直接继承用户已有的辅助功能授权；自动更新仍然要过 ADR 0010 的 Ed25519，那把钥匙每次读取都要输入钥匙串密码。这里没有同样收紧，是因为每次打包都要签好几次（`bundle.sh` 签整个应用），而这张证书能带来的只是授权，带不来更新。
-- 证书签名、带 hardened runtime 的应用，`codesign --verify --deep --strict` 在 macOS 27 上通过；macOS 14 上还没有试过（手边没有 14 的 Mac）。自动更新的 `UpdateInstaller.check` 会做这一步，在 14 上不过的话 14 的用户就装不上更新。
+- 证书签名、带 hardened runtime 的应用，`codesign --verify --deep --strict` 在 macOS 27 和 macOS 14.6.1（VMPal 里的虚拟机，2026-10-25）上都通过，签名是 `certificate leaf = H"712284cf…"`；在 14.6.1 上从挂载的 DMG 里取出来也能启动，菜单栏图标和辅助功能授权提示都出现了。自动更新的 `UpdateInstaller.check` 做的就是这一步。`spctl` 在 14 上照样拒绝（没有公证），第一次打开要「仍要打开」。
 - 证书 20 年后过期。`codesign` 没有加可信时间戳，过期后系统按当时的时间判断签名，到期前要换证书（用户再打开一次开关）。
