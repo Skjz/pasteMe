@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import PasteMeApp
 import PasteMeCore
@@ -83,6 +84,40 @@ import PasteMeCore
             if value != nil { links += 1 }
         }
         #expect(links == 0)
+    }
+
+    static let steps: [Updater.InstallStep?] = [
+        .downloading(received: 0, total: nil),
+        .downloading(received: 1_200_000, total: 3_033_655),
+        .checking,
+        .installing,
+    ]
+
+    static func height(_ view: some View) -> CGFloat {
+        NSHostingView(rootView: view).fittingSize.height
+    }
+
+    @Test func everyStepFitsTheWindowSizedForTheFirst() {
+        // 窗口按第一步定下大小以后不再变（UpdateWindow），后面每一步都要一样高。
+        let version = AppVersion("0.2.1")!
+        let heights = Self.steps.map { Self.height(UpdateProgressContent(step: $0, version: version) {}) }
+        #expect(Set(heights).count == 1, "\(heights)")
+    }
+
+    @Test func detailTextsAreNotCutOff() {
+        // 在虚拟机里的 macOS 14 上看到过「完成后 PasteMe 会重新…」：说明比一行长，窗口又不长高。
+        // 同一句话在 macOS 27 上排得下一行，在 14 上要两行，所以留两行、并检查每一句都不超过两行。
+        func natural(_ text: String) -> CGFloat {
+            Self.height(Text(text).font(.callout).frame(width: UpdateProgressContent.textWidth, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true))
+        }
+        for step in Self.steps {
+            let text = UpdateProgressContent.detailText(for: step)
+            #expect(natural(text) <= Self.height(UpdateProgressContent.detail(text).frame(width: UpdateProgressContent.textWidth)), "\(text)")
+        }
+        // 量法本身认得出放不下的文字。
+        let long = String(repeating: "检查安装包并替换应用，", count: 8)
+        #expect(natural(long) > Self.height(UpdateProgressContent.detail(long).frame(width: UpdateProgressContent.textWidth)))
     }
 
     @Test func turnedOffOrDevelopmentBuildsNeverAsk() async {
