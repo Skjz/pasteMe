@@ -116,3 +116,5 @@ https://github.com/user-attachments/assets/3354eec4-f3db-4d77-bcdc-d2529a14f3c0
 接下来打算做：在设置里选择不记录哪些应用；PDF、视频等文件的缩略图；iCloud 同步。
 
 PasteMe 的界面和交互参考了 [Paste](https://pasteapp.io)。
+
+PasteMe 以 [MIT 协议](LICENSE)开源。
