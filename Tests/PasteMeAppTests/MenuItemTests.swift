@@ -31,6 +31,8 @@ import Testing
 
     @Test func submenuStaysEnabledEveryTimeTheMenuOpens() {
         for _ in 0..<3 {
+            // 改之前 `updatePauseItem` 就是先清掉 action 再挂同一个子菜单。
+            item.action = nil
             item.showSubmenu(submenu)
             #expect(isEnabledWhenOpened())
             #expect(item.action == #selector(NSMenu.submenuAction(_:)))
