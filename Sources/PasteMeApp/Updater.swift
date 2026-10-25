@@ -88,9 +88,10 @@ final class Updater {
             if manual { inform("PasteMe \(current) 已经是最新版本", "") }
             return
         }
-        // 没有签名的发布只在手动检查时说明，自动检查不提示「可以更新了」。
-        guard manual || release.canInstall else {
+        // 没有签名的发布不放进菜单：自动检查不提示，手动检查只警告。
+        guard release.canInstall else {
             available = nil
+            if manual { warnUnsigned(release) }
             return
         }
         available = release
@@ -109,23 +110,19 @@ final class Updater {
         alert.messageText = "PasteMe \(release.version) 可以更新了"
         var text = "你现在用的是 \(current.map(String.init(describing:)) ?? "开发版本")。"
         if let reason {
-            text += "\(reason)，请到下载页面下载新版本。"
+            text += "\(reason)，不能自动替换。PasteMe 会下载安装包、核对签名，放进「下载」文件夹并打开，把里面的 PasteMe 拖进「应用程序」就行。"
         } else {
             text += "更新后 PasteMe 会重新打开。之后要在「系统设置 → 隐私与安全性 → 辅助功能」里删掉旧的 PasteMe，再重新允许。"
         }
         alert.informativeText = text
         if !release.notes.isEmpty { alert.accessoryView = Self.notesView(release.notes) }
-        alert.addButton(withTitle: reason == nil ? "安装并重新打开" : "打开下载页面")
+        alert.addButton(withTitle: reason == nil ? "安装并重新打开" : "下载安装包")
         alert.addButton(withTitle: "以后再说")
         alert.addButton(withTitle: "跳过这个版本")
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            if reason == nil {
-                installTask = Task { await install(release) }
-            } else {
-                NSWorkspace.shared.open(release.downloadPage)
-            }
+            installTask = Task { await install(release, replacing: reason == nil) }
         case .alertThirdButtonReturn:
             settings.skippedUpdateVersion = release.version.description
             available = nil
@@ -150,13 +147,17 @@ final class Updater {
         }
     }
 
-    /// 签名没问题、但这台 Mac 上换不了应用的原因，能装时为 nil。这时让用户去下载页面手动安装。
+    /// 这台 Mac 上换不了应用的原因，能换时为 nil。这时只下载、验签，把安装包交给用户手动安装。
     private func installReason(_ release: UpdateRelease) -> String? {
         if variant != .release { return "开发版不自动更新" }
         return installer.unavailableReason
     }
 
-    private func install(_ release: UpdateRelease) async {
+    /// 下载并验签。`replacing` 时换掉应用、重新打开；否则把验过的 DMG 放进「下载」文件夹打开。
+    ///
+    /// 验签之前的失败（下载不完整、超过大小上限、网络错误）不给下载页面：这时还不知道这次发布是不是发布者的，
+    /// 让用户去手动下载，等于绕过了签名。验签通过之后才失败的，才给项目的发布页。
+    private func install(_ release: UpdateRelease, replacing: Bool) async {
         guard !isInstalling else { return }
         isInstalling = true
         step = .downloading(received: 0, total: nil)
@@ -168,12 +169,21 @@ final class Updater {
             step = nil
             installTask = nil
         }
+        var verified = false
         do {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PasteMe-update-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: directory) }
             let dmg = try await client.download(release, into: directory) { received, total in
                 Task { @MainActor [weak self] in self?.downloaded(received, of: total) }
+            }
+            verified = true
+            guard replacing else {
+                let downloads = try FileManager.default.url(for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                let kept = try VerifiedDMG.keep(dmg, in: downloads)
+                window.close()
+                NSWorkspace.shared.open(kept)
+                return
             }
             step = .installing
             let installer = installer
@@ -190,12 +200,17 @@ final class Updater {
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
             return
+        } catch where !verified {
+            window.close()
+            NSLog("PasteMe: 下载更新失败：\(error)")
+            inform("没有下载完 PasteMe \(release.version)", "\(error)。现在用的 PasteMe 没有变，稍后再试一次。")
+            return
         } catch {
             window.close()
             NSLog("PasteMe: 安装更新失败：\(error)")
             let alert = NSAlert()
             alert.messageText = "没有装上 PasteMe \(release.version)"
-            alert.informativeText = "\(error)。现在用的 PasteMe 没有变，可以到下载页面手动下载。"
+            alert.informativeText = "\(error)。安装包的签名是对的，现在用的 PasteMe 没有变，可以到发布页手动下载。"
             alert.addButton(withTitle: "打开下载页面")
             alert.addButton(withTitle: "关闭")
             NSApp.activate(ignoringOtherApps: true)

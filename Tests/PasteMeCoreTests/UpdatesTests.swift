@@ -200,6 +200,22 @@ import Testing
         #expect(!mounted.contains(directory.path))
     }
 
+    @Test func verifiedDMGsAreKeptWithoutOverwriting() throws {
+        let directory = try ClipStoreTests.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let downloads = directory.appendingPathComponent("Downloads")
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: downloads.appendingPathComponent("PasteMe-0.2.0.dmg"))
+
+        let dmg = directory.appendingPathComponent("PasteMe-0.2.0.dmg")
+        try Data("new".utf8).write(to: dmg)
+        let kept = try VerifiedDMG.keep(dmg, in: downloads)
+        #expect(kept.lastPathComponent == "PasteMe-0.2.0 2.dmg")
+        #expect(FileManager.default.contents(atPath: kept.path) == Data("new".utf8))
+        #expect(FileManager.default.contents(atPath: downloads.appendingPathComponent("PasteMe-0.2.0.dmg").path) == Data("old".utf8))
+        #expect(!FileManager.default.fileExists(atPath: dmg.path))
+    }
+
     @Test func appsOutsideApplicationsAreNotReplaced() {
         #expect(UpdateInstaller(app: URL(fileURLWithPath: "/Volumes/PasteMe 0.2.0/PasteMe.app")).unavailableReason != nil)
         let translocated = "/private/var/folders/x/AppTranslocation/1234/d/PasteMe.app"

@@ -230,6 +230,22 @@ public struct UpdateClient: Sendable {
     }
 }
 
+/// 换不了应用时（开发版、从 DMG 里运行、没有写权限），把验过签名的 DMG 留给用户手动安装。
+public enum VerifiedDMG {
+    /// 把 `dmg` 移进 `folder`，重名时加「 2」「 3」，返回新位置。
+    public static func keep(_ dmg: URL, in folder: URL) throws -> URL {
+        let name = dmg.deletingPathExtension().lastPathComponent
+        var target = folder.appendingPathComponent(dmg.lastPathComponent)
+        var number = 2
+        while FileManager.default.fileExists(atPath: target.path) {
+            target = folder.appendingPathComponent("\(name) \(number).\(dmg.pathExtension)")
+            number += 1
+        }
+        try FileManager.default.moveItem(at: dmg, to: target)
+        return target
+    }
+}
+
 /// 把验证过的 DMG 里的 PasteMe.app 换到正在运行的应用的位置。
 ///
 /// 先把新应用拷到和旧应用同一个卷上的临时目录里检查（bundle id 是发布版、版本和发布的一样、`codesign --verify` 通过），
