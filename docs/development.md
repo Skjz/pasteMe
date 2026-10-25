@@ -14,7 +14,7 @@ scripts/bundle.sh
 open build/PasteMe.app
 ```
 
-`scripts/bundle.sh` 编译 release 版本，打包成开发版 `build/PasteMe.app`（名字是 PasteMe Dev，见下面的「开发版」）并签名。默认使用钥匙串里第一个 “Apple Development” 证书；没有证书时用临时签名。发布用的 DMG 由 `scripts/make-dmg.sh` 打包，步骤见 [architecture.md](architecture.md) 的「发布」。
+`scripts/bundle.sh` 编译 release 版本，打包成开发版 `build/PasteMe.app`（名字是 PasteMe Dev，见下面的「开发版」）并签名。默认使用钥匙串里第一个 “Apple Development” 证书；没有证书时用临时签名。发布用的 DMG 由 `scripts/make-dmg.sh` 打包，步骤见 [releasing.md](releasing.md)。
 
 ## 开发版
 
