@@ -179,7 +179,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 ```
 
 - 发送 ⌘V 前的 0.08 秒延迟（等面板收起、键盘焦点回到目标应用）放在 `CGEventPasteKeystroke` 里，`Paster.paste` 本身是同步的，测试不需要等待。
-- 有没有辅助功能权限，由按键 adapter 的 `isTrusted` 判断；弹出系统授权提示是应用层的事（`Accessibility`）。启动时没有授权，先用 `Accessibility.forgetStaleGrant`（`tccutil reset Accessibility <bundle id>`）删掉签名变了以后失效的条目，再弹提示，系统才会把新的 PasteMe 加进列表（ADR 0011）。
+- 有没有辅助功能权限，由按键 adapter 的 `isTrusted` 判断；弹出系统授权提示是应用层的事（`Accessibility`）。启动时先调用 `Accessibility.forgetStaleGrantIfNeeded`，再在没有授权时弹提示：签名变了以后列表里的旧条目失效，系统不会把新的 PasteMe 加进列表，要先用 `tccutil reset Accessibility <bundle id>` 删掉它（ADR 0011）。`tccutil` 按 bundle id 删掉全部记录、不看路径，所以要不要删由 `StaleGrant.action` 决定：只在没有授权、正在运行的就是 LaunchServices 登记的那一份（不是 DMG、App Translocation、`build/` 里试跑的副本）、而且这份 designated requirement 没处理过时才删；授权过的和清理成功过的 requirement 记在 `Settings.accessibilityRequirement`，用户自己关掉的开关不会被重置。`tccutil` 退出码不是 0 时写日志、不记下。
 - 以文件粘贴和拖出图片生成的 PNG 放在 `~/Library/Caches/PasteMe/Files/<条目 id>/`（开发版是 `PasteMe Dev` 目录），文件名用复制时间。再次用到时只更新修改时间；`AppDelegate` 在启动 3 秒后和之后每小时调用 `TemporaryFiles.removeExpired()`，删除一天没用过的。
 - `TargetApp` 在 `PanelController.show()` 时从前台应用取得。面板不激活 PasteMe，所以生产环境里 ⌘V 直接发给前台应用，发送按键用不到这个值。文本粘贴到访达时附带 .txt 文件（#36）靠它判断目标；粘贴到其他应用不附带文件，否则有的应用会把文本粘贴成附件。#13 的粘贴事件（记录粘贴到了哪个应用）也会用到它。
 
@@ -262,6 +262,6 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 版本号按 SemVer，tag 写成 `v0.1.0` 这样。
 
 1. 改 `Resources/Info.plist` 的 `CFBundleShortVersionString`，`CFBundleVersion` 加一；README「功能」标题里的版本号一起改。CHANGELOG 把 Unreleased 下的条目移到新版本的标题 `## [x.y.z] - 日期` 下，文末的比较链接加上新版本。这些改动走 PR 合进 main。
-2. 在合并后的 main 上运行 `scripts/make-dmg.sh`，得到 `build/PasteMe-x.y.z.dmg` 和自动更新用的签名 `build/PasteMe-x.y.z.dmg.sig`（私钥在发布者的钥匙串里，没有就停下，见 ADR 0010）。它带 `PASTEME_RELEASE=1` 打包，bundle id 保持 `io.github.skjz.PasteMe`，接得上用户已有的设置和历史；应用是通用二进制、临时签名，原因写在脚本开头。
-3. 发布前挂载 DMG（`hdiutil attach -nobrowse -readonly`）检查：`lipo -info` 有 x86_64 和 arm64；`xcrun vtool -show-build` 里每个架构的 `sdk` 都是真实的 SDK 版本；`codesign -dv` 的 `Authority` 是 `PasteMe Release`（ADR 0011，证书由 `scripts/release-certificate.sh` 生成，只在发布者的钥匙串里）；二进制里搜不到本机路径（`bundle.sh` 打发布版时用 `strip -S` 去掉调试符号，搜到 `$HOME/` 就报错退出）；Info.plist 的 `CFBundleIdentifier` 是 `io.github.skjz.PasteMe`，不是 `.dev`。用临时 home 把两个架构各启动一次（`arch -x86_64` 要装了 Rosetta 的 Mac）。这要从 shell 直接运行，会弹署名为终端或 Claude 的授权框（见「在真实应用里验证」第 3 步），先告诉用户，弹出后点「拒绝」。
-4. `gh release create vx.y.z build/PasteMe-x.y.z.dmg build/PasteMe-x.y.z.dmg.sig --target main`，两个文件都要传，少了 `.sig` 用户的 PasteMe 只能提示、不能自动安装，tag 打在合并后的 main 上。发布说明写中文：这一版的主要变化、安装步骤（第一次打开要在「隐私与安全性」里点「仍要打开」，升级后要重新允许辅助功能）、系统要求，以及 DMG 的 SHA-256。
+2. 在合并后的 main 上运行 `scripts/make-dmg.sh`，得到 `build/PasteMe-x.y.z.dmg` 和自动更新用的签名 `build/PasteMe-x.y.z.dmg.sig`（私钥在发布者的钥匙串里，没有就停下，见 ADR 0010）。它带 `PASTEME_RELEASE=1` 打包，bundle id 保持 `io.github.skjz.PasteMe`，接得上用户已有的设置和历史；应用是通用二进制，用自签名证书「PasteMe Release」签名（ADR 0011）；钥匙串里没有这张证书、或者签出来的 `certificate leaf` 不是 `CERTIFICATE_SHA1`（`712284cf…983b`）就停下，不会退回临时签名，也不会用一张同名的新证书签。
+3. 发布前挂载 DMG（`hdiutil attach -nobrowse -readonly`）检查：`lipo -info` 有 x86_64 和 arm64；`xcrun vtool -show-build` 里每个架构的 `sdk` 都是真实的 SDK 版本；`codesign -d -r-` 里是 `certificate leaf = H"712284cfaa92f8c43b961438cd9dc0e83a0d983b"`（只看 `Authority=PasteMe Release` 不够，同名的证书谁都能做）；二进制里搜不到本机路径（`bundle.sh` 打发布版时用 `strip -S` 去掉调试符号，搜到 `$HOME/` 就报错退出）；Info.plist 的 `CFBundleIdentifier` 是 `io.github.skjz.PasteMe`，不是 `.dev`。用临时 home 把两个架构各启动一次（`arch -x86_64` 要装了 Rosetta 的 Mac）。这要从 shell 直接运行，会弹署名为终端或 Claude 的授权框（见「在真实应用里验证」第 3 步），先告诉用户，弹出后点「拒绝」。
+4. `gh release create vx.y.z build/PasteMe-x.y.z.dmg build/PasteMe-x.y.z.dmg.sig --target main`，两个文件都要传，少了 `.sig` 用户的 PasteMe 只能提示、不能自动安装，tag 打在合并后的 main 上。发布说明写中文：这一版的主要变化、安装步骤（第一次打开要在「隐私与安全性」里点「仍要打开」；用同一张证书签的版本之间升级，辅助功能的授权仍然有效；从 0.1.0 升上来时，PasteMe 会弹出授权提示，在列表里打开新出现的那个 PasteMe 的开关）、系统要求，以及 DMG 的 SHA-256。

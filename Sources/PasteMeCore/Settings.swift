@@ -154,6 +154,12 @@ public struct Settings {
         nonmutating set { defaults.set(newValue, forKey: Key.skippedUpdateVersion) }
     }
 
+    /// 辅助功能处理过的签名：授权过的、或者启动时清理过失效条目的 designated requirement（`StaleGrant`，ADR 0011）。
+    public var accessibilityRequirement: String? {
+        get { defaults.string(forKey: Key.accessibilityRequirement) }
+        nonmutating set { defaults.set(newValue, forKey: Key.accessibilityRequirement) }
+    }
+
     /// 改一个应用的别名，其他应用的不变。
     public func setAliases(_ aliases: [String], for bundleID: String) {
         var all = appAliases
@@ -175,6 +181,7 @@ public struct Settings {
         static let checksForUpdates = "checksForUpdates"
         static let lastUpdateCheck = "lastUpdateCheck"
         static let skippedUpdateVersion = "skippedUpdateVersion"
+        static let accessibilityRequirement = "accessibilityRequirement"
 
         static func shortcut(_ action: GlobalAction) -> String {
             "shortcut." + action.rawValue

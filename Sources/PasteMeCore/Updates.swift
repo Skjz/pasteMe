@@ -82,7 +82,7 @@ public struct UpdateRelease: Equatable, Sendable {
 }
 
 /// 更新包的签名（ADR 0010）：发布者用只在自己钥匙串里的 Ed25519 私钥给 DMG 签名，应用用编进来的公钥验证，
-/// 验证不过就不安装。发布版用的是临时签名，系统认不出发布者，只有这一道能挡住换了内容的 DMG。
+/// 验证不过就不安装。发布版没有 Developer ID 签名（0.1.0 是临时签名，之后是谁都能做一张同名的自签名证书，ADR 0011），系统认不出发布者，只有这一道能挡住换了内容的 DMG。
 public enum UpdateSignature {
     /// `swift scripts/update-signing.swift public-key` 打印的公钥。换钥匙等于让已经装好的版本收不到自动更新。
     public static let publicKey = Data(base64Encoded: "HQ9qkctnmqdNl3NA2m+RUImZpWDb0xKEfr+vY2Ae04E=")!
