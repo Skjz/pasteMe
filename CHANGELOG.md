@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-25
+
 ### Added
 
 - PasteMe checks GitHub once a day for a new version and can install it. When one is out, the status bar menu shows 更新到 PasteMe x.y.z… and a short notice appears; nothing pops up while you work. Installing opens a small window with a progress bar and the downloaded size, where the download can be cancelled; it then refuses the DMG unless it carries the release signature (a release without a valid signature is reported as unverified, with no download link; when the app can't be replaced in place, the verified DMG is put in Downloads and opened instead), replaces the app and opens the new one. Check by hand with 检查更新… in the status bar menu or 立即检查 on the 关于 page of the settings window, where the daily check can also be turned off. The check sends nothing but the request itself. Updating from 0.1.0 still needs one manual download.
@@ -131,5 +133,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The paste flow moved from `AppDelegate` into `Paster` in `PasteMeCore`. `paste(_:as:into:)` takes `.original` or `.plainText` and a target app, and returns `.pasted` or `.copiedOnly` (no accessibility permission). Writing the pasteboard and sending ⌘V are injected adapters, so tests run against in-memory fakes. The app hides the panel before calling it.
 - New `Settings` type in `PasteMeCore`, stored in the `io.github.skjz.PasteMe` defaults domain, where every user-facing switch is defined.
 
-[Unreleased]: https://github.com/Skjz/pasteMe/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Skjz/pasteMe/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Skjz/pasteMe/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Skjz/pasteMe/releases/tag/v0.1.0
