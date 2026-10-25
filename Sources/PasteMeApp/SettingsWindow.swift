@@ -28,8 +28,11 @@ final class SettingsWindow {
         if let page { model.page = page }
         let window = self.window ?? makeWindow()
         self.window = window
-        // PasteMe 平时不激活，要先激活才能在窗口里打字。
-        NSApp.activate()
+        // PasteMe 平时不激活，要先激活才能在窗口里打字。从菜单栏菜单打开时，`NSApp.activate()` 的请求
+        // 偶尔不被系统执行，前台还是原来的应用，窗口被挡在后面（#62）。先把窗口放到最上面，激活失败时至少看得见；
+        // 激活用和更新窗口一样的 `activate(ignoringOtherApps:)`。
+        window.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
 

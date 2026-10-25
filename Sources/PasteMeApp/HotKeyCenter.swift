@@ -9,6 +9,15 @@ extension NSMenuItem {
         keyEquivalent = combo?.keyEquivalent ?? ""
         keyEquivalentModifierMask = combo?.modifierMask ?? []
     }
+
+    /// 让菜单项展开 `menu`。挂子菜单时 AppKit 只在 action 为 nil 时把它设成 `submenuAction:`，
+    /// 挂的是已经挂着的同一个子菜单时什么都不做；action 留着别的值或 nil，菜单打开时这一项会是灰的（#61），
+    /// 所以这里自己设 action。
+    @MainActor
+    func showSubmenu(_ menu: NSMenu) {
+        submenu = menu
+        action = #selector(NSMenu.submenuAction(_:))
+    }
 }
 
 /// 用 Carbon 的 `RegisterEventHotKey` 注册全局快捷键。

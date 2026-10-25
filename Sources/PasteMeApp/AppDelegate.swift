@@ -447,10 +447,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             pauseItem.showShortcut(shortcuts.combo(for: .pause))
             pauseItem.title = until == .distantFuture ? "恢复记录" : "恢复记录（\(Self.timeFormat.string(from: until)) 自动恢复）"
         } else {
-            pauseItem.action = nil
             pauseItem.keyEquivalent = ""
             pauseItem.title = "暂停记录"
-            pauseItem.submenu = pauseMenu
+            pauseItem.showSubmenu(pauseMenu)
         }
     }
 
