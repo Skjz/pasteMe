@@ -118,3 +118,5 @@ Later versions install from Update to… in the status bar menu, and the Accessi
 Planned: choosing apps to ignore in settings, thumbnails for PDFs, videos and other files, and iCloud sync.
 
 PasteMe's look and interaction are modeled on [Paste](https://pasteapp.io).
+
+PasteMe is released under the [MIT License](LICENSE).

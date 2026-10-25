@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- PasteMe is now released under the MIT License (see LICENSE). Before, the repository had no license, so the code could be read but not reused.
 - An English README (README.en.md), linked from the top of the Chinese one.
 - A 30-second demo video under the opening picture of both READMEs, with captions in Chinese and English.
 
