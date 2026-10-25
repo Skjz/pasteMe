@@ -33,6 +33,13 @@ import Testing
         #expect(UpdateRelease.parse(latestRelease: Self.releaseJSON(tag: "v0.2.0", prerelease: true)) == nil)
         #expect(UpdateRelease.parse(latestRelease: Self.releaseJSON(tag: "nightly")) == nil)
         #expect(UpdateRelease.parse(latestRelease: Data("not json".utf8)) == nil)
+
+        // 手动下载只去这个项目的 GitHub 页面。
+        #expect(release.downloadPage == release.page)
+        for page in ["https://evil.test/Skjz/pasteMe/releases", "http://github.com/Skjz/pasteMe/releases", "https://github.com/someone/pasteMe/releases"] {
+            let other = UpdateRelease(version: release.version, notes: "", page: URL(string: page)!, dmg: nil, signature: nil)
+            #expect(other.downloadPage.absoluteString == "https://github.com/Skjz/pasteMe/releases", "\(page)")
+        }
     }
 
     @Test func onlyTheReleaseKeyCanSignAnUpdate() throws {
@@ -44,6 +51,9 @@ import Testing
         #expect(!UpdateSignature.isValid(signature, for: Data("dmG".utf8), publicKey: key.publicKey.rawRepresentation))
         #expect(!UpdateSignature.isValid(signature, for: dmg, publicKey: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
         #expect(!UpdateSignature.isValid(Data("garbage".utf8), for: dmg, publicKey: key.publicKey.rawRepresentation))
+        // 签名后面多接几个字节也不认。
+        let padded = Data((try key.signature(for: dmg) + Data([0, 0])).base64EncodedString().utf8)
+        #expect(!UpdateSignature.isValid(padded, for: dmg, publicKey: key.publicKey.rawRepresentation))
         // 编进应用的公钥要能用。
         #expect((try? Curve25519.Signing.PublicKey(rawRepresentation: UpdateSignature.publicKey)) != nil)
     }
@@ -111,6 +121,11 @@ import Testing
         StubURLProtocol.set(.data(Data("a different dmg".utf8), contentType: "application/octet-stream"), for: release.dmg!.absoluteString)
         await #expect(throws: UpdateError.badSignature) { try await client.download(release, into: directory) }
         #expect(!FileManager.default.fileExists(atPath: file.path))
+
+        // 很大的 .sig 读到 1 KB 就停下，不等读完再验证。
+        StubURLProtocol.set(.data(dmg, contentType: "application/octet-stream"), for: release.dmg!.absoluteString)
+        StubURLProtocol.set(.data(Data(repeating: 65, count: 64 * 1024), contentType: "text/plain"), for: release.signature!.absoluteString)
+        await #expect(throws: UpdateError.badSignature) { try await client.download(release, into: directory) }
     }
 
     @Test func downloadReportsProgressAndCanBeCancelled() async throws {

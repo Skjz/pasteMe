@@ -26,10 +26,11 @@ import PasteMeCore
         }
     }
 
-    static func release(_ version: String) -> UpdateRelease {
-        UpdateRelease(
+    static func release(_ version: String, signed: Bool = true) -> UpdateRelease {
+        let dmg = URL(string: "https://github.com/Skjz/pasteMe/releases/download/v\(version)/PasteMe-\(version).dmg")!
+        return UpdateRelease(
             version: AppVersion(version)!, notes: "", page: URL(string: "https://github.com/Skjz/pasteMe/releases")!,
-            dmg: nil, signature: nil
+            dmg: dmg, signature: signed ? dmg.appendingPathExtension("sig") : nil
         )
     }
 
@@ -59,6 +60,15 @@ import PasteMeCore
         updater.checkIfDue()
         await updater.checking?.value
         #expect(requests == 2 && updater.available == nil)
+    }
+
+    @Test func unsignedReleasesAreNotAnnounced() async {
+        // 没有 .sig 的发布可能不是发布者传的：自动检查不提示、不放进菜单。
+        reply = Self.release("0.2.0", signed: false)
+        let updater = makeUpdater()
+        updater.checkIfDue()
+        await updater.checking?.value
+        #expect(requests == 1 && updater.available == nil)
     }
 
     @Test func turnedOffOrDevelopmentBuildsNeverAsk() async {

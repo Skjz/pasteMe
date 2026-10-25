@@ -88,6 +88,11 @@ final class Updater {
             if manual { inform("PasteMe \(current) 已经是最新版本", "") }
             return
         }
+        // 没有签名的发布只在手动检查时说明，自动检查不提示「可以更新了」。
+        guard manual || release.canInstall else {
+            available = nil
+            return
+        }
         available = release
         if manual {
             offer(release)
@@ -98,6 +103,7 @@ final class Updater {
 
     /// 弹窗介绍新版本，问要不要安装。菜单栏菜单的「更新到…」也走这里。
     func offer(_ release: UpdateRelease) {
+        guard release.canInstall else { return warnUnsigned(release) }
         let reason = installReason(release)
         let alert = NSAlert()
         alert.messageText = "PasteMe \(release.version) 可以更新了"
@@ -118,7 +124,7 @@ final class Updater {
             if reason == nil {
                 installTask = Task { await install(release) }
             } else {
-                NSWorkspace.shared.open(release.page)
+                NSWorkspace.shared.open(release.downloadPage)
             }
         case .alertThirdButtonReturn:
             settings.skippedUpdateVersion = release.version.description
@@ -128,10 +134,25 @@ final class Updater {
         }
     }
 
-    /// 不能自动安装的原因，能装时为 nil。
+    /// 发布里没有签名：可能不是发布者传的（拿到 GitHub 发布权限的人故意不传 `.sig`），所以不给下载页面，
+    /// 免得用户手动装上、在「隐私与安全性」里点「仍要打开」绕过校验。只有手动检查会走到这里。
+    private func warnUnsigned(_ release: UpdateRelease) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "PasteMe \(release.version) 没有通过签名校验"
+        alert.informativeText = "这次发布缺少发布者的签名，可能不是 PasteMe 的发布者传上去的。请不要下载安装它，等下一个版本，或者到 GitHub Issues 反馈。现在用的 PasteMe 不受影响。"
+        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: "跳过这个版本")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertSecondButtonReturn {
+            settings.skippedUpdateVersion = release.version.description
+            available = nil
+        }
+    }
+
+    /// 签名没问题、但这台 Mac 上换不了应用的原因，能装时为 nil。这时让用户去下载页面手动安装。
     private func installReason(_ release: UpdateRelease) -> String? {
         if variant != .release { return "开发版不自动更新" }
-        if !release.canInstall { return "这一版没有附带自动更新用的签名" }
         return installer.unavailableReason
     }
 
@@ -160,6 +181,15 @@ final class Updater {
         } catch is CancellationError {
             window.close()
             return
+        } catch UpdateError.badSignature {
+            window.close()
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "PasteMe \(release.version) 没有通过签名校验"
+            alert.informativeText = "下载的安装包和发布者的签名对不上，没有安装。它可能被人换过，请不要手动下载安装这一版。现在用的 PasteMe 没有变。"
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+            return
         } catch {
             window.close()
             NSLog("PasteMe: 安装更新失败：\(error)")
@@ -169,7 +199,7 @@ final class Updater {
             alert.addButton(withTitle: "打开下载页面")
             alert.addButton(withTitle: "关闭")
             NSApp.activate(ignoringOtherApps: true)
-            if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(release.page) }
+            if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(release.downloadPage) }
             return
         }
         relaunch()

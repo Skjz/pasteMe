@@ -254,7 +254,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 
 - `AppDelegate` 在启动 10 秒后和每小时的定时器里调用 `Updater.checkIfDue()`：只有发布版、`Settings.checksForUpdates` 打开、距 `lastUpdateCheck` 满一天（`UpdateSchedule`）才真的查，查失败不记时间，下一个小时再试。手动检查（菜单栏菜单的「检查更新…」、设置「关于」页的「立即检查」）不看这些条件，结果都弹窗说。
 - 自动检查查到的新版本放进 `Updater.available`，菜单栏菜单在 `menuWillOpen` 里据此显示「更新到 PasteMe x.y.z…」，再显示一次 Toast，不弹窗：PasteMe 在后台，弹窗会抢走用户正在打字的窗口。跳过的版本（`skippedUpdateVersion`）自动检查不再提示。
-- `UpdateRelease.parse` 按名字找 `PasteMe-<版本>.dmg` 和 `.dmg.sig`，缺了就 `canInstall == false`，弹窗改为打开下载页面；开发版、`UpdateInstaller.unavailableReason`（从 DMG 或 App Translocation 里运行、没有写权限）也一样。
+- `UpdateRelease.parse` 按名字找 `PasteMe-<版本>.dmg` 和 `.dmg.sig`，缺了就 `canInstall == false`：自动检查不提示，手动检查弹出「没有通过签名校验」的警告（`Updater.warnUnsigned`），不给下载页面；下载后签名对不上（`UpdateError.badSignature`）也一样。拿到 GitHub 发布权限的人可以故意不传或传错 `.sig`，要是这时让用户去下载页面，用户照着安装说明点「仍要打开」就绕过了校验。只有签名没问题、但这台 Mac 换不了应用时（开发版、`UpdateInstaller.unavailableReason`：从 DMG 或 App Translocation 里运行、没有写权限）才打开 `UpdateRelease.downloadPage`，地址只认 `https://github.com/Skjz/pasteMe/` 下面的。`.sig` 最多读 1 KB，解出来必须正好 64 字节；DMG 最多 200 MB，每读一个字节都检查。
 - 安装：`Updater.step` 记着下载了多少（`UpdateClient.download` 每 64 KB 回报一次，回到主线程后只往前走）和是否在安装，`UpdateWindow` 按它显示进度条；下载时点取消或关窗口取消外面的 Task，`UpdateClient` 读每一块时检查取消，抛出 `CancellationError` 后窗口关掉、不提示；开始换应用以后不能取消。`UpdateClient.download` 验签后才写盘；`UpdateInstaller.install` 在后台挂载 DMG（`hdiutil`，macOS 27 上提示已弃用，但 macOS 14 没有替代的 `diskutil image`）、拷到同一个卷的临时目录、检查 bundle id、版本和 `codesign --verify`，再 `replaceItemAt`。之后 `Updater.relaunch` 交给 `/bin/sh` 等这个进程结束再 `open`，然后退出。`UpdatesTests` 里换应用的那个测试要现做 DMG、挂载两次，大约 9 秒。
 
 ## 发布

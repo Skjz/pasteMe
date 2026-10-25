@@ -43,8 +43,16 @@ public struct UpdateRelease: Equatable, Sendable {
         self.signature = signature
     }
 
-    /// DMG 和签名都有，能下载下来验证、自动安装。
+    /// DMG 和签名都有，能下载下来验证、自动安装。没有签名的发布不能装，也不给下载页面（`Updater.warnUnsigned`）。
     public var canInstall: Bool { dmg != nil && signature != nil }
+
+    /// 让用户手动下载时打开的页面。发布页的地址来自 GitHub 的回复，只认 `https://github.com/Skjz/pasteMe/` 下面的，
+    /// 别的一律换成项目的发布列表。
+    public var downloadPage: URL {
+        let releases = URL(string: "https://github.com/Skjz/pasteMe/releases")!
+        guard page.scheme == "https", page.host() == "github.com", page.path().hasPrefix("/Skjz/pasteMe/") else { return releases }
+        return page
+    }
 
     /// 要不要告诉用户这次发布：比正在运行的版本新，自动检查时还要不是用户跳过的版本。
     public func isWorthOffering(current: AppVersion, skipped: String?, manual: Bool) -> Bool {
@@ -92,7 +100,7 @@ public enum UpdateSignature {
               let text = String(data: signature, encoding: .utf8),
               let raw = Data(base64Encoded: text.trimmingCharacters(in: .whitespacesAndNewlines))
         else { return false }
-        return key.isValidSignature(raw, for: data)
+        return raw.count == 64 && key.isValidSignature(raw, for: data)
     }
 }
 
@@ -173,7 +181,7 @@ public struct UpdateClient: Sendable {
     ) async throws -> URL {
         guard let dmgURL = release.dmg, let signatureURL = release.signature else { throw UpdateError.badSignature }
         async let dmg = fetchReportingProgress(dmgURL, progress: progress)
-        async let signature = fetch(signatureURL)
+        async let signature = fetch(signatureURL, limit: Self.maximumSignatureSize)
         let (dmgData, signatureData) = try await (dmg, signature)
         guard UpdateSignature.isValid(signatureData, for: dmgData, publicKey: publicKey) else { throw UpdateError.badSignature }
         let file = directory.appendingPathComponent("PasteMe-\(release.version).dmg")
@@ -182,7 +190,9 @@ public struct UpdateClient: Sendable {
     }
 
     /// 安装包大小的上限，超过的不是 PasteMe（现在的 DMG 约 4 MB）。
-    static let maximumDMGSize: Int64 = 200 * 1024 * 1024
+    static let maximumDMGSize = 200 * 1024 * 1024
+    /// `.sig` 的上限：64 字节签名的 Base64 是 88 个字符。没有上限时，一个很大的 `.sig` 会在验证之前把内存占满。
+    static let maximumSignatureSize = 1024
 
     private func fetchReportingProgress(_ url: URL, progress: @Sendable (Int64, Int64?) -> Void) async throws -> Data {
         let (bytes, response) = try await session.bytes(from: url)
@@ -190,14 +200,14 @@ public struct UpdateClient: Sendable {
         guard status == 200 else { throw UpdateError.badResponse(status) }
         let total = response.expectedContentLength > 0 ? response.expectedContentLength : nil
         var data = Data()
-        data.reserveCapacity(Int(min(total ?? 0, Self.maximumDMGSize)))
+        data.reserveCapacity(Int(min(total ?? 0, Int64(Self.maximumDMGSize))))
         let step = 64 * 1024
         progress(0, total)
         for try await byte in bytes {
+            guard data.count < Self.maximumDMGSize else { throw UpdateError.unexpectedApp("安装包超过 200 MB") }
             data.append(byte)
             if data.count % step == 0 {
                 try Task.checkCancellation()
-                guard data.count <= Self.maximumDMGSize else { throw UpdateError.unexpectedApp("安装包超过 200 MB") }
                 progress(Int64(data.count), total)
             }
         }
@@ -206,10 +216,16 @@ public struct UpdateClient: Sendable {
         return data
     }
 
-    private func fetch(_ url: URL) async throws -> Data {
-        let (data, response) = try await session.data(from: url)
+    /// 读完整个回复，超过 `limit` 字节就停下、当作签名不对。
+    private func fetch(_ url: URL, limit: Int) async throws -> Data {
+        let (bytes, response) = try await session.bytes(from: url)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw UpdateError.badResponse(status) }
+        var data = Data()
+        for try await byte in bytes {
+            guard data.count < limit else { throw UpdateError.badSignature }
+            data.append(byte)
+        }
         return data
     }
 }
