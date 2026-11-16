@@ -81,4 +81,4 @@ fi
 IDENTITY="${IDENTITY:--}"
 
 codesign --force --options runtime --sign "$IDENTITY" "$APP"
-echo "已生成 $APP（签名：$IDENTITY）"
+echo "已生成 ${APP}（签名：${IDENTITY}）"
