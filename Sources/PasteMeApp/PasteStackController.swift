@@ -68,27 +68,41 @@ final class PasteStackController {
     }
 
     func toggle() {
-        stack.isActive ? stop() : start()
+        if stack.isActive { stop() } else { start() }
     }
 
-    func start() {
-        guard !stack.isActive else { return }
+    @discardableResult
+    func start(with firstID: Int64? = nil) -> Bool {
+        guard !stack.isActive else {
+            if let firstID { stack.push(firstID) }
+            return true
+        }
         guard !isRecordingPaused() else {
             toast.show("已暂停记录", detail: "恢复记录后才能使用 Paste Stack", symbol: "pause.circle")
-            return
+            return false
         }
         // 监听别的应用里的按键需要辅助功能权限，没有权限时创建不了事件监听。
         guard Accessibility.isTrusted, let tap = KeyEventTap(handler: { [weak self] event in self?.handle(event) }) else {
             toast.show("需要辅助功能权限", detail: "允许后才能使用 Paste Stack", symbol: "lock")
             Accessibility.requestTrust()
-            return
+            return false
         }
         self.tap = tap
-        stack.start()
         hud.exitShortcut = exitShortcut()
-        hud.show(rows: [])
-        toast.show("Paste Stack 已开启", detail: "依次复制，再按 ⌘V 按顺序粘贴", symbol: "square.stack.3d.up")
+        if let firstID {
+            stack.add(firstID)
+            toast.show(
+                "已加入 Paste Stack（第 \(stack.entries.count) 条）",
+                detail: "继续拷贝或复制，再按 ⌘V 按顺序粘贴",
+                symbol: "square.stack.3d.up"
+            )
+        } else {
+            stack.start()
+            hud.show(rows: [])
+            toast.show("Paste Stack 已开启", detail: "依次复制，再按 ⌘V 按顺序粘贴", symbol: "square.stack.3d.up")
+        }
         onActiveChange()
+        return true
     }
 
     func stop() {

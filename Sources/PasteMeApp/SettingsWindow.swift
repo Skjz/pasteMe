@@ -69,10 +69,10 @@ final class SettingsWindow {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.model.refreshSystemState() }
         }
-        // 录制全局快捷键时（#50）窗口里的按键都交给录制：本地监视器在菜单的快捷键之前收到，⌘W、⌘Q 也能录。
+        // 录制快捷键时（#50、#69）窗口里的按键都交给录制：本地监视器在菜单的快捷键之前收到，⌘W、⌘Q 也能录。
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] event in
             let recorded = MainActor.assumeIsolated { () -> Bool in
-                guard let self, self.model.recordingShortcut != nil, event.window === window else { return false }
+                guard let self, self.model.recordingTarget != nil, event.window === window else { return false }
                 self.model.recordKey(KeyCombo(keyCode: event.keyCode, flags: event.modifierFlags))
                 return true
             }
@@ -401,7 +401,32 @@ private struct GeneralPage: View {
                     }
                     let note = model.shortcutNotes[action]
                     SettingsRow(title: action.title, detail: note?.text, detailIsWarning: note?.isProblem == true) {
-                        ShortcutRecorder(action: action, model: model)
+                        ShortcutRecorderButton(
+                            title: action.title,
+                            combo: model.shortcuts[action],
+                            defaultCombo: action.defaultCombo,
+                            recording: model.recordingShortcut == action,
+                            onToggle: { model.toggleRecording(action) },
+                            onReset: { model.resetShortcut(action) }
+                        )
+                    }
+                }
+            }
+            SettingsGroup(title: "面板内快捷键", footer: "面板开着时才起作用。搜索框里有文字时，移动插入点等编辑文字的按键仍交给搜索框。") {
+                ForEach(PanelShortcutAction.allCases, id: \.self) { action in
+                    if action != PanelShortcutAction.allCases.first {
+                        SettingsDivider()
+                    }
+                    let note = model.panelShortcutNotes[action]
+                    SettingsRow(title: action.title, detail: note?.text, detailIsWarning: note?.isProblem == true) {
+                        ShortcutRecorderButton(
+                            title: action.title,
+                            combo: model.panelShortcuts[action],
+                            defaultCombo: action.defaultCombo,
+                            recording: model.recordingPanelShortcut == action,
+                            onToggle: { model.toggleRecording(action) },
+                            onReset: { model.resetShortcut(action) }
+                        )
                     }
                 }
             }
@@ -409,28 +434,30 @@ private struct GeneralPage: View {
     }
 }
 
-/// 一个全局快捷键（#50）：按钮上是现在的组合，点了开始录制，按键由 `SettingsWindow` 的事件监视器交给
+/// 一个可录制的快捷键按钮（#50、#69）：按钮上是现在的组合，点了开始录制，按键由 `SettingsWindow` 的事件监视器交给
 /// `SettingsModel.recordKey`。和默认值不同时旁边有「恢复默认」。
-private struct ShortcutRecorder: View {
-    let action: GlobalAction
-    let model: SettingsModel
-
-    private var recording: Bool { model.recordingShortcut == action }
+private struct ShortcutRecorderButton: View {
+    let title: String
+    let combo: KeyCombo?
+    let defaultCombo: KeyCombo
+    let recording: Bool
+    let onToggle: () -> Void
+    let onReset: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            if !recording, model.shortcuts[action] != action.defaultCombo {
-                Button("恢复默认") { model.resetShortcut(action) }
+            if !recording, combo != defaultCombo {
+                Button("恢复默认", action: onReset)
                     .buttonStyle(.borderless)
                     .controlSize(.small)
                     .fixedSize()
             }
-            Button { model.toggleRecording(action) } label: {
-                Text(recording ? "请按下快捷键" : model.shortcuts[action]?.symbol ?? "未设置")
-                    .foregroundStyle(recording ? Color.accentColor : model.shortcuts[action] == nil ? .secondary : .primary)
+            Button(action: onToggle) {
+                Text(recording ? "请按下快捷键" : combo?.symbol ?? "未设置")
+                    .foregroundStyle(recording ? Color.accentColor : combo == nil ? .secondary : .primary)
                     .frame(minWidth: 92)
             }
-            .accessibilityLabel("\(action.title)的快捷键")
+            .accessibilityLabel("\(title)的快捷键")
         }
         .fixedSize()
     }
@@ -452,6 +479,23 @@ private struct PanelPage: View {
                 .padding(11)
             }
             SettingsGroup {
+                SettingsRow(
+                    title: "面板开着时再按呼出快捷键",
+                    detail: panelRepeatDetail
+                ) {
+                    Picker(
+                        "面板开着时再按呼出快捷键",
+                        selection: Binding(get: { model.panelRepeatAction }, set: model.setPanelRepeatAction)
+                    ) {
+                        ForEach(PanelRepeatAction.allCases, id: \.self) { action in
+                            Text(action.title).tag(action)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
+                SettingsDivider()
                 SettingsRow(
                     title: "共享屏幕时显示面板",
                     detail: "默认在共享屏幕、录屏和截图里隐藏面板和预览窗口，自己的屏幕上照常显示。录教程时再打开。"
@@ -478,6 +522,23 @@ private struct PanelPage: View {
                     OpenAppPicker(title: "文件夹的打开方式", forFolders: true, model: model)
                 }
             }
+        }
+    }
+
+    private var panelRepeatDetail: String {
+        let symbols = PanelShortcutAction.allCases.compactMap { model.panelShortcuts[$0]?.symbol }
+        if symbols.isEmpty {
+            return "选「收起面板」后，点击面板左上角的标签切换 Pinboard；没有 Pinboard 时总是收起。"
+        }
+        return "选「收起面板」后，用 \(symbols.joined(separator: " ")) 切换 Pinboard；没有 Pinboard 时总是收起。"
+    }
+}
+
+extension PanelRepeatAction {
+    var title: String {
+        switch self {
+        case .cyclePinboard: "切换到下一个 Pinboard"
+        case .hidePanel: "收起面板"
         }
     }
 }

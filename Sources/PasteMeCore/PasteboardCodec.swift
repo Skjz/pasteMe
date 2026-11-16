@@ -124,6 +124,25 @@ public enum PasteboardCodec {
         return nil
     }
 
+    /// 剪贴板里可用来解码的文本（#67）。访达复制文件时也会把文件名写进 `.string`，所以有文件时不算文本。
+    public static func readDecodableText(_ pasteboard: NSPasteboard) -> String? {
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL], !urls.isEmpty {
+            return nil
+        }
+        return pasteboard.string(forType: .string)
+    }
+
+    /// 转换或解码得到的一段文字要怎样记进历史：整段就是一个网址时记成链接，其余记成文本（#27、#67）。
+    public static func content(forConvertedText text: String) -> ClipContent {
+        if isWebLink(text) {
+            return ClipContent(kind: .link, text: text.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return ClipContent(kind: .text, text: text)
+    }
+
     /// 整段内容是否就是一个 http(s) 链接。
     public static func isWebLink(_ string: String) -> Bool {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -114,7 +114,8 @@ struct HistoryView: View {
         case .title: return "↩ 保存标题   esc 取消"
         case .cards:
             let remove = model.pinboardID == nil ? "⌘⌫ 删除" : "⌘⌫ 移出   拖动排序"
-            return "空格 预览   ↩ 粘贴   ⌘P 固定   \(remove)   ⌘Z 撤销   ⌘← ⌘→ 切换标签   直接打字搜索"
+            let tab = model.tabShortcutHint.map { "   \($0)" } ?? ""
+            return "空格 预览   ↩ 粘贴   ⌘P 固定   \(remove)   ⌘Z 撤销\(tab)   直接打字搜索"
         }
     }
 
@@ -290,6 +291,7 @@ private struct CardContextMenu: View {
         }
         Button("拷贝") { model.copy(item) }
             .keyboardShortcut("c", modifiers: .command)
+        Button("加入 Paste Stack") { model.addToPasteStack(item) }
         if let plan = model.openPlan(for: item) {
             Button(plan.title + (plan.unavailableReason.map { "（\($0)）" } ?? "")) { model.open(item) }
                 .keyboardShortcut("o", modifiers: .command)
@@ -298,6 +300,7 @@ private struct CardContextMenu: View {
                 Menu("打开方式") { OpenWithMenuItems(item: item, model: model) }
             }
         }
+        AirDropMenuItem(item: item, model: model)
         Divider()
         Button("预览") { model.preview(item) }
         if item.kind == .text || item.kind == .link {
@@ -360,6 +363,18 @@ private struct CardTitleField: View {
 
 /// 「转换」子菜单的内容（#27）。单独成一个视图：列出转换要读出完整内容，只在菜单打开时做。
 /// ⌘T 弹出的是同样内容的 `NSMenu`（`PanelController.showConversionMenu`）。
+/// 右键菜单「隔空投送…」（#68）。单独做成视图，右键打开菜单时才检查文件和系统服务状态。
+private struct AirDropMenuItem: View {
+    let item: ClipItem
+    let model: HistoryModel
+
+    var body: some View {
+        let state = model.airDropMenuState(for: item)
+        Button(state.title) { model.sendViaAirDrop(item) }
+            .disabled(!state.isEnabled)
+    }
+}
+
 /// 右键菜单「打开方式」（#51）：装了的应用都列出来，选了就用它打开这个条目里的文件和文件夹，不改设置。
 /// 系统默认的方式、编辑器、终端之间有分隔线。单独做成视图，子菜单打开时才查装了哪些应用。
 private struct OpenWithMenuItems: View {

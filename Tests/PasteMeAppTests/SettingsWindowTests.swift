@@ -25,15 +25,18 @@ import PasteMeCore
         var sharing: [Bool] = []
         var imagesAsFiles: [Bool] = []
         var cursorStyles: [CursorStyle] = []
+        var repeatActions: [PanelRepeatAction] = []
         var soundsPlayed = 0
         model.onScreenSharingChange = { sharing.append($0) }
         model.onImagesAsFilesChange = { imagesAsFiles.append($0) }
         model.onCursorStyleChange = { cursorStyles.append($0) }
+        model.onPanelRepeatActionChange = { repeatActions.append($0) }
         model.onPlaySound = { soundsPlayed += 1 }
 
         model.setShowDuringScreenSharing(true)
         model.setPasteImagesAsFiles(true)
         model.setCursorStyle(.flow)
+        model.setPanelRepeatAction(.hidePanel)
         model.setLinkPreviewMode(.siteIcon)
         model.setPlaysSoundOnRecord(true)
         model.setPlaysSoundOnRecord(false)
@@ -41,6 +44,7 @@ import PasteMeCore
         #expect(settings.showDuringScreenSharing && model.showDuringScreenSharing && sharing == [true])
         #expect(settings.pasteImagesAsFiles && model.pasteImagesAsFiles && imagesAsFiles == [true])
         #expect(settings.cursorStyle == .flow && model.cursorStyle == .flow && cursorStyles == [.flow])
+        #expect(settings.panelRepeatAction == .hidePanel && model.panelRepeatAction == .hidePanel && repeatActions == [.hidePanel])
         #expect(settings.linkPreviewMode == .siteIcon && model.linkPreviewMode == .siteIcon)
         // 打开时先响一次，关掉时不响。
         #expect(!settings.playsSoundOnRecord && !model.playsSoundOnRecord && soundsPlayed == 1)
@@ -158,5 +162,19 @@ import PasteMeCore
             window.layoutIfNeeded()
             #expect(window.contentView?.frame.size == SettingsWindow.size, "\(page)")
         }
+    }
+
+    @Test func panelToggleCyclesPinboardsOrHidesAccordingToSetting() {
+        // 面板没开（包括收起动画进行中）时总是呼出。
+        #expect(PanelController.toggleOutcome(isVisible: false, hasPinboards: true, repeatAction: .cyclePinboard) == .show)
+        #expect(PanelController.toggleOutcome(isVisible: false, hasPinboards: true, repeatAction: .hidePanel) == .show)
+
+        // 默认「切换到下一个 Pinboard」：有 Pinboard 循环切换，没有 Pinboard 收起。
+        #expect(PanelController.toggleOutcome(isVisible: true, hasPinboards: true, repeatAction: .cyclePinboard) == .nextTab)
+        #expect(PanelController.toggleOutcome(isVisible: true, hasPinboards: false, repeatAction: .cyclePinboard) == .hide)
+
+        // 选「收起面板」：不管有没有 Pinboard 都收起。
+        #expect(PanelController.toggleOutcome(isVisible: true, hasPinboards: true, repeatAction: .hidePanel) == .hide)
+        #expect(PanelController.toggleOutcome(isVisible: true, hasPinboards: false, repeatAction: .hidePanel) == .hide)
     }
 }

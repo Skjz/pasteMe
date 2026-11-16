@@ -37,6 +37,7 @@ import PasteMeCore
 
     @Test func combosAreShownLikeSystemMenus() {
         #expect(GlobalAction.panel.defaultCombo.symbol(character: Self.usLayout) == "⇧⌘V")
+        #expect(GlobalAction.pasteDecoded.defaultCombo.symbol(character: Self.usLayout) == "⌃⌥⌘V")
         #expect(GlobalAction.pasteStack.defaultCombo.symbol(character: Self.usLayout) == "⌃⇧⌘C")
         #expect(KeyCombo(keyCode: kVK_Space, modifiers: [.command, .option]).symbol(character: Self.usLayout) == "⌥⌘空格")
         #expect(KeyCombo(keyCode: kVK_F5, modifiers: [.control]).symbol(character: Self.usLayout) == "⌃F5")
@@ -48,7 +49,10 @@ import PasteMeCore
         #expect(GlobalAction.panel.defaultCombo.carbonModifiers == cmdKey | shiftKey)
         #expect(GlobalAction.pause.defaultCombo.carbonModifiers == cmdKey | shiftKey | controlKey)
         #expect(GlobalAction.panel.defaultCombo.keyCode == kVK_ANSI_V)
+        #expect(GlobalAction.pasteDecoded.defaultCombo.keyCode == kVK_ANSI_V)
         #expect(GlobalAction.pasteStack.defaultCombo.keyCode == kVK_ANSI_C)
+        #expect(PanelShortcutAction.previousTab.defaultCombo.keyCode == kVK_LeftArrow)
+        #expect(PanelShortcutAction.nextTab.defaultCombo.keyCode == kVK_RightArrow)
         #expect(Self.optionCommandK.modifierMask == [.option, .command])
         // 大写锁定和 fn 不算修饰键。
         #expect(KeyCombo(keyCode: UInt16(kVK_ANSI_K), flags: [.option, .command, .capsLock, .function]) == Self.optionCommandK)
@@ -82,8 +86,8 @@ import PasteMeCore
     // MARK: 注册
 
     @Test func shortcutsAreRegisteredFromTheSettingsAndSuspendedWhileRecording() {
-        // ⌃⌥⇧⌘F13…F15：不和常用快捷键、`HotKeyCenterTests` 用的键冲突。
-        let combos = [kVK_F13, kVK_F14, kVK_F15].map { KeyCombo(keyCode: $0, modifiers: Self.all) }
+        // ⌃⌥⇧⌘F13…F16：不和常用快捷键、`HotKeyCenterTests` 用的键冲突。
+        let combos = [kVK_F13, kVK_F14, kVK_F15, kVK_F16].map { KeyCombo(keyCode: $0, modifiers: Self.all) }
         for (action, combo) in zip(GlobalAction.allCases, combos) {
             settings.setShortcut(combo, for: action)
         }
@@ -192,5 +196,47 @@ import PasteMeCore
         model.failedShortcuts = { [.pause] }
         model.reload()
         #expect(model.shortcutNotes[.pause] == .init(text: SettingsModel.notRegisteredNote, isProblem: true))
+    }
+
+    @Test func panelShortcutsCanBeRecordedResetAndCheckedAgainstFixedAndGlobalKeys() {
+        var panelChanges: [[PanelShortcutAction: KeyCombo]] = []
+        model.onPanelShortcutChange = { panelChanges.append($0) }
+
+        let commandLeftBracket = KeyCombo(keyCode: kVK_ANSI_LeftBracket, modifiers: [.command])
+        let commandRightBracket = KeyCombo(keyCode: kVK_ANSI_RightBracket, modifiers: [.command])
+        let commandC = KeyCombo(keyCode: kVK_ANSI_C, modifiers: [.command])
+
+        model.toggleRecording(.previousTab)
+        #expect(model.recordingPanelShortcut == .previousTab)
+
+        // 录成面板占用的 ⌘C：提示冲突，不保存，继续录制。
+        model.recordKey(commandC)
+        #expect(model.panelShortcutNotes[.previousTab] == .init(text: "和面板里的「拷贝」快捷键相同", isProblem: true))
+        #expect(settings.shortcut(for: .previousTab) == PanelShortcutAction.previousTab.defaultCombo)
+        #expect(model.recordingPanelShortcut == .previousTab)
+
+        // 录成 ⌘[ 和 ⌘]。
+        model.recordKey(commandLeftBracket)
+        model.toggleRecording(.nextTab)
+        model.recordKey(commandRightBracket)
+        #expect(settings.shortcut(for: .previousTab) == commandLeftBracket)
+        #expect(settings.shortcut(for: .nextTab) == commandRightBracket)
+        #expect(panelChanges.last == [.previousTab: commandLeftBracket, .nextTab: commandRightBracket])
+
+        // 录成和全局快捷键相同的组合时保存并给出提醒。
+        model.toggleRecording(.nextTab)
+        model.recordKey(GlobalAction.panel.defaultCombo)
+        #expect(settings.shortcut(for: .nextTab) == GlobalAction.panel.defaultCombo)
+        #expect(model.panelShortcutNotes[.nextTab] == .init(
+            text: "和全局快捷键「呼出或收起面板」相同，全局快捷键会先拦下它",
+            isProblem: false
+        ))
+
+        // 恢复默认后回到 ⌘← ⌘→。
+        model.resetShortcut(.previousTab)
+        model.resetShortcut(.nextTab)
+        #expect(settings.shortcut(for: .previousTab) == PanelShortcutAction.previousTab.defaultCombo)
+        #expect(settings.shortcut(for: .nextTab) == PanelShortcutAction.nextTab.defaultCombo)
+        #expect(model.panelShortcutNotes.isEmpty)
     }
 }

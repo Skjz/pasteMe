@@ -23,7 +23,8 @@ final class ClipboardMonitor {
         }
     }
 
-    private func poll() {
+    /// 立即检查一次剪贴板变化。解码剪贴板前先调用它，免得刚复制不到半秒的原条目还没入库就被解码结果覆盖。
+    func poll() {
         let changeCount = pasteboard.changeCount
         guard changeCount != lastChangeCount else { return }
         lastChangeCount = changeCount

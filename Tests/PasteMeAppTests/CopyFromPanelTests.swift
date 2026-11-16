@@ -64,4 +64,66 @@ import PasteMeCore
         model.showTab(pinboard.id)
         #expect(model.items.map(\.id) == order)
     }
+
+    @Test func copyingAddsToPasteStackOnlyWhileStackIsOn() throws {
+        let stack = PasteStack()
+        let stackedModel = HistoryModel(store: store, pasteStack: stack) { Date(timeIntervalSince1970: 100) }
+        stackedModel.onCopy = { [unowned self] in copied.append($0.id) }
+        stackedModel.onNotice = { [unowned self] message, _ in notices.append(message) }
+        stackedModel.didShow()
+
+        // 没开启时只拷贝，不开启栈。
+        stackedModel.copy()
+        #expect(!stack.isActive && stack.entries.isEmpty)
+        #expect(notices == ["已拷贝"])
+
+        // 开启后依次按 ⌘C，包括同一张拷贝两次，也在 Pinboard 里拷贝。
+        let pinboard = try store.createPinboard(name: "常用", color: .green)
+        try store.pin(a, to: pinboard.id)
+        stackedModel.reloadPinboards()
+
+        stack.start()
+        stackedModel.copy()
+        stackedModel.moveSelection(by: 1)
+        stackedModel.copy()
+        stackedModel.copy()
+        stackedModel.showTab(pinboard.id)
+        stackedModel.copy()
+
+        #expect(stack.entries == [c, b, b, a])
+        #expect(notices.suffix(4) == [
+            "已加入 Paste Stack（第 1 条）",
+            "已加入 Paste Stack（第 2 条）",
+            "已加入 Paste Stack（第 3 条）",
+            "已加入 Paste Stack（第 4 条）",
+        ])
+    }
+
+    @Test func contextMenuStartsPasteStackOrRefusesWhenBlocked() {
+        let stack = PasteStack()
+        let stackedModel = HistoryModel(store: store, pasteStack: stack) { Date(timeIntervalSince1970: 100) }
+        stackedModel.onCopy = { [unowned self] in copied.append($0.id) }
+        stackedModel.onNotice = { [unowned self] message, _ in notices.append(message) }
+        stackedModel.didShow()
+
+        // 模拟暂停记录时开启被拒。
+        var allowStart = false
+        stackedModel.onStartPasteStack = { item in
+            guard allowStart else { return false }
+            stack.add(item.id)
+            return true
+        }
+        stackedModel.addToPasteStack()
+        #expect(!stack.isActive && stack.entries.isEmpty && copied.isEmpty)
+
+        // 允许开启后，右键第一张开启并作为第一条，再对下一张操作时追加到最后。
+        allowStart = true
+        stackedModel.addToPasteStack()
+        #expect(stack.isActive && stack.entries == [c] && copied == [c])
+
+        stackedModel.moveSelection(by: 1)
+        stackedModel.addToPasteStack()
+        #expect(stack.entries == [c, b] && copied == [c, b])
+        #expect(notices.last == "已加入 Paste Stack（第 2 条）")
+    }
 }

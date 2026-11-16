@@ -20,6 +20,17 @@ public final class PasteStack {
         onChange()
     }
 
+    /// 从面板把条目加入栈（#66）：没有开启时开启并作为第一条，已经开启时排在最后。
+    public func add(_ id: Int64) {
+        if !isActive {
+            isActive = true
+            entries = [id]
+        } else {
+            entries.append(id)
+        }
+        onChange()
+    }
+
     public func stop() {
         guard isActive else { return }
         isActive = false

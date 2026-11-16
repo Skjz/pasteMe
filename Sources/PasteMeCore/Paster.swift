@@ -97,6 +97,29 @@ public final class Paster {
         return .pasted
     }
 
+    /// 把剪贴板文本里的 Base64、hex 或 hexdump 解码成文字，作为新条目（不记来源应用；网址记成链接）
+    /// 记录到历史最前面，并粘贴到目标应用（#67）。
+    ///
+    /// 粘贴后剪贴板里保留解码后的文字，和从面板粘贴的行为一致。不能解码时不改历史也不改剪贴板。
+    public func pasteDecoded(
+        _ clipboardText: String?,
+        into target: TargetApp?,
+        onLinkRecorded: ((Int64) -> Void)? = nil
+    ) throws -> Result<PasteOutcome, ClipboardDecodeError> {
+        switch TextConverter.decodeClipboard(clipboardText) {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let decoded):
+            let content = PasteboardCodec.content(forConvertedText: decoded)
+            let id = try store.insert(content, source: nil)
+            if content.kind == .link {
+                onLinkRecorded?(id)
+            }
+            let outcome = try paste(id, as: .original, into: target)
+            return .success(outcome)
+        }
+    }
+
     /// 只把条目写进剪贴板并移到历史最前，不发送 ⌘V。Paste Stack 用它：⌘V 是用户自己按的。
     /// 在面板里按 ⌘C 拷贝（#35）时 `touching` 为 false：面板还开着，卡片先不动，收起后再移到最前。
     ///

@@ -108,4 +108,29 @@ import Testing
         #expect(try store.items(matching: ClipQuery(ids: [a, c])).map(\.id) == [c, a])
         #expect(try store.items(matching: ClipQuery(ids: [])).isEmpty)
     }
+
+    @Test func addingFromPanelStartsStackWhenInactiveAndAppendsWhenActive() {
+        #expect(!stack.isActive)
+        stack.add(10)
+        #expect(stack.isActive)
+        #expect(stack.entries == [10])
+
+        stack.add(20)
+        stack.add(10)
+        #expect(stack.entries == [10, 20, 10])
+    }
+
+    @Test func panelAdditionsAndRecordedCopiesInterleaveInOrder() throws {
+        let store = try ClipStore(path: ":memory:")
+        let recorder = Recorder(store: store, pasteStack: stack)
+        let a = try store.insert(ClipContent(kind: .text, text: "A"), source: nil)
+        let c = try store.insert(ClipContent(kind: .text, text: "C"), source: nil)
+
+        stack.add(a)
+        let b = try #require(try recorder.record(ClipContent(kind: .text, text: "B"), from: nil))
+        stack.add(c)
+        let d = try #require(try recorder.record(ClipContent(kind: .text, text: "D"), from: nil))
+
+        #expect(stack.entries == [a, b, c, d])
+    }
 }

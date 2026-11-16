@@ -8,6 +8,14 @@ public enum CursorStyle: String, CaseIterable, Sendable {
     case flow
 }
 
+/// 面板开着时再按一次呼出面板的快捷键要做什么（#70）。
+public enum PanelRepeatAction: String, CaseIterable, Sendable {
+    /// 切换到下一个 Pinboard；没有 Pinboard 时仍然收起。
+    case cyclePinboard
+    /// 收起面板。
+    case hidePanel
+}
+
 /// 自动清除多久以前的历史（#34）。只清除不在 Pinboard 里的条目，按最后一次使用的时间算。
 public enum HistoryRetention: String, CaseIterable, Sendable {
     case never
@@ -52,6 +60,12 @@ public struct Settings {
     public var cursorStyle: CursorStyle {
         get { defaults.string(forKey: Key.cursorStyle).flatMap(CursorStyle.init(rawValue:)) ?? .breathe }
         nonmutating set { defaults.set(newValue.rawValue, forKey: Key.cursorStyle) }
+    }
+
+    /// 面板开着时再按呼出快捷键的行为（#70）。默认切换到下一个 Pinboard，老用户升级后行为不变。
+    public var panelRepeatAction: PanelRepeatAction {
+        get { defaults.string(forKey: Key.panelRepeatAction).flatMap(PanelRepeatAction.init(rawValue:)) ?? .cyclePinboard }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Key.panelRepeatAction) }
     }
 
     /// 用户给来源应用加的别名，键是 bundle id。搜索时和应用的名字一样匹配（`AppNames`）。
@@ -110,24 +124,47 @@ public struct Settings {
 
     /// 全局快捷键（#50）。没改过时是默认值，清除了是 nil。存的值认不出来时也按默认值处理。
     public func shortcut(for action: GlobalAction) -> KeyCombo? {
-        guard let stored = defaults.dictionary(forKey: Key.shortcut(action)) else { return action.defaultCombo }
-        // 空的字典表示用户清除了这个快捷键。
-        if stored.isEmpty { return nil }
-        guard let keyCode = stored["keyCode"] as? Int, let modifiers = stored["modifiers"] as? Int else {
-            return action.defaultCombo
-        }
-        return KeyCombo(keyCode: keyCode, modifiers: KeyCombo.Modifiers(rawValue: modifiers))
+        readShortcut(forKey: Key.shortcut(action), defaultCombo: action.defaultCombo)
     }
 
     /// 改成 `combo`；传 nil 是清除，这个功能就没有全局快捷键。
     public func setShortcut(_ combo: KeyCombo?, for action: GlobalAction) {
-        let value: [String: Int] = combo.map { ["keyCode": $0.keyCode, "modifiers": $0.modifiers.rawValue] } ?? [:]
-        defaults.set(value, forKey: Key.shortcut(action))
+        writeShortcut(combo, forKey: Key.shortcut(action))
     }
 
     /// 恢复默认的快捷键。
     public func resetShortcut(for action: GlobalAction) {
         defaults.removeObject(forKey: Key.shortcut(action))
+    }
+
+    /// 面板内快捷键（#69）。没改过时是默认值，清除了是 nil。存的值认不出来时也按默认值处理。
+    public func shortcut(for action: PanelShortcutAction) -> KeyCombo? {
+        readShortcut(forKey: Key.panelShortcut(action), defaultCombo: action.defaultCombo)
+    }
+
+    /// 改成 `combo`；传 nil 是清除。
+    public func setShortcut(_ combo: KeyCombo?, for action: PanelShortcutAction) {
+        writeShortcut(combo, forKey: Key.panelShortcut(action))
+    }
+
+    /// 恢复默认的面板内快捷键。
+    public func resetShortcut(for action: PanelShortcutAction) {
+        defaults.removeObject(forKey: Key.panelShortcut(action))
+    }
+
+    private func readShortcut(forKey key: String, defaultCombo: KeyCombo) -> KeyCombo? {
+        guard let stored = defaults.dictionary(forKey: key) else { return defaultCombo }
+        // 空的字典表示用户清除了这个快捷键。
+        if stored.isEmpty { return nil }
+        guard let keyCode = stored["keyCode"] as? Int, let modifiers = stored["modifiers"] as? Int else {
+            return defaultCombo
+        }
+        return KeyCombo(keyCode: keyCode, modifiers: KeyCombo.Modifiers(rawValue: modifiers))
+    }
+
+    private func writeShortcut(_ combo: KeyCombo?, forKey key: String) {
+        let value: [String: Int] = combo.map { ["keyCode": $0.keyCode, "modifiers": $0.modifiers.rawValue] } ?? [:]
+        defaults.set(value, forKey: key)
     }
 
     /// 最近一次固定条目用的 Pinboard，⌘P 固定到这里。没有时为 nil。
@@ -170,6 +207,7 @@ public struct Settings {
     private enum Key {
         static let showDuringScreenSharing = "showDuringScreenSharing"
         static let cursorStyle = "cursorStyle"
+        static let panelRepeatAction = "panelRepeatAction"
         static let appAliases = "appAliases"
         static let pasteImagesAsFiles = "pasteImagesAsFiles"
         static let linkPreviewMode = "linkPreviewMode"
@@ -185,6 +223,10 @@ public struct Settings {
 
         static func shortcut(_ action: GlobalAction) -> String {
             "shortcut." + action.rawValue
+        }
+
+        static func panelShortcut(_ action: PanelShortcutAction) -> String {
+            "panelShortcut." + action.rawValue
         }
     }
 

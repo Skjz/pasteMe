@@ -93,6 +93,31 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
 
     /// 拖出卡片时交给拖拽的内容（`Paster.draggingWriters`）。
     var draggingWriters: (ClipItem) throws -> [NSPasteboardWriting] = { _ in [] }
+    /// 面板开着时再按一次呼出快捷键的行为（#70）。
+    var repeatAction = PanelRepeatAction.cyclePinboard
+    /// 面板内可录制的快捷键（#69）。
+    var panelShortcuts: [PanelShortcutAction: KeyCombo] = PanelKeymap.defaultShortcuts
+
+    enum ToggleOutcome: Equatable {
+        case show
+        case hide
+        case nextTab
+    }
+
+    /// 按下呼出快捷键时要做什么（#70）。收起动画进行到一半时 `isVisible` 为 false，重新呼出。
+    static func toggleOutcome(
+        isVisible: Bool,
+        hasPinboards: Bool,
+        repeatAction: PanelRepeatAction
+    ) -> ToggleOutcome {
+        guard isVisible else { return .show }
+        switch repeatAction {
+        case .cyclePinboard:
+            return hasPinboards ? .nextTab : .hide
+        case .hidePanel:
+            return .hide
+        }
+    }
 
     private enum Phase {
         case hidden, showing, shown, hiding
@@ -161,12 +186,14 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
         DustPipeline.shared.prepare()
     }
 
-    /// 全局快捷键：面板没开时呼出；开着时有 Pinboard 就切到下一个标签，没有就收起。
+    /// 全局快捷键：面板没开时呼出；开着时按设置切换到下一个 Pinboard 或收起（#70）。
     func toggle() {
-        guard isVisible else { return show() }
-        if model.pinboards.isEmpty {
+        switch Self.toggleOutcome(isVisible: isVisible, hasPinboards: !model.pinboards.isEmpty, repeatAction: repeatAction) {
+        case .show:
+            show()
+        case .hide:
             hide()
-        } else {
+        case .nextTab:
             model.cycleTab(by: 1)
         }
     }
@@ -448,7 +475,7 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             previewHasSeveralFiles: preview.isVisible && preview.state.fileURLs.count > 1
         )
 
-        switch PanelKeymap.action(for: key, in: context) {
+        switch PanelKeymap.action(for: key, in: context, shortcuts: panelShortcuts) {
         case .passThrough:
             return false
         case .focusSearchThenPassThrough:

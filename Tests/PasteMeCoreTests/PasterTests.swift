@@ -86,6 +86,40 @@ import Testing
         #expect(pasteboard.written.isEmpty)
         #expect(keystroke.sentTo.isEmpty)
     }
+
+    @Test func pasteDecodedRecordsResultWithoutSourceAndPastes() throws {
+        let source = ClipSource(bundleID: "com.apple.Safari", name: "Safari")
+        try store.insert(ClipContent(kind: .text, text: "5L2g5aW9"), source: source, at: Date(timeIntervalSince1970: 1))
+        let target = TargetApp(bundleID: "com.apple.Notes", name: "备忘录")
+
+        let outcome = try paster.pasteDecoded("5L2g5aW9", into: target)
+        #expect(outcome == .success(.pasted))
+        #expect(pasteboard.written == [ClipContent(kind: .text, text: "你好")])
+        #expect(keystroke.sentTo == [target])
+
+        let items = try store.items()
+        #expect(items.map(\.preview) == ["你好", "5L2g5aW9"])
+        #expect(items[0].sourceBundleID == nil)
+        #expect(items[1].sourceBundleID == "com.apple.Safari")
+    }
+
+    @Test func pasteDecodedTurnsWebAddressesIntoLinksAndHandlesFailuresAndUntrusted() throws {
+        var recordedLinks: [Int64] = []
+        let urlBase64 = Data("https://example.com/path".utf8).base64EncodedString()
+        keystroke.isTrusted = false
+
+        let linkResult = try paster.pasteDecoded(urlBase64, into: nil) { recordedLinks.append($0) }
+        #expect(linkResult == .success(.copiedOnly))
+        #expect(recordedLinks.count == 1)
+        #expect(try store.items().first?.kind == .link)
+        #expect(try store.items().first?.preview == "https://example.com/path")
+
+        let countBefore = pasteboard.written.count
+        let bad = try paster.pasteDecoded("not encoded text", into: nil)
+        #expect(bad == .failure(.notEncoded))
+        #expect(pasteboard.written.count == countBefore)
+        #expect(try store.count() == 1)
+    }
 }
 
 @MainActor

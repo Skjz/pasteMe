@@ -34,9 +34,45 @@ public struct ConversionOption: Equatable, Sendable {
     public var unavailableReason: String?
 }
 
+/// 按快捷键解码剪贴板内容时失败的原因（#67）。
+public enum ClipboardDecodeError: Equatable, Error, Sendable {
+    case noText
+    case tooLong
+    case notEncoded
+    case notUTF8
+
+    public var message: String {
+        switch self {
+        case .noText: "剪贴板里没有文本"
+        case .tooLong: "剪贴板内容超过 1 MB，不能解码"
+        case .notEncoded: "剪贴板里不是 Base64、hex 或 hexdump"
+        case .notUTF8: "解出来的不是文字"
+        }
+    }
+}
+
 public enum TextConverter {
     /// 超过这么多字节的内容不提供转换，面板不能卡住。和识别子类型的上限一样。
     public static let maxLength = TextSubtype.maxLength
+
+    /// 把剪贴板里的 Base64、hex 或 hexdump 解码成 UTF-8 文字（#67）。
+    /// 不能解码时返回具体原因，调用方据此提示、不粘贴。
+    public static func decodeClipboard(_ text: String?) -> Result<String, ClipboardDecodeError> {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failure(.noText)
+        }
+        guard text.utf8.count <= maxLength else {
+            return .failure(.tooLong)
+        }
+        let subtype = TextSubtype.detect(text)
+        guard subtype == .base64 || subtype == .hex || subtype == .hexdump else {
+            return .failure(.notEncoded)
+        }
+        guard let decoded = convert(text, subtype: subtype, using: .text) else {
+            return .failure(.notUTF8)
+        }
+        return .success(decoded)
+    }
 
     /// 按条目的子类型列出可以做的转换：子类型自己的转换在前，「编码为 Base64」在最后。内容太长时为空。
     ///

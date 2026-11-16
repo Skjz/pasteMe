@@ -7,7 +7,7 @@
 ```text
 PasteMe        可执行文件，只有 main.swift
 └─ PasteMeApp  AppKit / SwiftUI：剪贴板轮询、全局快捷键、监听 ⌘V、发送 ⌘V、面板、浮窗、视图
-   └─ PasteMeCore  不依赖界面：AppVariant、ClipStore、ClipQuery、AppNames、Recorder、RecordChime、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter、OpenPlan（OpenApp）、KeyCombo（GlobalAction、ShortcutRules）、WebPreviewPolicy、Updates（AppVersion、UpdateRelease、UpdateSignature、UpdateClient、UpdateInstaller）
+   └─ PasteMeCore  不依赖界面：AppVariant、ClipStore、ClipQuery、AppNames、Recorder、RecordChime、EnrichmentQueue（Enricher、LinkPreview、HTMLPreviewFetcher）、PasteStack、Paster、TemporaryFiles、TextFile、AirDropPlan（AirDropFiles）、Settings、PasteboardCodec、Thumbnailer、TextSubtype（ByteText、CodeDetector）、TextConverter、HashAlgorithm、SyntaxHighlighter、OpenPlan（OpenApp）、KeyCombo（GlobalAction、PanelShortcutAction、ShortcutRules）、WebPreviewPolicy、Updates（AppVersion、UpdateRelease、UpdateSignature、UpdateClient、UpdateInstaller）
 ```
 
 - 能离开界面测试的逻辑都放进 `PasteMeCore`，对外接口为 `public`。
@@ -22,12 +22,12 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - `Recorder` 决定记不记录（暂停），入库后调用 `onRecord`。设置里打开了「复制时播放提示音」（#25）时，入库后、`onRecord` 之前先播放提示音（`RecordSoundPlaying`）；没有走到 `Recorder` 的内容（暂停、敏感内容、PasteMe 自己写入的）不会响。生产实现 `SystemRecordSound` 用系统音效服务播放，遵守系统设置里的「播放用户界面音效」；系统音效服务只能播放文件，所以 `RecordChime` 在代码里合成的声音（纸滑进剪贴板的夹子，4 个版本由 `TakeRotation` 轮流，不连续重复）在第一次播放时写成缓存目录里的 .wav。音色和响度是和用户试听十几轮选定的，否掉的方向写在 `RecordChime` 的注释里，改之前先试听。暂停只在内存里：`pausedUntil` 为 `.distantFuture` 表示直到手动恢复，定时暂停由 `Recorder` 自己的定时器到时恢复，`onPauseChange` 通知应用换菜单栏图标、显示提示。测试用注入的时钟（`RecorderTests`）。
 - 菜单栏图标由 `AppDelegate.updateStatusIcon()` 决定：暂停记录优先，其次 Paste Stack。屏幕上的短暂提示用 `Toast`。
 - 全局快捷键都通过 `HotKeyCenter.register(_:action:)` 注册。Carbon 会把每个快捷键事件发给所有已安装的处理器，所以只装一个处理器，读出事件里的快捷键 id 再分发；`HotKeyCenterTests` 直接调用 `dispatch` 模拟按键。
-- 三个功能（`GlobalAction`）的组合存在 `Settings.shortcut(for:)`（#50）：没改过时是 `defaultCombo`，清除了是 nil（存成空字典）。`KeyCombo` 是键码加修饰键，在 Core 里，不引入 Carbon；Carbon 修饰键、菜单项的按键和「⇧⌘V」这样的符号在 `KeyComboDisplay.swift`，字符按当前键盘布局取（`UCKeyTranslate`），所以键码是物理位置，换了键盘布局显示的字符跟着变。`GlobalShortcuts` 按设置注册、改了以后重新注册，菜单栏菜单、暂停的 Toast、Paste Stack 浮窗每次用时从它读组合，不另存。
-- 录制在设置窗口里：`SettingsWindow` 的本地事件监视器在录制时把窗口里的 keyDown 都交给 `SettingsModel.recordKey`（在主菜单之前收到，⌘W、⌘Q 也能录），esc 取消，⌫ 清除。录制开始时 `GlobalShortcuts.suspend()` 注销 PasteMe 自己的全部快捷键，不然按下现在的组合会被 Carbon 拦下、窗口收不到。检查规则在 `ShortcutRules.problem`（要带 ⌘⌃⌥、不能和另一项重复、不能是系统快捷键）。查不出和别的应用冲突：别的应用注册了同一个组合时 `RegisterEventHotKey` 照样成功，选项是 0 还是 `kEventHotKeyExclusive` 都一样（在 macOS 27 上试过），别的应用菜单里的快捷键更查不到；注册失败时（`GlobalShortcuts.failed`）设置页只说没有生效，不猜原因。系统快捷键用 `CopySymbolicHotKeys` 读：新的 SDK 不带它的头文件，`SystemShortcuts.current()` 用 `dlsym` 找到它，比较时只看 ⌃⌥⇧⌘（系统记的修饰键里还有 fn 位）。和面板里的按键相同时只提醒（`PanelKeymap.isUsedByPanel` 直接问按键映射）：全局快捷键在 PasteMe 自己是前台时也会先被拦下。
+- 四个功能（`GlobalAction`：呼出面板、解码剪贴板并粘贴、暂停记录、Paste Stack）的组合存在 `Settings.shortcut(for:)`（#50、#67）：没改过时是 `defaultCombo`，清除了是 nil（存成空字典）。`KeyCombo` 是键码加修饰键，在 Core 里，不引入 Carbon；Carbon 修饰键、菜单项的按键和「⇧⌘V」这样的符号在 `KeyComboDisplay.swift`，字符按当前键盘布局取（`UCKeyTranslate`），所以键码是物理位置，换了键盘布局显示的字符跟着变。`GlobalShortcuts` 按设置注册、改了以后重新注册，菜单栏菜单、暂停的 Toast、Paste Stack 浮窗每次用时从它读组合，不另存。解码剪贴板并粘贴（`Paster.pasteDecoded`，#67）默认是 ⌃⌥⌘V（不用访达「移到这里」占用的 ⌥⌘V），先让 `ClipboardMonitor.poll()` 拉取刚复制的内容，再用 `TextConverter.decodeClipboard` 把 Base64、hex 或 hexdump 解成 UTF-8 文字，按无来源应用的新条目记入历史并粘贴。
+- 录制在设置窗口里：`SettingsWindow` 的本地事件监视器在录制时把窗口里的 keyDown 都交给 `SettingsModel.recordKey`（在主菜单之前收到，⌘W、⌘Q 也能录），esc 取消，⌫ 清除。录制开始时 `GlobalShortcuts.suspend()` 注销 PasteMe 自己的全部快捷键，不然按下现在的组合会被 Carbon 拦下、窗口收不到。面板内可录制的快捷键（`PanelShortcutAction`，#69，第一批是切换上/下一个标签）也用同一套录制，存在 `Settings.shortcut(for: PanelShortcutAction)`。检查规则在 `ShortcutRules.problem`（要带 ⌘⌃⌥、同组内不能重复、不能是系统快捷键；面板内快捷键还不能占用 `PanelKeymap.fixedShortcutTitle` 列出的面板固定按键）。查不出和别的应用冲突：别的应用注册了同一个组合时 `RegisterEventHotKey` 照样成功，选项是 0 还是 `kEventHotKeyExclusive` 都一样（在 macOS 27 上试过），别的应用菜单里的快捷键更查不到；注册失败时（`GlobalShortcuts.failed`）设置页只说没有生效，不猜原因。系统快捷键用 `CopySymbolicHotKeys` 读：新的 SDK 不带它的头文件，`SystemShortcuts.current()` 用 `dlsym` 找到它，比较时只看 ⌃⌥⇧⌘（系统记的修饰键里还有 fn 位）。全局快捷键和面板里的按键相同时双向提醒（`PanelKeymap.isUsedByPanel`）：全局快捷键在 PasteMe 自己是前台时也会先被拦下。
 
 ## Paste Stack
 
-- `PasteStack`（Core）只管开关和顺序：`Recorder` 记下条目后调用 `push`，没开启时什么都不做；`takeNext` 取出最前面的一条，取完最后一条随之结束。
+- `PasteStack`（Core）只管开关和顺序：`Recorder` 记下条目后调用 `push`（没开启时什么都不做）；面板里按 ⌘C 拷贝在开启时也调用 `push`，右键卡片选「加入 Paste Stack」调用 `add`（没开启时经 `PasteStackController.start(with:)` 检查暂停和辅助功能权限后开启并作为第一条，#66）；`takeNext` 取出最前面的一条，取完最后一条随之结束。
 - `PasteStackController`（App）开启时创建 `KeyEventTap`（会话级 `CGEventTap`，只观察 keyDown，不拦截），按 `PasteStackKeys.action` 判断按键：⌘V 取下一条，esc 退出，其余不管。按住不放的重复按键、面板开着时的 ⌘V、PasteMe 自己发送的 ⌘V（`eventSourceUserData` 等于 `CGEventPasteKeystroke.marker`）都不取。
 - 时机：事件监听在按键送到目标应用之前同步回调，回调里用 `Paster.copyToPasteboard` 把下一条写进剪贴板（带 `ownMarker`，不会再被记录），目标应用处理这次 ⌘V 时读到的就是它。所以不需要在 keyUp 之后延迟替换、猜测目标应用什么时候读完剪贴板。回调要快：系统会停掉太慢的监听（`KeyEventTap` 收到 `tapDisabledByTimeout` 时重新打开）。
 - 结束时（手动退出或取完）在下一轮事件循环里移除监听，不在它自己的回调里移除。
@@ -62,7 +62,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - `ClipStore.delete(id:)` 把整行按列名存进 `DeletedClip`，连同它在各个 Pinboard 里的位置，`restore` 原样插回去。以后给 `clips` 加列，撤销删除不用改。
 - 清空历史（`ClipStore.clearHistory()`）只删除不在任何 Pinboard 里的条目。
 - 自动清除（#34，`Settings.historyRetention`）：`AppDelegate.clearOldHistory` 在启动 3 秒后和之后每小时（和 `TemporaryFiles.removeExpired` 用同一个定时器）调用 `ClipStore.deleteUnpinned(before:)`，删除不在 Pinboard 里、`created_at` 早于期限的条目；`created_at` 在再次复制和粘贴时更新，所以按的是最后一次使用。面板开着时跳过这一次。不做 VACUUM，免得大数据库每小时卡一下。换成更短的期限、马上会删条目时，先用 `unpinnedCount(before:)` 数出来、弹窗确认。
-- 标签：`HistoryModel.pinboardID` 为 nil 是「历史」，每次呼出面板回到「历史」。⌘← ⌘→（`PanelKeymap`，规则和 ← → 一样）和面板开着时的 ⇧⌘V（`PanelController.toggle`，没有 Pinboard 时仍是收起）循环切换。⌘P 固定到 `Settings.lastPinboardID`，没有 Pinboard 时请求新建。
+- 标签：`HistoryModel.pinboardID` 为 nil 是「历史」，每次呼出面板回到「历史」。`PanelShortcutAction`（默认 ⌘← ⌘→，可在设置里录制，#69）和面板开着时的 ⇧⌘V（`PanelController.toggle`，默认循环切换，没有 Pinboard 或 `Settings.panelRepeatAction == .hidePanel` 时收起，#70）切换标签。⌘P 固定到 `Settings.lastPinboardID`，没有 Pinboard 时请求新建。
 - 新建、重命名、删除确认都在 `PinboardEditorController` 的小窗口里（见下一节），不用系统提示框：`NSAlert` 要激活 PasteMe，目标应用就不在前台了，关掉面板后 ⌘V 会落空。
 
 ## 预览和附属窗口
@@ -93,10 +93,11 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 卡片上的 `DragGesture` 第一次变化时调用 `HistoryModel.beginDrag`，`PanelController.beginDrag` 取 `NSApp.currentEvent`（这时是 leftMouseDragged）调用面板 `NSHostingView` 的 `beginDraggingSession`，之后鼠标交给 AppKit 的拖拽。用 AppKit 而不是 SwiftUI 的 `onDrag`：`onDrag` 只能给一个 `NSItemProvider`，几个文件的条目拖不出去。
 - 拖的内容由 `Paster.draggingWriters(for:)` 生成，和粘贴时写进剪贴板的一样（`PasteboardCodec.writers`），图片总是附带 PNG 文件。文本是 `TextFilePromise`（#36）：一个 file promise，访达放下时才在目标文件夹写出 .txt；它同时提供文字和 RTF，其他应用照常拿到文字。拖拽开始时不知道会放到哪里，所以不能像粘贴那样按目标应用决定。
 - 拖出面板时（`draggingSession(_:movedTo:)`）面板收起；在面板里时可以拖到 Pinboard 的标签上固定（`PinboardTabs` 的 `onDrop`），在 Pinboard 里拖到别的卡片上换位置（`ReorderDropDelegate` → `HistoryModel.moveDraggedCard`，拖拽结束时 `endDrag` 写进数据库）。这几处 `onDrop` 都只认 `HistoryModel.draggingID`，不解析拖拽的内容。
+- 隔空投送（#68）：右键菜单「隔空投送…」（`AirDropMenuItem`）调用 `HistoryModel.sendViaAirDrop`，由 `AirDropPlan.make` 生成计划（链接发网址，文件发还在的原文件和文件夹，文本和图片生成 `.txt`/`.png` 临时文件，`AirDropPlan.fileName` 按标题或第一行前 30 字起名），`AirDropController` 用 `AirDropFiles` 在 `Caches/.../AirDrop/<UUID>/` 下写出临时文件并交给 `NSSharingService(named: .sendViaAirDrop)`，面板收起；`NSSharingServiceDelegate` 收到完成或失败（含取消）回调后立即删除该子目录，启动时 `removeAll()` 清空残留。
 
 ## 面板按键
 
-`PanelKeymap.action(for:in:)` 是纯函数：输入按键（`PanelKey`）和面板状态（焦点、搜索词是否为空、能否撤销），输出要执行的面板命令，或者把按键交给搜索框。新的面板快捷键加在这里，并在 `PanelKeymapTests` 里写对应的用例。`PanelController.handle(_:)` 只负责把 `NSEvent` 转成 `PanelKey`、执行命令。
+`PanelKeymap.action(for:in:shortcuts:)` 是纯函数：输入按键（`PanelKey`）、面板状态（焦点、搜索词是否为空、能否撤销）和可录制面板快捷键映射（`PanelShortcutAction`，#69），先查用户录制的组合（搜索框有文字且组合有编辑文字含义时仍交给搜索框），再走写死的规则，输出要执行的面板命令或把按键交给搜索框。新的面板快捷键加在这里，并在 `PanelKeymapTests` 里写对应的用例。`PanelController.handle(_:)` 只负责把 `NSEvent` 转成 `PanelKey`、执行命令。
 
 - 焦点（`HistoryModel.focus`）是唯一的状态来源，`HistoryView` 把它同步到搜索框的 `@FocusState`。呼出面板时焦点在卡片列表上。窗口第一次成为 key 时 AppKit 会自动让搜索框成为第一响应者，SwiftUI 随之把 `focus` 改成搜索框，所以 `PanelController.show()` 在 `makeKeyAndOrderFront` 之后把第一响应者交还给窗口本身。
 - 焦点在卡片上时打字，需要让这次按键直接进入搜索框。本地事件监视器在事件分发之前回调，所以 `PanelController` 在监视器里同步把搜索框设为第一响应者，再把事件放行。搜索框是在视图层级里找到的第一个可编辑 `NSTextField`。
