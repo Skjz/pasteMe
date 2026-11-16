@@ -95,7 +95,7 @@ public enum TextConverter {
         case .hex, .hexdump:
             let isText = bytes(of: text, subtype: subtype).flatMap { String(bytes: $0, encoding: .utf8) } != nil
             options = [
-                ConversionOption(conversion: .text, unavailableReason: isText ? nil : "字节不是合法的 UTF-8"),
+                ConversionOption(conversion: .text, unavailableReason: isText ? nil : "非 UTF-8"),
                 ConversionOption(conversion: subtype == .hex ? .hexdump : .hex),
                 ConversionOption(conversion: .cArray),
             ]

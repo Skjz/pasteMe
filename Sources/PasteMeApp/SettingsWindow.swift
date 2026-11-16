@@ -380,12 +380,12 @@ private struct GeneralPage: View {
                         .labelsHidden()
                 }
                 SettingsDivider()
-                SettingsRow(title: "复制时播放提示音", detail: "每记下一次复制响一声。打开时先响一次。") {
+                SettingsRow(title: "复制时播放提示音", detail: "每次记录时播放轻响。") {
                     Toggle("复制时播放提示音", isOn: Binding(get: { model.playsSoundOnRecord }, set: model.setPlaysSoundOnRecord))
                         .labelsHidden()
                 }
                 SettingsDivider()
-                SettingsRow(title: "辅助功能权限", detail: "粘贴到其他应用、Paste Stack 都要用到。") {
+                SettingsRow(title: "辅助功能权限", detail: "用于自动粘贴和 Paste Stack。") {
                     if model.accessibilityTrusted {
                         Label("已开启", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
@@ -394,7 +394,7 @@ private struct GeneralPage: View {
                     }
                 }
             }
-            SettingsGroup(title: "全局快捷键", footer: "点一下快捷键再按下新的组合。录制时按 esc 取消，按 ⌫ 清除；清除后可以在菜单栏菜单里使用这项功能。") {
+            SettingsGroup(title: "全局快捷键", footer: "点击后按下新组合；esc 取消，⌫ 清除。") {
                 ForEach(GlobalAction.allCases, id: \.self) { action in
                     if action != GlobalAction.allCases.first {
                         SettingsDivider()
@@ -412,7 +412,7 @@ private struct GeneralPage: View {
                     }
                 }
             }
-            SettingsGroup(title: "面板内快捷键", footer: "面板开着时才起作用。搜索框里有文字时，移动插入点等编辑文字的按键仍交给搜索框。") {
+            SettingsGroup(title: "面板内快捷键", footer: "仅在面板打开时生效；搜索框有文字时，编辑按键仍归搜索框。") {
                 ForEach(PanelShortcutAction.allCases, id: \.self) { action in
                     if action != PanelShortcutAction.allCases.first {
                         SettingsDivider()
@@ -496,7 +496,7 @@ private struct PanelPage: View {
             SettingsGroup {
                 SettingsRow(
                     title: "共享屏幕时显示面板",
-                    detail: "默认在共享屏幕、录屏和截图里隐藏面板和预览窗口，自己的屏幕上照常显示。录教程时再打开。"
+                    detail: "默认在共享屏幕、录屏和截图中对他人隐藏。"
                 ) {
                     Toggle("共享屏幕时显示面板", isOn: Binding(get: { model.showDuringScreenSharing }, set: model.setShowDuringScreenSharing))
                         .labelsHidden()
@@ -505,13 +505,13 @@ private struct PanelPage: View {
             SettingsGroup(title: "粘贴") {
                 SettingsRow(
                     title: "图片以文件粘贴",
-                    detail: "粘贴图片时附带一个 PNG 文件，粘贴到访达里会变成文件。有的聊天软件会把它当附件发出去。"
+                    detail: "附带 PNG 文件以便粘贴到访达；部分聊天软件会当作附件发送。"
                 ) {
                     Toggle("图片以文件粘贴", isOn: Binding(get: { model.pasteImagesAsFiles }, set: model.setPasteImagesAsFiles))
                         .labelsHidden()
                 }
             }
-            SettingsGroup(title: "打开", footer: "选中卡片按 ⌘O 时用这里选的应用打开；右键菜单的「打开方式」里可以临时换一个。链接总是用默认的浏览器打开。") {
+            SettingsGroup(title: "打开", footer: "按 ⌘O 默认使用的应用；右键「打开方式」可临时切换。") {
                 SettingsRow(title: "文件的打开方式", detail: "选终端时打开文件所在的文件夹。") {
                     OpenAppPicker(title: "文件的打开方式", forFolders: false, model: model)
                 }
@@ -526,9 +526,9 @@ private struct PanelPage: View {
     private var panelRepeatDetail: String {
         let symbols = [PanelShortcutAction.previousTab, .nextTab].compactMap { model.panelShortcuts[$0]?.symbol }
         if symbols.isEmpty {
-            return "选「收起面板」后，点击面板左上角的标签切换 Pinboard；没有 Pinboard 时总是收起。"
+            return "选「收起面板」时点左上角标签切换；无 Pinboard 时总是收起。"
         }
-        return "选「收起面板」后，用 \(symbols.joined(separator: " ")) 切换 Pinboard；没有 Pinboard 时总是收起。"
+        return "选「收起面板」时用 \(symbols.joined(separator: " ")) 切换标签；无 Pinboard 时总是收起。"
     }
 }
 
@@ -566,7 +566,7 @@ private struct OpenAppPicker: View {
     private func option(_ app: OpenApp) -> some View {
         let available = app.isAvailable(isInstalled: model.isInstalled)
         let name = app.title(forFolders: forFolders)
-        return Text(available ? name : "\(name)（没有安装）")
+        return Text(available ? name : "\(name)（未安装）")
             .tag(app)
             .disabled(!available)
     }
@@ -623,7 +623,7 @@ private struct LinkPreviewPage: View {
 
     var body: some View {
         SettingsScroll {
-            SettingsGroup(footer: "这里管的是复制链接时在后台获取的预览。本机和内网的地址都不会请求。打开以后，以前复制的链接不会补做，再复制一次就会获取。按空格预览链接时会打开网页、执行网页里的脚本，不受这里的设置影响。") {
+            SettingsGroup(footer: "仅控制后台自动获取；本机、内网地址及旧链接不会请求。按空格预览网页不受影响。") {
                 ForEach(LinkPreviewMode.allCases, id: \.self) { mode in
                     if mode != LinkPreviewMode.allCases.first {
                         SettingsDivider()
@@ -665,7 +665,7 @@ private struct HistoryPage: View {
             SettingsGroup {
                 SettingsRow(
                     title: "自动清除历史",
-                    detail: "超过这段时间没有再复制或粘贴过的条目会被删除，固定在 Pinboard 里的条目保留。每小时检查一次。"
+                    detail: "定期清理超时未使用的条目，Pinboard 内的保留。"
                 ) {
                     Picker("自动清除历史", selection: Binding(get: { model.historyRetention }, set: model.chooseRetention)) {
                         ForEach(HistoryRetention.allCases, id: \.self) { retention in
@@ -691,7 +691,7 @@ private struct HistoryPage: View {
             Button("取消", role: .cancel) { model.cancelRetention() }
         } message: { pending in
             let days = pending.retention.days ?? 0
-            Text("现在会删除 \(pending.count) 个超过 \(days) 天没用过的条目，固定在 Pinboard 里的条目保留。之后每小时检查一次，超过 \(days) 天没有再复制或粘贴过的条目都会删除。此操作无法撤销。")
+            Text("将立即删除 \(pending.count) 个超过 \(days) 天未使用的条目（Pinboard 内的保留），此后定期自动清理。此操作无法撤销。")
         }
         .alert(
             "清空剪贴板历史？",
@@ -738,7 +738,7 @@ private struct AboutPage: View {
                 .padding(.vertical, 18)
             }
             SettingsGroup {
-                SettingsRow(title: "自动检查更新", detail: "每天向 GitHub 查一次有没有新版本，不发送任何内容。有新版本时在菜单栏菜单里更新。") {
+                SettingsRow(title: "自动检查更新", detail: "每天检查一次，有新版本时在菜单栏提示。") {
                     Toggle("自动检查更新", isOn: Binding(get: { model.checksForUpdates }, set: model.setChecksForUpdates))
                         .labelsHidden()
                 }
@@ -803,13 +803,9 @@ extension LinkPreviewMode {
         case .off:
             "不发出任何请求，链接卡片只显示网址。"
         case .siteIcon:
-            "复制网页链接后，只打开这个网站的首页，取得网站图标显示在卡片上。你复制的网址本身不会被打开，"
-                + "所以不会让一次性的登录链接、重置密码的链接失效。对方网站会看到有人访问了它的首页。"
+            "只请求网站首页获取图标，不打开复制的网址，一次性链接不会失效。"
         case .full:
-            "复制网页链接后打开这个网址，取得网页标题、预览图和网站图标，搜索时也能搜到网页标题。"
-                + "只下载网页本身，不执行网页里的脚本，也不带你的登录信息（Cookie）。"
-                + "看起来像一次性的链接（网址里有 token、reset、verify 这类词，或者一长串随机字符）只取网站图标，"
-                + "但仍有极少数认不出来，被打开一次就可能失效；在意的话请选「只取网站图标」。"
+            "打开网址获取标题、预览图和图标（不带 Cookie、不执行脚本）。疑似一次性链接会自动退回只取图标，极少数无法识别的可能失效。"
         }
     }
 }

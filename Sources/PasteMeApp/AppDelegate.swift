@@ -23,7 +23,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private let pauseItem = NSMenuItem(title: "暂停记录", action: nil, keyEquivalent: "")
     private lazy var pauseMenu = makePauseMenu()
     private let pasteStackItem = NSMenuItem(title: "Paste Stack", action: #selector(togglePasteStack), keyEquivalent: "")
-    private let pasteDecodedItem = NSMenuItem(title: "解码剪贴板并粘贴", action: #selector(pasteDecodedFromMenu), keyEquivalent: "")
+    private let pasteDecodedItem = NSMenuItem(title: "解码并粘贴", action: #selector(pasteDecodedFromMenu), keyEquivalent: "")
     private let openItem = NSMenuItem(title: "打开历史", action: #selector(showPanel), keyEquivalent: "")
     /// 「暂停记录」子菜单里的「直到手动恢复」，右边显示暂停的快捷键。
     private let untilResumedItem = NSMenuItem(title: "直到手动恢复", action: #selector(pauseFromMenu(_:)), keyEquivalent: "")
@@ -31,7 +31,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var cleanupTimer: Timer?
     private var temporaryFiles: TemporaryFiles?
     /// 没有辅助功能权限就粘贴不了，只在没开时显示在菜单最前面。
-    private let accessibilityItem = NSMenuItem(title: "辅助功能权限未开启（点此设置）", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+    private let accessibilityItem = NSMenuItem(title: "开启辅助功能权限…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
     private let settings = Settings()
     private let recordSound = SystemRecordSound()
     private lazy var updater = Updater(settings: settings, toast: toast)
@@ -503,7 +503,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             pauseItem.submenu = nil
             pauseItem.action = #selector(resumeFromMenu)
             pauseItem.showShortcut(shortcuts.combo(for: .pause))
-            pauseItem.title = until == .distantFuture ? "恢复记录" : "恢复记录（\(Self.timeFormat.string(from: until)) 自动恢复）"
+            pauseItem.title = until == .distantFuture ? "恢复记录" : "恢复记录（至 \(Self.timeFormat.string(from: until))）"
         } else {
             pauseItem.keyEquivalent = ""
             pauseItem.title = "暂停记录"

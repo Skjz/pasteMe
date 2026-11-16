@@ -52,7 +52,7 @@ public struct AirDropPlan: Equatable, Sendable {
             return AirDropPlan(
                 items: items,
                 missing: missing,
-                unavailableReason: items.isEmpty ? "文件已经不在了" : nil
+                unavailableReason: items.isEmpty ? "文件已移除" : nil
             )
         case .text:
             let body = text ?? ""

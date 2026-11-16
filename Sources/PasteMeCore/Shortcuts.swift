@@ -92,7 +92,7 @@ public enum ShortcutRules {
     ) -> String? {
         // 只带 ⇧ 或者不带修饰键的组合，在别的应用里打字时也会被拦下。
         guard !combo.modifiers.isDisjoint(with: [.command, .option, .control]) else {
-            return "要带上 ⌘、⌃ 或 ⌥ 中的至少一个"
+            return "至少包含 ⌘、⌃ 或 ⌥"
         }
         if let other = GlobalAction.allCases.first(where: { $0 != action && current[$0] == combo }) {
             return "和「\(other.title)」的快捷键相同"
@@ -118,7 +118,7 @@ public enum ShortcutRules {
     ) -> String? {
         // 不带修饰键的方向键、字母会和选择卡片、打字进搜索框冲突。
         guard !combo.modifiers.isDisjoint(with: [.command, .option, .control]) else {
-            return "要带上 ⌘、⌃ 或 ⌥ 中的至少一个"
+            return "至少包含 ⌘、⌃ 或 ⌥"
         }
         if let other = PanelShortcutAction.allCases.first(where: { $0 != action && current[$0] == combo }) {
             return "和「\(other.title)」的快捷键相同"

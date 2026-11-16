@@ -59,7 +59,7 @@ import Testing
         let allGone = AirDropPlan.make(kind: .file, text: "/gone.txt\n/missing.png") { _ in false }
         #expect(allGone.items.isEmpty)
         #expect(allGone.missing == 2)
-        #expect(allGone.unavailableReason == "文件已经不在了")
+        #expect(allGone.unavailableReason == "文件已移除")
     }
 
     @Test func temporaryFilesAreRemovedAfterFinishAndOnStartup() throws {

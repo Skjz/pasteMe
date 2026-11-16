@@ -140,7 +140,7 @@ import PasteMeCore
         model.toggleRecording(.panel)
 
         model.recordKey(KeyCombo(keyCode: kVK_ANSI_K, modifiers: [.shift]))
-        #expect(model.shortcutNotes[.panel] == .init(text: "要带上 ⌘、⌃ 或 ⌥ 中的至少一个", isProblem: true))
+        #expect(model.shortcutNotes[.panel] == .init(text: "至少包含 ⌘、⌃ 或 ⌥", isProblem: true))
         model.recordKey(GlobalAction.pasteStack.defaultCombo)
         #expect(model.shortcutNotes[.panel]?.text == "和「开启或退出 Paste Stack」的快捷键相同")
 
@@ -165,7 +165,7 @@ import PasteMeCore
         model.toggleRecording(.pasteStack)
         model.recordKey(KeyCombo(keyCode: kVK_ANSI_P, modifiers: [.command]))
         #expect(settings.shortcut(for: .pasteStack) == KeyCombo(keyCode: kVK_ANSI_P, modifiers: [.command]))
-        #expect(model.shortcutNotes[.pasteStack] == .init(text: "面板开着时，面板里这个组合原来的功能会用不了", isProblem: false))
+        #expect(model.shortcutNotes[.pasteStack] == .init(text: "面板打开时会覆盖面板内的功能", isProblem: false))
     }
 
     @Test func resettingGoesBackToTheDefaultUnlessItIsTaken() {
@@ -237,7 +237,7 @@ import PasteMeCore
         model.recordKey(GlobalAction.panel.defaultCombo)
         #expect(settings.shortcut(for: .nextTab) == GlobalAction.panel.defaultCombo)
         #expect(model.panelShortcutNotes[.nextTab] == .init(
-            text: "和全局快捷键「呼出或收起面板」相同，全局快捷键会先拦下它",
+            text: "与全局快捷键「呼出或收起面板」冲突，会被优先拦截",
             isProblem: false
         ))
 

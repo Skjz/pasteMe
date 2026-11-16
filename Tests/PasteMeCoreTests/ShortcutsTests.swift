@@ -63,8 +63,8 @@ import Testing
     }
 
     @Test func aShortcutNeedsCommandControlOrOption() {
-        #expect(problem(KeyCombo(keyCode: 9, modifiers: [])) == "要带上 ⌘、⌃ 或 ⌥ 中的至少一个")
-        #expect(problem(KeyCombo(keyCode: 9, modifiers: [.shift])) == "要带上 ⌘、⌃ 或 ⌥ 中的至少一个")
+        #expect(problem(KeyCombo(keyCode: 9, modifiers: [])) == "至少包含 ⌘、⌃ 或 ⌥")
+        #expect(problem(KeyCombo(keyCode: 9, modifiers: [.shift])) == "至少包含 ⌘、⌃ 或 ⌥")
         #expect(problem(KeyCombo(keyCode: 9, modifiers: [.control])) == nil)
         #expect(problem(Self.optionCommandK) == nil)
     }
@@ -102,7 +102,7 @@ import Testing
             current: current,
             fixedTitle: { _ in nil },
             isReservedBySystem: { _ in false }
-        ) == "要带上 ⌘、⌃ 或 ⌥ 中的至少一个")
+        ) == "至少包含 ⌘、⌃ 或 ⌥")
         #expect(ShortcutRules.problem(
             with: PanelShortcutAction.nextTab.defaultCombo,
             for: .previousTab,

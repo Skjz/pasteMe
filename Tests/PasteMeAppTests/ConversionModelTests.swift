@@ -145,7 +145,7 @@ import PasteMeCore
         let image = try store.insert(ClipContent(kind: .image, image: try #require(PanelTestImage.png)), source: nil)
         model.didShow()
 
-        #expect(model.hashUnavailableReason(for: try item(gone)) == "文件已经不在了")
+        #expect(model.hashUnavailableReason(for: try item(gone)) == "文件已移除")
         #expect(model.computeHash(try item(gone), using: .md5) == nil)
         #expect(model.computeHash(try item(image), using: .md5) == nil)
         // 文件不在了：菜单里照样列出，写明原因；图片不列出。

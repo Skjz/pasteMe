@@ -324,7 +324,7 @@ final class SettingsModel {
 
     private func globalClashNote(for combo: KeyCombo) -> ShortcutNote? {
         guard let global = GlobalAction.allCases.first(where: { shortcuts[$0] == combo }) else { return nil }
-        return ShortcutNote(text: "和全局快捷键「\(global.title)」相同，全局快捷键会先拦下它", isProblem: false)
+        return ShortcutNote(text: "与全局快捷键「\(global.title)」冲突，会被优先拦截", isProblem: false)
     }
 
     private func noteIfNotRegistered(_ action: GlobalAction) {
@@ -333,9 +333,9 @@ final class SettingsModel {
         }
     }
 
-    private static let usedByPanelNote = "面板开着时，面板里这个组合原来的功能会用不了"
+    private static let usedByPanelNote = "面板打开时会覆盖面板内的功能"
     /// 注册失败时的提示。别的应用注册了同一个组合时注册照样成功（见 `HotKeyCenter.register`），所以不猜原因。
-    static let notRegisteredNote = "没有生效：系统没有接受这个组合，换一个试试"
+    static let notRegisteredNote = "注册失败，请换一个组合"
 
     private func reloadShortcuts() {
         shortcuts = Dictionary(uniqueKeysWithValues: GlobalAction.allCases.compactMap { action in

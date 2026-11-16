@@ -33,7 +33,7 @@ import PasteMeCore
         let keptItem = try #require(model.items.first { $0.id == kept })
         let textItem = try #require(model.items.first { $0.id == text })
 
-        #expect(model.airDropMenuState(for: missingItem) == .init(title: "隔空投送…（文件已经不在了）", isEnabled: false))
+        #expect(model.airDropMenuState(for: missingItem) == .init(title: "隔空投送…（文件已移除）", isEnabled: false))
         #expect(model.airDropMenuState(for: keptItem) == .init(title: "隔空投送…", isEnabled: true))
         #expect(model.airDropMenuState(for: textItem) == .init(title: "隔空投送…", isEnabled: true))
 
@@ -50,7 +50,7 @@ import PasteMeCore
         model.sendViaAirDrop(item)
         #expect(sentPlans.count == 1)
         #expect(sentPlans[0].items == [.url(URL(fileURLWithPath: "/exists/a.pdf"))])
-        #expect(notices == ["有 1 个文件已经不在了"])
+        #expect(notices == ["有 1 个文件已移除"])
     }
 
     @Test func systemAirDropProbeAcceptsTextAndImagesWhenAirDropIsEnabled() {

@@ -62,7 +62,7 @@ import Testing
     @Test func missingFilesAndFoldersCannotBeHashed() throws {
         let present = try file("a.txt", Data("a".utf8))
         #expect(HashInput.unavailableReason(forFiles: [present.path]) == nil)
-        #expect(HashInput.unavailableReason(forFiles: [present.path, directory.appendingPathComponent("gone").path]) == "文件已经不在了")
+        #expect(HashInput.unavailableReason(forFiles: [present.path, directory.appendingPathComponent("gone").path]) == "文件已移除")
         #expect(HashInput.unavailableReason(forFiles: [directory.path]) == "不能计算文件夹")
         #expect(HashInput.includesFolder([present.path, directory.path]))
         #expect(!HashInput.includesFolder([present.path, directory.appendingPathComponent("gone").path]))

@@ -77,7 +77,7 @@ struct HistoryView: View {
             Divider().frame(height: 16).padding(.horizontal, 4)
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("搜索，或输入 @ 按类型、应用、Pinboard 筛选", text: $model.query)
+            TextField("搜索，输入 @ 筛选", text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
                 .focused($searchFocused)
@@ -115,7 +115,7 @@ struct HistoryView: View {
         case .cards:
             let remove = model.pinboardID == nil ? "⌘⌫ 删除" : "⌘⌫ 移出   拖动排序"
             let tab = model.tabShortcutHint.map { "   \($0)" } ?? ""
-            return "空格 预览   ↩ 粘贴   ⌘P 固定   \(remove)   ⌘Z 撤销\(tab)   直接打字搜索"
+            return "空格 预览   ↩ 粘贴   ⌘P 固定   \(remove)   ⌘Z 撤销\(tab)"
         }
     }
 
@@ -421,12 +421,12 @@ private struct ConversionMenuItems: View {
 }
 
 extension ConversionOption {
-    /// 菜单项的名字，做不了时在后面注明原因，例如「ASCII 文本（字节不是合法的 UTF-8）」。
+    /// 菜单项的名字，做不了时在后面注明原因，例如「ASCII 文本（非 UTF-8）」。
     func menuTitle(for subtype: TextSubtype?) -> String {
         conversion.title(for: subtype) + (unavailableReason.map { "（\($0)）" } ?? "")
     }
 
-    static let tooLongNote = "内容超过 1 MB，不能转换"
+    static let tooLongNote = "超过 1 MB，无法转换"
 }
 
 /// Pinboard 里拖动排序：拖着的卡片经过别的卡片时换到它的位置，松手时写进数据库（`HistoryModel.endDrag`）。

@@ -949,7 +949,7 @@ final class HistoryModel {
         }
         onOpen(plan)
         if plan.missing > 0 {
-            onNotice("有 \(plan.missing) 个文件已经不在了", "exclamationmark.triangle")
+            onNotice("有 \(plan.missing) 个文件已移除", "exclamationmark.triangle")
         }
     }
 
@@ -969,7 +969,7 @@ final class HistoryModel {
             } ?? item.filePaths
             let urls = paths.filter { pathKind($0) != nil }.map { URL(fileURLWithPath: $0) }
             if urls.isEmpty {
-                return AirDropMenuState(title: "隔空投送…（文件已经不在了）", isEnabled: false)
+                return AirDropMenuState(title: "隔空投送…（文件已移除）", isEnabled: false)
             }
             return AirDropMenuState(title: "隔空投送…", isEnabled: canAirDrop(.file, urls))
         case .link:
@@ -1007,7 +1007,7 @@ final class HistoryModel {
         }
         onAirDrop(plan)
         if plan.missing > 0 {
-            onNotice("有 \(plan.missing) 个文件已经不在了", "exclamationmark.triangle")
+            onNotice("有 \(plan.missing) 个文件已移除", "exclamationmark.triangle")
         }
     }
 

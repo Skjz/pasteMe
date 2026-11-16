@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Panel shortcuts can now be re-recorded under 面板内快捷键 on the 通用 page of the settings window: 切换到上一个标签 (⌘← by default), 切换到下一个标签 (⌘→ by default, for example to ⌘[ and ⌘]) and 打开转换菜单 (⌘T by default). Once changed, ⌘← and ⌘→ go back to moving the card selection or the search insertion point, and ⌘T is freed up. Combinations already used by fixed panel keys (such as ⌘C, ⌘P or ⌘1–⌘9) or shared with another panel shortcut are rejected with the reason, clashes with global shortcuts show a warning, and combinations that edit text in the search field still go to the search field while it has text. (#69)
 - 呼出快捷键 → 面板开着时再按 on the 面板 page of the settings window chooses what pressing ⇧⌘V (or your custom panel shortcut) does while the panel is already open: 切换到下一个 Pinboard (the default, unchanged) or 收起面板, which always closes the panel even when you have Pinboards. (#70)
 
+### Changed
+
+- Shortened wordy descriptions and menu labels across the status bar menu, card context menus, the panel search bar, the Paste Stack window, and all six pages of the settings window so options scan cleanly without multi-line wrapping.
+
 ## [0.2.1] - 2026-10-25
 
 ### Added

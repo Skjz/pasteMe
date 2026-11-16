@@ -340,7 +340,7 @@ private struct PasteStackView: View {
                 .help("退出 Paste Stack")
             }
             if state.rows.isEmpty {
-                Text("依次复制要粘贴的内容，再到目标位置按 ⌘V，会按复制的顺序逐条粘贴。")
+                Text("依次复制或在面板按 ⌘C，再按 ⌘V 逐条粘贴。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -76,7 +76,7 @@ import Testing
     @Test func bytesThatAreNotUTF8CannotBecomeText() {
         let options = TextConverter.options(for: "ff fe 00 41", subtype: .hex)
         #expect(options.map(\.conversion) == [.text, .hexdump, .cArray, .encodeBase64])
-        #expect(options[0].unavailableReason == "字节不是合法的 UTF-8")
+        #expect(options[0].unavailableReason == "非 UTF-8")
         #expect(TextConverter.convert("ff fe 00 41", subtype: .hex, using: .text) == nil)
         // Base64 解码出来不是文字时，改为提供 hex 和 hexdump。
         let binary = TextConverter.options(for: "q83vEjRWeJCrze8SNFZ4kA==", subtype: .base64)

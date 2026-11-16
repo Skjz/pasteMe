@@ -76,12 +76,12 @@ import PasteMeCore
         model.open()
         // 都不在了：不打开，面板不收起（`onOpen` 没有调用），只提示。
         #expect(opened.isEmpty)
-        #expect(notices == ["文件已经不在了"])
+        #expect(notices == ["文件已移除"])
 
         notices = []
         try select(ClipContent(kind: .file, text: "/fa.txt\n/gone\n/also-gone"))
         model.open()
         #expect(opened.first?.targets.map(\.url.path) == ["/fa.txt"])
-        #expect(notices == ["有 2 个文件已经不在了"])
+        #expect(notices == ["有 2 个文件已移除"])
     }
 }
