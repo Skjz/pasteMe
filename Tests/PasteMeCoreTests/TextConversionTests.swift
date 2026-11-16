@@ -76,7 +76,7 @@ import Testing
     @Test func bytesThatAreNotUTF8CannotBecomeText() {
         let options = TextConverter.options(for: "ff fe 00 41", subtype: .hex)
         #expect(options.map(\.conversion) == [.text, .hexdump, .cArray, .encodeBase64])
-        #expect(options[0].unavailableReason == "字节不是合法的 UTF-8")
+        #expect(options[0].unavailableReason == "非 UTF-8")
         #expect(TextConverter.convert("ff fe 00 41", subtype: .hex, using: .text) == nil)
         // Base64 解码出来不是文字时，改为提供 hex 和 hexdump。
         let binary = TextConverter.options(for: "q83vEjRWeJCrze8SNFZ4kA==", subtype: .base64)
@@ -106,5 +106,27 @@ import Testing
         #expect(TimestampText.local(date, timeZone: TimeZone(identifier: "Asia/Kolkata")!) == "2025-10-17 13:30:00 GMT+5:30")
         #expect(TimestampText.local(date, timeZone: TimeZone(identifier: "America/Sao_Paulo")!) == "2025-10-17 05:00:00 GMT-3")
         #expect(TimestampText.local(date, timeZone: TimeZone(identifier: "UTC")!) == "2025-10-17 08:00:00 GMT")
+    }
+
+    @Test func clipboardDecodingRecognizesBase64HexAndHexdump() {
+        #expect(TextConverter.decodeClipboard("5L2g5aW9") == .success("你好"))
+        #expect(TextConverter.decodeClipboard("48656c6c6f") == .success("Hello"))
+        let dump = ByteText.hexdump(Array("Hello, PasteMe".utf8))
+        #expect(TextConverter.decodeClipboard(dump) == .success("Hello, PasteMe"))
+
+        // 非 UTF-8 字节返回对应的失败原因。
+        #expect(TextConverter.decodeClipboard("ff fe 00 41") == .failure(.notUTF8))
+        #expect(TextConverter.decodeClipboard("q83vEjRWeJCrze8SNFZ4kA==") == .failure(.notUTF8))
+
+        // 空内容、普通文本和其他子类型不解码。
+        #expect(TextConverter.decodeClipboard(nil) == .failure(.noText))
+        #expect(TextConverter.decodeClipboard("   \n ") == .failure(.noText))
+        #expect(TextConverter.decodeClipboard("普通文字") == .failure(.notEncoded))
+        #expect(TextConverter.decodeClipboard("#ff8800") == .failure(.notEncoded))
+        #expect(TextConverter.decodeClipboard("1760688000") == .failure(.notEncoded))
+
+        // 超过上限直接说明内容过长。
+        let huge = String(repeating: "QUFB", count: TextConverter.maxLength / 4 + 1)
+        #expect(TextConverter.decodeClipboard(huge) == .failure(.tooLong))
     }
 }

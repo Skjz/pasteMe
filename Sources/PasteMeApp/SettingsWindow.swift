@@ -69,10 +69,10 @@ final class SettingsWindow {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.model.refreshSystemState() }
         }
-        // 录制全局快捷键时（#50）窗口里的按键都交给录制：本地监视器在菜单的快捷键之前收到，⌘W、⌘Q 也能录。
+        // 录制快捷键时（#50、#69）窗口里的按键都交给录制：本地监视器在菜单的快捷键之前收到，⌘W、⌘Q 也能录。
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] event in
             let recorded = MainActor.assumeIsolated { () -> Bool in
-                guard let self, self.model.recordingShortcut != nil, event.window === window else { return false }
+                guard let self, self.model.recordingTarget != nil, event.window === window else { return false }
                 self.model.recordKey(KeyCombo(keyCode: event.keyCode, flags: event.modifierFlags))
                 return true
             }
@@ -380,12 +380,12 @@ private struct GeneralPage: View {
                         .labelsHidden()
                 }
                 SettingsDivider()
-                SettingsRow(title: "复制时播放提示音", detail: "每记下一次复制响一声。打开时先响一次。") {
+                SettingsRow(title: "复制时播放提示音", detail: "每次记录时播放轻响。") {
                     Toggle("复制时播放提示音", isOn: Binding(get: { model.playsSoundOnRecord }, set: model.setPlaysSoundOnRecord))
                         .labelsHidden()
                 }
                 SettingsDivider()
-                SettingsRow(title: "辅助功能权限", detail: "粘贴到其他应用、Paste Stack 都要用到。") {
+                SettingsRow(title: "辅助功能权限", detail: "用于自动粘贴和 Paste Stack。") {
                     if model.accessibilityTrusted {
                         Label("已开启", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
@@ -394,14 +394,39 @@ private struct GeneralPage: View {
                     }
                 }
             }
-            SettingsGroup(title: "全局快捷键", footer: "点一下快捷键再按下新的组合。录制时按 esc 取消，按 ⌫ 清除；清除后可以在菜单栏菜单里使用这项功能。") {
+            SettingsGroup(title: "全局快捷键", footer: "点击后按下新组合；esc 取消，⌫ 清除。") {
                 ForEach(GlobalAction.allCases, id: \.self) { action in
                     if action != GlobalAction.allCases.first {
                         SettingsDivider()
                     }
                     let note = model.shortcutNotes[action]
                     SettingsRow(title: action.title, detail: note?.text, detailIsWarning: note?.isProblem == true) {
-                        ShortcutRecorder(action: action, model: model)
+                        ShortcutRecorderButton(
+                            title: action.title,
+                            combo: model.shortcuts[action],
+                            defaultCombo: action.defaultCombo,
+                            recording: model.recordingShortcut == action,
+                            onToggle: { model.toggleRecording(action) },
+                            onReset: { model.resetShortcut(action) }
+                        )
+                    }
+                }
+            }
+            SettingsGroup(title: "面板内快捷键", footer: "仅在面板打开时生效；搜索框有文字时，编辑按键仍归搜索框。") {
+                ForEach(PanelShortcutAction.allCases, id: \.self) { action in
+                    if action != PanelShortcutAction.allCases.first {
+                        SettingsDivider()
+                    }
+                    let note = model.panelShortcutNotes[action]
+                    SettingsRow(title: action.title, detail: note?.text, detailIsWarning: note?.isProblem == true) {
+                        ShortcutRecorderButton(
+                            title: action.title,
+                            combo: model.panelShortcuts[action],
+                            defaultCombo: action.defaultCombo,
+                            recording: model.recordingPanelShortcut == action,
+                            onToggle: { model.toggleRecording(action) },
+                            onReset: { model.resetShortcut(action) }
+                        )
                     }
                 }
             }
@@ -409,28 +434,30 @@ private struct GeneralPage: View {
     }
 }
 
-/// 一个全局快捷键（#50）：按钮上是现在的组合，点了开始录制，按键由 `SettingsWindow` 的事件监视器交给
+/// 一个可录制的快捷键按钮（#50、#69）：按钮上是现在的组合，点了开始录制，按键由 `SettingsWindow` 的事件监视器交给
 /// `SettingsModel.recordKey`。和默认值不同时旁边有「恢复默认」。
-private struct ShortcutRecorder: View {
-    let action: GlobalAction
-    let model: SettingsModel
-
-    private var recording: Bool { model.recordingShortcut == action }
+private struct ShortcutRecorderButton: View {
+    let title: String
+    let combo: KeyCombo?
+    let defaultCombo: KeyCombo
+    let recording: Bool
+    let onToggle: () -> Void
+    let onReset: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            if !recording, model.shortcuts[action] != action.defaultCombo {
-                Button("恢复默认") { model.resetShortcut(action) }
+            if !recording, combo != defaultCombo {
+                Button("恢复默认", action: onReset)
                     .buttonStyle(.borderless)
                     .controlSize(.small)
                     .fixedSize()
             }
-            Button { model.toggleRecording(action) } label: {
-                Text(recording ? "请按下快捷键" : model.shortcuts[action]?.symbol ?? "未设置")
-                    .foregroundStyle(recording ? Color.accentColor : model.shortcuts[action] == nil ? .secondary : .primary)
+            Button(action: onToggle) {
+                Text(recording ? "请按下快捷键" : combo?.symbol ?? "未设置")
+                    .foregroundStyle(recording ? Color.accentColor : combo == nil ? .secondary : .primary)
                     .frame(minWidth: 92)
             }
-            .accessibilityLabel("\(action.title)的快捷键")
+            .accessibilityLabel("\(title)的快捷键")
         }
         .fixedSize()
     }
@@ -451,10 +478,25 @@ private struct PanelPage: View {
                 }
                 .padding(11)
             }
+            SettingsGroup(title: "呼出快捷键", footer: panelRepeatDetail) {
+                SettingsRow(title: "面板开着时再按") {
+                    Picker(
+                        "面板开着时再按呼出快捷键",
+                        selection: Binding(get: { model.panelRepeatAction }, set: model.setPanelRepeatAction)
+                    ) {
+                        ForEach(PanelRepeatAction.allCases, id: \.self) { action in
+                            Text(action.title).tag(action)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
+            }
             SettingsGroup {
                 SettingsRow(
                     title: "共享屏幕时显示面板",
-                    detail: "默认在共享屏幕、录屏和截图里隐藏面板和预览窗口，自己的屏幕上照常显示。录教程时再打开。"
+                    detail: "默认在共享屏幕、录屏和截图中对他人隐藏。"
                 ) {
                     Toggle("共享屏幕时显示面板", isOn: Binding(get: { model.showDuringScreenSharing }, set: model.setShowDuringScreenSharing))
                         .labelsHidden()
@@ -462,14 +504,22 @@ private struct PanelPage: View {
             }
             SettingsGroup(title: "粘贴") {
                 SettingsRow(
+                    title: "编辑或转换后自动拷贝",
+                    detail: "新建、编辑和转换得到的文本自动放入剪贴板，可直接 ⌘V 粘贴。"
+                ) {
+                    Toggle("编辑或转换后自动拷贝", isOn: Binding(get: { model.copyEditedToClipboard }, set: model.setCopyEditedToClipboard))
+                        .labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(
                     title: "图片以文件粘贴",
-                    detail: "粘贴图片时附带一个 PNG 文件，粘贴到访达里会变成文件。有的聊天软件会把它当附件发出去。"
+                    detail: "附带 PNG 文件以便粘贴到访达；部分聊天软件会当作附件发送。"
                 ) {
                     Toggle("图片以文件粘贴", isOn: Binding(get: { model.pasteImagesAsFiles }, set: model.setPasteImagesAsFiles))
                         .labelsHidden()
                 }
             }
-            SettingsGroup(title: "打开", footer: "选中卡片按 ⌘O 时用这里选的应用打开；右键菜单的「打开方式」里可以临时换一个。链接总是用默认的浏览器打开。") {
+            SettingsGroup(title: "打开", footer: "按 ⌘O 默认使用的应用；右键「打开方式」可临时切换。") {
                 SettingsRow(title: "文件的打开方式", detail: "选终端时打开文件所在的文件夹。") {
                     OpenAppPicker(title: "文件的打开方式", forFolders: false, model: model)
                 }
@@ -478,6 +528,23 @@ private struct PanelPage: View {
                     OpenAppPicker(title: "文件夹的打开方式", forFolders: true, model: model)
                 }
             }
+        }
+    }
+
+    private var panelRepeatDetail: String {
+        let symbols = [PanelShortcutAction.previousTab, .nextTab].compactMap { model.panelShortcuts[$0]?.symbol }
+        if symbols.isEmpty {
+            return "选「收起面板」时点左上角标签切换；无 Pinboard 时总是收起。"
+        }
+        return "选「收起面板」时用 \(symbols.joined(separator: " ")) 切换标签；无 Pinboard 时总是收起。"
+    }
+}
+
+extension PanelRepeatAction {
+    var title: String {
+        switch self {
+        case .cyclePinboard: "切换到下一个 Pinboard"
+        case .hidePanel: "收起面板"
         }
     }
 }
@@ -507,7 +574,7 @@ private struct OpenAppPicker: View {
     private func option(_ app: OpenApp) -> some View {
         let available = app.isAvailable(isInstalled: model.isInstalled)
         let name = app.title(forFolders: forFolders)
-        return Text(available ? name : "\(name)（没有安装）")
+        return Text(available ? name : "\(name)（未安装）")
             .tag(app)
             .disabled(!available)
     }
@@ -564,7 +631,7 @@ private struct LinkPreviewPage: View {
 
     var body: some View {
         SettingsScroll {
-            SettingsGroup(footer: "这里管的是复制链接时在后台获取的预览。本机和内网的地址都不会请求。打开以后，以前复制的链接不会补做，再复制一次就会获取。按空格预览链接时会打开网页、执行网页里的脚本，不受这里的设置影响。") {
+            SettingsGroup(footer: "仅控制后台自动获取；本机、内网地址及旧链接不会请求。按空格预览网页不受影响。") {
                 ForEach(LinkPreviewMode.allCases, id: \.self) { mode in
                     if mode != LinkPreviewMode.allCases.first {
                         SettingsDivider()
@@ -606,7 +673,7 @@ private struct HistoryPage: View {
             SettingsGroup {
                 SettingsRow(
                     title: "自动清除历史",
-                    detail: "超过这段时间没有再复制或粘贴过的条目会被删除，固定在 Pinboard 里的条目保留。每小时检查一次。"
+                    detail: "定期清理超时未使用的条目，Pinboard 内的保留。"
                 ) {
                     Picker("自动清除历史", selection: Binding(get: { model.historyRetention }, set: model.chooseRetention)) {
                         ForEach(HistoryRetention.allCases, id: \.self) { retention in
@@ -632,7 +699,7 @@ private struct HistoryPage: View {
             Button("取消", role: .cancel) { model.cancelRetention() }
         } message: { pending in
             let days = pending.retention.days ?? 0
-            Text("现在会删除 \(pending.count) 个超过 \(days) 天没用过的条目，固定在 Pinboard 里的条目保留。之后每小时检查一次，超过 \(days) 天没有再复制或粘贴过的条目都会删除。此操作无法撤销。")
+            Text("将立即删除 \(pending.count) 个超过 \(days) 天未使用的条目（Pinboard 内的保留），此后定期自动清理。此操作无法撤销。")
         }
         .alert(
             "清空剪贴板历史？",
@@ -679,7 +746,7 @@ private struct AboutPage: View {
                 .padding(.vertical, 18)
             }
             SettingsGroup {
-                SettingsRow(title: "自动检查更新", detail: "每天向 GitHub 查一次有没有新版本，不发送任何内容。有新版本时在菜单栏菜单里更新。") {
+                SettingsRow(title: "自动检查更新", detail: "每天检查一次，有新版本时在菜单栏提示。") {
                     Toggle("自动检查更新", isOn: Binding(get: { model.checksForUpdates }, set: model.setChecksForUpdates))
                         .labelsHidden()
                 }
@@ -744,13 +811,9 @@ extension LinkPreviewMode {
         case .off:
             "不发出任何请求，链接卡片只显示网址。"
         case .siteIcon:
-            "复制网页链接后，只打开这个网站的首页，取得网站图标显示在卡片上。你复制的网址本身不会被打开，"
-                + "所以不会让一次性的登录链接、重置密码的链接失效。对方网站会看到有人访问了它的首页。"
+            "只请求网站首页获取图标，不打开复制的网址，一次性链接不会失效。"
         case .full:
-            "复制网页链接后打开这个网址，取得网页标题、预览图和网站图标，搜索时也能搜到网页标题。"
-                + "只下载网页本身，不执行网页里的脚本，也不带你的登录信息（Cookie）。"
-                + "看起来像一次性的链接（网址里有 token、reset、verify 这类词，或者一长串随机字符）只取网站图标，"
-                + "但仍有极少数认不出来，被打开一次就可能失效；在意的话请选「只取网站图标」。"
+            "打开网址获取标题、预览图和图标（不带 Cookie、不执行脚本）。疑似一次性链接会自动退回只取图标，极少数无法识别的可能失效。"
         }
     }
 }

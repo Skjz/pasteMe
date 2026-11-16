@@ -101,7 +101,7 @@ struct AppAliasesView: View {
         } else {
             ScrollViewReader { proxy in
                 SettingsScroll {
-                    SettingsGroup(footer: "在面板里搜应用的任何一个名字，都能找到从它复制的内容，`app:` 后面也一样。英文名和中文名已经自动识别，你可以再加自己的别名，多个别名用逗号分隔。") {
+                    SettingsGroup(footer: "中英文应用名已自动识别；可补充别名（逗号分隔），搜索和 app: 均生效。") {
                         let first = model.visibleRows.first?.id
                         ForEach(model.visibleRows) { row in
                             if row.id != first {

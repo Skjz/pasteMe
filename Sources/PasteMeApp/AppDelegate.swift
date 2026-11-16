@@ -10,6 +10,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var recorder: Recorder!
     private var enrichment: EnrichmentQueue!
     private var pasteStack: PasteStackController!
+    private var airDrop: AirDropController!
     private var monitor: ClipboardMonitor!
     private var panel: PanelController!
     private var appNames: AppNames!
@@ -22,6 +23,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private let pauseItem = NSMenuItem(title: "暂停记录", action: nil, keyEquivalent: "")
     private lazy var pauseMenu = makePauseMenu()
     private let pasteStackItem = NSMenuItem(title: "Paste Stack", action: #selector(togglePasteStack), keyEquivalent: "")
+    private let pasteDecodedItem = NSMenuItem(title: "解码并粘贴", action: #selector(pasteDecodedFromMenu), keyEquivalent: "")
     private let openItem = NSMenuItem(title: "打开历史", action: #selector(showPanel), keyEquivalent: "")
     /// 「暂停记录」子菜单里的「直到手动恢复」，右边显示暂停的快捷键。
     private let untilResumedItem = NSMenuItem(title: "直到手动恢复", action: #selector(pauseFromMenu(_:)), keyEquivalent: "")
@@ -29,7 +31,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var cleanupTimer: Timer?
     private var temporaryFiles: TemporaryFiles?
     /// 没有辅助功能权限就粘贴不了，只在没开时显示在菜单最前面。
-    private let accessibilityItem = NSMenuItem(title: "辅助功能权限未开启（点此设置）", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+    private let accessibilityItem = NSMenuItem(title: "开启辅助功能权限…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
     private let settings = Settings()
     private let recordSound = SystemRecordSound()
     private lazy var updater = Updater(settings: settings, toast: toast)
@@ -54,7 +56,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
 
         temporaryFiles = (try? TemporaryFiles.defaultDirectory()).map(TemporaryFiles.init(directory:))
+        let airDropFiles = (try? AirDropFiles.defaultDirectory()).map(AirDropFiles.init(directory:))
+        airDropFiles?.removeAll()
+        airDrop = AirDropController(files: airDropFiles, toast: toast)
         let settings = settings
+        let stack = PasteStack()
         paster = Paster(
             store: store,
             pasteboard: GeneralPasteboard(),
@@ -63,13 +69,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             imagesAsFiles: { settings.pasteImagesAsFiles }
         )
         appNames = AppNames(store: store, settings: settings)
-        model = HistoryModel(store: store, appNames: appNames, settings: settings)
+        let initialPanelShortcuts = Dictionary(uniqueKeysWithValues: PanelShortcutAction.allCases.compactMap { action in
+            settings.shortcut(for: action).map { (action, $0) }
+        })
+        model = HistoryModel(store: store, appNames: appNames, settings: settings, pasteStack: stack)
         model.cursorStyle = settings.cursorStyle
+        model.tabSwitchShortcuts = initialPanelShortcuts
         model.pastesImagesAsFiles = settings.pasteImagesAsFiles
+        model.copyEditedToClipboard = settings.copyEditedToClipboard
         model.fileApp = settings.fileApp
         model.folderApp = settings.folderApp
         panel = PanelController(model: model)
         panel.showsDuringScreenSharing = settings.showDuringScreenSharing
+        panel.repeatAction = settings.panelRepeatAction
+        panel.panelShortcuts = initialPanelShortcuts
         panel.draggingWriters = { [paster] item in try paster!.draggingWriters(for: item.id) }
         model.onPaste = { [weak self] item, mode in self?.paste(item, as: mode) }
         model.onCopy = { [paster] item in
@@ -79,7 +92,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 NSLog("PasteMe: 拷贝失败：\(error)")
             }
         }
+        model.onStartPasteStack = { [weak self] item in self?.pasteStack.start(with: item.id) ?? false }
         model.onOpen = { [weak self] plan in self?.open(plan) }
+        model.onAirDrop = { [weak self] plan in
+            self?.panel.hide()
+            self?.airDrop.send(plan)
+        }
         model.onEditAliases = { [weak self] bundleID in
             // 先收起面板，再打开设置窗口的「应用别名」页并定位到这个应用。
             self?.panel.hide()
@@ -94,7 +112,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         ])
         enrichment.onEnriched = { [weak self] _ in self?.reloadPanelIfVisible() }
         model.onEdited = { [weak self] id in self?.enrichment.enqueue(id) }
-        let stack = PasteStack()
         recorder = Recorder(
             store: store,
             enrichment: enrichment,
@@ -116,6 +133,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         settingsWindow = SettingsWindow(model: makeSettingsModel())
 
         shortcuts.set(.panel) { [weak self] in self?.panel.toggle() }
+        shortcuts.set(.pasteDecoded) { [weak self] in self?.pasteDecodedClipboard() }
         shortcuts.set(.pause) { [weak self] in self?.togglePause() }
         shortcuts.set(.pasteStack) { [weak self] in self?.pasteStack.toggle() }
         shortcuts.registerAll()
@@ -220,7 +238,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             self?.pasteStack.showsDuringScreenSharing = on
         }
         settingsModel.onImagesAsFilesChange = { [weak self] on in self?.model.pastesImagesAsFiles = on }
+        settingsModel.onCopyEditedChange = { [weak self] on in self?.model.copyEditedToClipboard = on }
         settingsModel.onCursorStyleChange = { [weak self] style in self?.model.cursorStyle = style }
+        settingsModel.onPanelRepeatActionChange = { [weak self] action in self?.panel.repeatAction = action }
+        settingsModel.onPanelShortcutChange = { [weak self] shortcuts in
+            self?.panel.panelShortcuts = shortcuts
+            self?.model.tabSwitchShortcuts = shortcuts
+        }
         settingsModel.onOpenAppsChange = { [weak self] files, folders in
             self?.model.fileApp = files
             self?.model.folderApp = folders
@@ -315,6 +339,40 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
     }
 
+    /// ⌃⌥⌘V（#67）：把剪贴板里的 Base64、hex、hexdump 解码成文字，记进历史并粘贴到目标应用。
+    private func pasteDecodedClipboard() {
+        let target: TargetApp?
+        if panel.isVisible {
+            target = panel.targetApp
+            panel.hide()
+        } else {
+            target = NSWorkspace.shared.frontmostApplication.map {
+                TargetApp(bundleID: $0.bundleIdentifier, name: $0.localizedName)
+            }
+        }
+        monitor.poll()
+        let clipboardText = PasteboardCodec.readDecodableText(.general)
+        do {
+            switch try paster.pasteDecoded(clipboardText, into: target, onLinkRecorded: { [weak self] id in
+                self?.enrichment.enqueue(id)
+            }) {
+            case .failure(let error):
+                toast.show(error.message, symbol: "exclamationmark.triangle")
+            case .success(.pasted):
+                break
+            case .success(.copiedOnly):
+                toast.show("已解码并拷贝到剪贴板", detail: "允许辅助功能权限后可直接粘贴", symbol: "doc.on.clipboard")
+                Accessibility.requestTrust()
+            }
+        } catch {
+            NSLog("PasteMe: 解码粘贴失败：\(error)")
+        }
+    }
+
+    @objc private func pasteDecodedFromMenu() {
+        pasteDecodedClipboard()
+    }
+
     /// ⌘O（#51）：收起面板，打开的应用来到前面。同一个应用要打开的几个网址一起交给它。
     private func open(_ plan: OpenPlan) {
         panel.hide()
@@ -351,6 +409,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         menu.addItem(updateItem)
         menu.addItem(accessibilityItem)
         menu.addItem(openItem)
+        menu.addItem(pasteDecodedItem)
         menu.addItem(.separator())
         menu.addItem(pauseItem)
         menu.addItem(pasteStackItem)
@@ -398,6 +457,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     public func menuWillOpen(_ menu: NSMenu) {
         // 快捷键可能在设置里改过（#50），每次打开菜单时按现在的组合显示。
         openItem.showShortcut(shortcuts.combo(for: .panel))
+        pasteDecodedItem.showShortcut(shortcuts.combo(for: .pasteDecoded))
         pasteStackItem.showShortcut(shortcuts.combo(for: .pasteStack))
         untilResumedItem.showShortcut(shortcuts.combo(for: .pause))
         updatePauseItem()
@@ -445,7 +505,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             pauseItem.submenu = nil
             pauseItem.action = #selector(resumeFromMenu)
             pauseItem.showShortcut(shortcuts.combo(for: .pause))
-            pauseItem.title = until == .distantFuture ? "恢复记录" : "恢复记录（\(Self.timeFormat.string(from: until)) 自动恢复）"
+            pauseItem.title = until == .distantFuture ? "恢复记录" : "恢复记录（至 \(Self.timeFormat.string(from: until))）"
         } else {
             pauseItem.keyEquivalent = ""
             pauseItem.title = "暂停记录"

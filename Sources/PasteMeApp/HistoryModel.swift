@@ -130,8 +130,12 @@ final class HistoryModel {
     var draggingID: Int64?
     /// 原样粘贴图片时也附带文件（`Settings.pasteImagesAsFiles`），这时右键菜单不再列出「以文件粘贴」。
     var pastesImagesAsFiles = false
+    /// 新建、编辑或转换后的文本自动放入系统剪贴板（`Settings.copyEditedToClipboard`）。
+    var copyEditedToClipboard = true
     /// 光标的样式。初始值和修改都来自 `Settings.cursorStyle`，放在这里是为了让视图随之更新。
     var cursorStyle = CursorStyle.breathe
+    /// 面板内切换标签的快捷键（#69），右上角的按键提示用它显示。
+    var tabSwitchShortcuts: [PanelShortcutAction: KeyCombo] = PanelKeymap.defaultShortcuts
     /// ⌘O 用什么打开文件和文件夹（#51）。初始值和修改都来自 `Settings.fileApp`、`Settings.folderApp`。
     @ObservationIgnored var fileApp = OpenApp.systemDefault
     @ObservationIgnored var folderApp = OpenApp.systemDefault
@@ -181,8 +185,14 @@ final class HistoryModel {
     @ObservationIgnored var onPaste: (ClipItem, PasteMode) -> Void = { _, _ in }
     /// 把条目写进剪贴板，不粘贴，也不移到历史最前（#35）。
     @ObservationIgnored var onCopy: (ClipItem) -> Void = { _ in }
+    /// 开启 Paste Stack 并把条目作为第一条放进去（#66）。因为暂停记录或缺少辅助功能权限没开启时返回 false。
+    @ObservationIgnored var onStartPasteStack: (ClipItem) -> Bool = { _ in false }
     /// 收起面板，按 `OpenPlan` 打开链接、文件和文件夹（#51）。
     @ObservationIgnored var onOpen: (OpenPlan) -> Void = { _ in }
+    /// 收起面板，用隔空投送发送 `AirDropPlan`（#68）。
+    @ObservationIgnored var onAirDrop: (AirDropPlan) -> Void = { _ in }
+    /// 系统现在能不能用隔空投送发送这类条目（#68）。测试替换它。
+    @ObservationIgnored var canAirDrop: @MainActor (ClipKind, [URL]) -> Bool = { AirDropController.canSend(kind: $0, urls: $1) }
     /// 这个 bundle id 的应用装了没有。测试替换它。
     @ObservationIgnored var isInstalled: (String) -> Bool = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
     /// 路径现在是文件还是文件夹，不在了是 nil。测试替换它。
@@ -207,6 +217,8 @@ final class HistoryModel {
     @ObservationIgnored var onBlankClick: () -> Void = {}
 
     @ObservationIgnored private let store: ClipStore
+    /// 开启时，面板里按 ⌘C 拷贝卡片也会把条目加进栈（#66）。
+    @ObservationIgnored private let pasteStack: PasteStack?
     /// 记住 ⌘P 用的 Pinboard。为 nil 时（测试）只在内存里记。
     @ObservationIgnored private let settings: PasteMeCore.Settings?
     @ObservationIgnored private var lastPinboardID: Int64?
@@ -253,12 +265,39 @@ final class HistoryModel {
     }
 
     /// `now` 用于测试时控制“今天”是哪一天。
-    init(store: ClipStore, appNames: AppNames? = nil, settings: PasteMeCore.Settings? = nil, now: @escaping () -> Date = Date.init) {
+    init(
+        store: ClipStore,
+        appNames: AppNames? = nil,
+        settings: PasteMeCore.Settings? = nil,
+        pasteStack: PasteStack? = nil,
+        now: @escaping () -> Date = Date.init
+    ) {
         self.store = store
         self.appNames = appNames
         self.settings = settings
+        self.pasteStack = pasteStack
         self.lastPinboardID = settings?.lastPinboardID
         self.now = now
+        if let settings {
+            self.copyEditedToClipboard = settings.copyEditedToClipboard
+            self.tabSwitchShortcuts = Dictionary(uniqueKeysWithValues: PanelShortcutAction.allCases.compactMap { action in
+                settings.shortcut(for: action).map { (action, $0) }
+            })
+        }
+        if let pasteStack {
+            self.onStartPasteStack = { [weak pasteStack] item in
+                guard let pasteStack else { return false }
+                pasteStack.add(item.id)
+                return true
+            }
+        }
+    }
+
+    /// 面板右上角提示里的切换标签按键（#69），例如 `"⌘← ⌘→ 切换标签"`；两项都清除了时为 nil。
+    var tabShortcutHint: String? {
+        let symbols = [PanelShortcutAction.previousTab, .nextTab].compactMap { tabSwitchShortcuts[$0]?.symbol }
+        guard !symbols.isEmpty else { return nil }
+        return symbols.joined(separator: " ") + " 切换标签"
     }
 
     /// 没有搜索词，也没有筛选条件。
@@ -707,14 +746,12 @@ final class HistoryModel {
 
     /// 把转换或计算出的结果记到历史最前面并选中。解码出来是一个网址时记成链接，和复制一个网址一样。
     private func record(_ result: String) throws {
-        let isLink = PasteboardCodec.isWebLink(result)
-        let content = isLink
-            ? ClipContent(kind: .link, text: result.trimmingCharacters(in: .whitespacesAndNewlines))
-            : ClipContent(kind: .text, text: result)
+        let content = PasteboardCodec.content(forConvertedText: result)
         let id = try store.insert(content, source: nil, at: now())
-        if isLink { onEdited(id) }
+        if content.kind == .link { onEdited(id) }
         guard let recorded = try store.item(id: id) else { return }
         showInHistory(recorded)
+        if copyEditedToClipboard { onCopy(recorded) }
     }
 
     // MARK: - 哈希值（#37）
@@ -819,8 +856,10 @@ final class HistoryModel {
 
     /// 保存预览里改过的文字和标题。`text` 为 nil 时不改文字。和其他条目内容相同时合并（见 `ClipStore.updateText`）。
     func saveEdits(of id: Int64, text: String?, rtf: Data?, title: String?) {
+        var textUpdated = false
         do {
             if let text, try store.updateText(text, rtf: rtf, id: id) {
+                textUpdated = true
                 onEdited(id)
             }
             try store.setTitle(title, id: id)
@@ -828,6 +867,9 @@ final class HistoryModel {
             NSLog("PasteMe: 保存修改失败：\(error)")
         }
         reload()
+        if textUpdated, copyEditedToClipboard, let updated = try? store.item(id: id) {
+            onCopy(updated)
+        }
     }
 
     /// ⌘N 写好的新文本：存进历史并排在最前，在 Pinboard 里时也固定到这里，然后选中它。空的不存。
@@ -841,6 +883,9 @@ final class HistoryModel {
             }
             reload()
             selectedID = id
+            if copyEditedToClipboard, let created = try store.item(id: id) {
+                onCopy(created)
+            }
         } catch {
             NSLog("PasteMe: 新建文本失败：\(error)")
         }
@@ -853,13 +898,32 @@ final class HistoryModel {
         onPaste(item, mode)
     }
 
-    /// ⌘C、右键菜单「拷贝」（#35）：把条目写进剪贴板，用户之后自己粘贴。面板不收起，卡片也不动：
+    /// ⌘C、右键菜单「拷贝」（#35、#66）：把条目写进剪贴板，用户之后自己粘贴。面板不收起，卡片也不动：
     /// 条目等面板收起时（`panelWillHide`）才移到历史最前，下次打开面板时在最前面。
+    /// Paste Stack 开启时同时把条目追加到栈的最后。
     func copy(_ item: ClipItem? = nil) {
         guard let item = item ?? selectedItem else { return }
         onCopy(item)
         copiedID = item.id
-        onNotice("已拷贝", "doc.on.doc")
+        if let pasteStack, pasteStack.isActive {
+            pasteStack.push(item.id)
+            onNotice("已加入 Paste Stack（第 \(pasteStack.entries.count) 条）", "square.stack.3d.up")
+        } else {
+            onNotice("已拷贝", "doc.on.doc")
+        }
+    }
+
+    /// 右键菜单「加入 Paste Stack」（#66）：已经开启时和 ⌘C 一样追加到最后；没有开启时开启并作为第一条。
+    func addToPasteStack(_ item: ClipItem? = nil) {
+        guard let item = item ?? selectedItem else { return }
+        if pasteStack?.isActive == true {
+            copy(item)
+            return
+        }
+        if onStartPasteStack(item) {
+            onCopy(item)
+            copiedID = item.id
+        }
     }
 
     // MARK: - 打开（#51）
@@ -897,7 +961,65 @@ final class HistoryModel {
         }
         onOpen(plan)
         if plan.missing > 0 {
-            onNotice("有 \(plan.missing) 个文件已经不在了", "exclamationmark.triangle")
+            onNotice("有 \(plan.missing) 个文件已移除", "exclamationmark.triangle")
+        }
+    }
+
+    // MARK: - 隔空投送（#68）
+
+    struct AirDropMenuState: Equatable {
+        var title: String
+        var isEnabled: Bool
+    }
+
+    /// 右键菜单「隔空投送…」的文字和是否可用。打开菜单时不写临时文件，只检查文件还在不在和系统服务能不能用。
+    func airDropMenuState(for item: ClipItem) -> AirDropMenuState {
+        switch item.kind {
+        case .file:
+            let paths = ((try? store.content(id: item.id))?.text).map {
+                $0.split(separator: "\n").map(String.init)
+            } ?? item.filePaths
+            let urls = paths.filter { pathKind($0) != nil }.map { URL(fileURLWithPath: $0) }
+            if urls.isEmpty {
+                return AirDropMenuState(title: "隔空投送…（文件已移除）", isEnabled: false)
+            }
+            return AirDropMenuState(title: "隔空投送…", isEnabled: canAirDrop(.file, urls))
+        case .link:
+            let address = ((try? store.content(id: item.id))?.text ?? item.preview ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: address), url.scheme != nil else {
+                return AirDropMenuState(title: "隔空投送…（网址无效）", isEnabled: false)
+            }
+            return AirDropMenuState(title: "隔空投送…", isEnabled: canAirDrop(.link, [url]))
+        case .text, .image:
+            return AirDropMenuState(title: "隔空投送…", isEnabled: canAirDrop(item.kind, []))
+        }
+    }
+
+    /// 右键菜单「隔空投送…」：按条目生成计划，交给系统的隔空投送窗口。文件部分不在时只发还在的并提示。
+    func sendViaAirDrop(_ item: ClipItem? = nil) {
+        guard let item = item ?? selectedItem, let content = try? store.content(id: item.id) else { return }
+        let plan = AirDropPlan.make(
+            kind: item.kind,
+            text: content.text,
+            image: content.image,
+            title: item.title,
+            fileExists: { [pathKind] in pathKind($0) != nil }
+        )
+        if let reason = plan.unavailableReason {
+            onNotice(reason, "exclamationmark.triangle")
+            return
+        }
+        guard canAirDrop(item.kind, plan.items.compactMap {
+            if case .url(let url) = $0 { return url }
+            return nil
+        }) else {
+            onNotice("当前无法使用隔空投送", "exclamationmark.triangle")
+            return
+        }
+        onAirDrop(plan)
+        if plan.missing > 0 {
+            onNotice("有 \(plan.missing) 个文件已移除", "exclamationmark.triangle")
         }
     }
 

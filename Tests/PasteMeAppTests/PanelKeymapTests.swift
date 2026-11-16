@@ -1,4 +1,5 @@
 import Carbon.HIToolbox
+import PasteMeCore
 import Testing
 @testable import PasteMeApp
 
@@ -254,5 +255,44 @@ import Testing
         #expect(action(Self.commandC, Self.onCards) == .run(.copySelected))
         #expect(action(Self.commandC, Self.searching) == .passThrough)
         #expect(action(PanelKey(keyCode: kVK_ANSI_C, command: true, shift: true, characters: "c"), Self.onCards) == .passThrough)
+    }
+
+    // MARK: 可录制的面板快捷键（#69）
+
+    @Test func customTabShortcutsReplaceCommandArrowsAndRespectSearchEditing() {
+        let custom: [PanelShortcutAction: KeyCombo] = [
+            .previousTab: KeyCombo(keyCode: kVK_ANSI_LeftBracket, modifiers: [.command]),
+            .nextTab: KeyCombo(keyCode: kVK_ANSI_RightBracket, modifiers: [.command]),
+            .showConversions: KeyCombo(keyCode: kVK_ANSI_D, modifiers: [.command]),
+        ]
+        let commandLeftBracket = PanelKey(keyCode: kVK_ANSI_LeftBracket, command: true, characters: "[")
+        let commandRightBracket = PanelKey(keyCode: kVK_ANSI_RightBracket, command: true, characters: "]")
+        let commandLeft = PanelKey(keyCode: kVK_LeftArrow, command: true, characters: "\u{F702}")
+        let commandD = PanelKey(keyCode: kVK_ANSI_D, command: true, characters: "d")
+        let commandT = PanelKey(keyCode: kVK_ANSI_T, command: true, characters: "t")
+
+        // 录成 ⌘[ ⌘] 和 ⌘D 后，卡片上和有文字的搜索框里都能切换标签、打开转换菜单；原来的 ⌘T 不再触发。
+        #expect(PanelKeymap.action(for: commandLeftBracket, in: Self.onCards, shortcuts: custom) == .run(.switchTab(by: -1)))
+        #expect(PanelKeymap.action(for: commandRightBracket, in: Self.searching, shortcuts: custom) == .run(.switchTab(by: 1)))
+        #expect(PanelKeymap.action(for: commandD, in: Self.onCards, shortcuts: custom) == .run(.showConversions))
+        #expect(PanelKeymap.action(for: commandD, in: Self.searching, shortcuts: custom) == .run(.showConversions))
+        #expect(PanelKeymap.action(for: commandT, in: Self.onCards, shortcuts: custom) == .passThrough)
+
+        // 原来的 ⌘← 不再切换标签，按 ← → 的规则移动选择或插入点。
+        #expect(PanelKeymap.action(for: commandLeft, in: Self.onCards, shortcuts: custom) == .run(.moveSelection(by: -1)))
+        #expect(PanelKeymap.action(for: commandLeft, in: Self.searching, shortcuts: custom) == .passThrough)
+
+        // 清除后都不切换标签。
+        #expect(PanelKeymap.action(for: commandLeftBracket, in: Self.onCards, shortcuts: [:]) == .passThrough)
+        #expect(PanelKeymap.action(for: commandLeft, in: Self.onCards, shortcuts: [:]) == .run(.moveSelection(by: -1)))
+
+        // 如果录成在搜索框里有编辑含义的组合（如 ⌘A），搜索框有文字时仍交给搜索框。
+        let editCombo: [PanelShortcutAction: KeyCombo] = [
+            .nextTab: KeyCombo(keyCode: kVK_ANSI_A, modifiers: [.command]),
+        ]
+        let commandA = PanelKey(keyCode: kVK_ANSI_A, command: true, characters: "a")
+        #expect(PanelKeymap.action(for: commandA, in: Self.onCards, shortcuts: editCombo) == .run(.switchTab(by: 1)))
+        #expect(PanelKeymap.action(for: commandA, in: Self.searchEmpty, shortcuts: editCombo) == .run(.switchTab(by: 1)))
+        #expect(PanelKeymap.action(for: commandA, in: Self.searching, shortcuts: editCombo) == .passThrough)
     }
 }

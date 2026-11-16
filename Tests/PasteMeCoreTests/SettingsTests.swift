@@ -152,4 +152,21 @@ import Testing
         Settings(defaults: defaults).accessibilityRequirement = #"identifier "io.github.skjz.PasteMe""#
         #expect(Settings(defaults: defaults).accessibilityRequirement == #"identifier "io.github.skjz.PasteMe""#)
     }
+
+    @Test func panelRepeatActionDefaultsToCyclePinboardAndPersists() {
+        #expect(Settings(defaults: defaults).panelRepeatAction == .cyclePinboard)
+        Settings(defaults: defaults).panelRepeatAction = .hidePanel
+        #expect(Settings(defaults: defaults).panelRepeatAction == .hidePanel)
+
+        defaults.set("unknown", forKey: "panelRepeatAction")
+        #expect(Settings(defaults: defaults).panelRepeatAction == .cyclePinboard)
+    }
+
+    @Test func copyEditedToClipboardIsOnByDefaultAndPersists() {
+        #expect(Settings(defaults: defaults).copyEditedToClipboard == true)
+        Settings(defaults: defaults).copyEditedToClipboard = false
+        #expect(Settings(defaults: defaults).copyEditedToClipboard == false)
+        Settings(defaults: defaults).copyEditedToClipboard = true
+        #expect(Settings(defaults: defaults).copyEditedToClipboard == true)
+    }
 }

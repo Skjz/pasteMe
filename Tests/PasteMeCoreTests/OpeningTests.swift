@@ -92,7 +92,7 @@ import Testing
         let none = try #require(plan(.file, "/w/gone\n/w/also-gone"))
         #expect(none.targets.isEmpty)
         #expect(none.missing == 2)
-        #expect(none.unavailableReason == "文件已经不在了")
+        #expect(none.unavailableReason == "文件已移除")
     }
 
     @Test func packagesCountAsFiles() throws {

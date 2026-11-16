@@ -18,7 +18,7 @@ public enum HashInput: Sendable, Equatable {
     public static func unavailableReason(forFiles paths: [String]) -> String? {
         for path in paths {
             var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return "文件已经不在了" }
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return "文件已移除" }
             if isDirectory.boolValue { return "不能计算文件夹" }
         }
         return nil

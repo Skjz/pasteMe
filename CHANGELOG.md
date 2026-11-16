@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- While Paste Stack is on, pressing ⌘C on a card in the panel (or choosing 拷贝 from its right-click menu) now adds that entry to the end of the stack in addition to putting it on the clipboard, so entries already in the history or on a Pinboard can be queued without going back to the original apps; copying the same card twice queues it twice, the panel stays open, and the notice shows its position in the stack. Cards also have a 加入 Paste Stack item in their right-click menu, which starts Paste Stack with that card as the first entry when Paste Stack is off (with the same pause and Accessibility checks as the shortcut). (#66)
+- ⌃⌥⌘V decodes Base64, hex or hexdump text currently on the clipboard as UTF-8, records the result at the top of the history without a source app (turning a decoded web address into a link, like the 转换 menu), and pastes it into the frontmost app. If the clipboard isn't text, isn't one of those three formats, exceeds 1 MB, or doesn't decode to valid UTF-8, nothing is pasted and a notice explains why. Like the other three global shortcuts, ⌃⌥⌘V can be re-recorded or cleared on the 通用 page of the settings window, and 解码剪贴板并粘贴 is also available in the status bar menu. (#67)
+- 隔空投送… in a card's right-click menu opens the macOS AirDrop window to send the entry to a nearby iPhone, iPad or Mac: links are sent as web addresses so the receiver opens them in the browser, files and folders are sent as the original items (skipping missing ones with a notice, or disabling the menu item with the reason when all are gone), text is sent as a UTF-8 `.txt` file named after the entry's title or the first 30 characters of its first line, and images are sent as PNG files. Temporary files are deleted as soon as AirDrop finishes, fails or is cancelled, and any leftovers are cleaned up at launch. (#68)
+- Panel shortcuts can now be re-recorded under 面板内快捷键 on the 通用 page of the settings window: 切换到上一个标签 (⌘← by default), 切换到下一个标签 (⌘→ by default, for example to ⌘[ and ⌘]) and 打开转换菜单 (⌘T by default). Once changed, ⌘← and ⌘→ go back to moving the card selection or the search insertion point, and ⌘T is freed up. Combinations already used by fixed panel keys (such as ⌘C, ⌘P or ⌘1–⌘9) or shared with another panel shortcut are rejected with the reason, clashes with global shortcuts show a warning, and combinations that edit text in the search field still go to the search field while it has text. (#69)
+- 呼出快捷键 → 面板开着时再按 on the 面板 page of the settings window chooses what pressing ⇧⌘V (or your custom panel shortcut) does while the panel is already open: 切换到下一个 Pinboard (the default, unchanged) or 收起面板, which always closes the panel even when you have Pinboards. (#70)
+- 编辑或转换后自动拷贝 on the 面板 page of the settings window (on by default) puts newly written text (⌘N), edited text or links (⌘E), and conversion or hash results straight onto the clipboard as soon as they are saved, so you can press ⌘V right away without copying the card first; changing only an entry's title leaves the clipboard alone.
+
+### Changed
+
+- Shortened wordy descriptions and menu labels across the status bar menu, card context menus, the panel search bar, the Paste Stack window, and all six pages of the settings window so options scan cleanly without multi-line wrapping.
+
 ## [0.2.1] - 2026-10-25
 
 ### Added

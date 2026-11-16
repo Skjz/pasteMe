@@ -38,7 +38,9 @@ final class SettingsModel {
     private(set) var playsSoundOnRecord = false
     private(set) var showDuringScreenSharing = false
     private(set) var pasteImagesAsFiles = false
+    private(set) var copyEditedToClipboard = true
     private(set) var cursorStyle = CursorStyle.breathe
+    private(set) var panelRepeatAction = PanelRepeatAction.cyclePinboard
     private(set) var fileApp = OpenApp.systemDefault
     private(set) var folderApp = OpenApp.systemDefault
     private(set) var linkPreviewMode = LinkPreviewMode.off
@@ -54,11 +56,29 @@ final class SettingsModel {
         let isProblem: Bool
     }
 
-    /// 各个功能现在的全局快捷键（#50），清除了的不在里面。
+    enum RecordingTarget: Equatable {
+        case global(GlobalAction)
+        case panel(PanelShortcutAction)
+    }
+
+    /// 各个功能现在的全局快捷键（#50、#67），清除了的不在里面。
     private(set) var shortcuts: [GlobalAction: KeyCombo] = [:]
-    /// 正在录制哪个功能的快捷键。
-    private(set) var recordingShortcut: GlobalAction?
+    /// 面板内各个命令现在的快捷键（#69），清除了的不在里面。
+    private(set) var panelShortcuts: [PanelShortcutAction: KeyCombo] = [:]
+    /// 正在录制哪一项快捷键。
+    private(set) var recordingTarget: RecordingTarget?
     private(set) var shortcutNotes: [GlobalAction: ShortcutNote] = [:]
+    private(set) var panelShortcutNotes: [PanelShortcutAction: ShortcutNote] = [:]
+
+    var recordingShortcut: GlobalAction? {
+        if case .global(let action) = recordingTarget { return action }
+        return nil
+    }
+
+    var recordingPanelShortcut: PanelShortcutAction? {
+        if case .panel(let action) = recordingTarget { return action }
+        return nil
+    }
 
     /// 登录时启动现在是否打开（`SMAppService`）。测试替换它。
     @ObservationIgnored var loginItemEnabled: () -> Bool = { false }
@@ -70,7 +90,11 @@ final class SettingsModel {
     @ObservationIgnored var onPlaySound: () -> Void = {}
     @ObservationIgnored var onScreenSharingChange: (Bool) -> Void = { _ in }
     @ObservationIgnored var onImagesAsFilesChange: (Bool) -> Void = { _ in }
+    @ObservationIgnored var onCopyEditedChange: (Bool) -> Void = { _ in }
     @ObservationIgnored var onCursorStyleChange: (CursorStyle) -> Void = { _ in }
+    @ObservationIgnored var onPanelRepeatActionChange: (PanelRepeatAction) -> Void = { _ in }
+    /// 改了面板内的快捷键（#69）：通知面板立即按新组合响应。
+    @ObservationIgnored var onPanelShortcutChange: ([PanelShortcutAction: KeyCombo]) -> Void = { _ in }
     /// 换了文件或文件夹的打开方式：参数是文件的、文件夹的。
     @ObservationIgnored var onOpenAppsChange: (OpenApp, OpenApp) -> Void = { _, _ in }
     /// 这个 bundle id 的应用装了没有：没装的编辑器和终端在「打开」里不能选。测试替换它。
@@ -106,7 +130,9 @@ final class SettingsModel {
         playsSoundOnRecord = settings.playsSoundOnRecord
         showDuringScreenSharing = settings.showDuringScreenSharing
         pasteImagesAsFiles = settings.pasteImagesAsFiles
+        copyEditedToClipboard = settings.copyEditedToClipboard
         cursorStyle = settings.cursorStyle
+        panelRepeatAction = settings.panelRepeatAction
         fileApp = settings.fileApp
         folderApp = settings.folderApp
         linkPreviewMode = settings.linkPreviewMode
@@ -114,6 +140,7 @@ final class SettingsModel {
         checksForUpdates = settings.checksForUpdates
         reloadShortcuts()
         shortcutNotes = [:]
+        panelShortcutNotes = [:]
         for action in failedShortcuts() {
             shortcutNotes[action] = ShortcutNote(text: Self.notRegisteredNote, isProblem: true)
         }
@@ -158,42 +185,86 @@ final class SettingsModel {
         onOpenAccessibilitySettings()
     }
 
-    // MARK: - 全局快捷键（#50）
+    // MARK: - 快捷键（#50、#67、#69）
 
-    /// 点快捷键的按钮：开始录制；正在录制这一个时再点是取消。
+    /// 点全局快捷键的按钮：开始录制；正在录制这一个时再点是取消。
     func toggleRecording(_ action: GlobalAction) {
-        if recordingShortcut == action {
+        beginRecording(.global(action))
+    }
+
+    /// 点面板内快捷键的按钮：开始录制；正在录制这一个时再点是取消。
+    func toggleRecording(_ action: PanelShortcutAction) {
+        beginRecording(.panel(action))
+    }
+
+    private func beginRecording(_ target: RecordingTarget) {
+        if recordingTarget == target {
             cancelRecording()
             return
         }
-        if recordingShortcut == nil { onShortcutRecording(true) }
-        shortcutNotes[action] = nil
-        recordingShortcut = action
+        let wasRecording = recordingTarget != nil
+        clearTemporaryProblem(for: recordingTarget)
+        switch target {
+        case .global(let action): shortcutNotes[action] = nil
+        case .panel(let action): panelShortcutNotes[action] = nil
+        }
+        recordingTarget = target
+        if !wasRecording { onShortcutRecording(true) }
     }
 
     func cancelRecording() {
-        guard let action = recordingShortcut else { return }
-        recordingShortcut = nil
-        if shortcutNotes[action]?.isProblem == true { shortcutNotes[action] = nil }
+        guard let target = recordingTarget else { return }
+        recordingTarget = nil
+        clearTemporaryProblem(for: target)
         onShortcutRecording(false)
+    }
+
+    private func clearTemporaryProblem(for target: RecordingTarget?) {
+        switch target {
+        case .global(let action):
+            if shortcutNotes[action]?.isProblem == true { shortcutNotes[action] = nil }
+        case .panel(let action):
+            if panelShortcutNotes[action]?.isProblem == true { panelShortcutNotes[action] = nil }
+        case nil:
+            break
+        }
     }
 
     /// 录制时按下的键：esc 取消，⌫ 清除，其余的检查后保存。不能用时写明原因，接着录。
     func recordKey(_ combo: KeyCombo) {
-        guard let action = recordingShortcut else { return }
+        guard let target = recordingTarget else { return }
         if combo.modifiers.isEmpty, combo.keyCode == kVK_Escape {
             cancelRecording()
             return
         }
         if combo.modifiers.isEmpty, combo.keyCode == kVK_Delete || combo.keyCode == kVK_ForwardDelete {
-            finishRecording(action, saving: nil)
+            switch target {
+            case .global(let action): finishRecording(action, saving: nil)
+            case .panel(let action): finishPanelRecording(action, saving: nil)
+            }
             return
         }
-        if let problem = ShortcutRules.problem(with: combo, for: action, current: shortcuts, isReservedBySystem: isReservedBySystem) {
-            shortcutNotes[action] = ShortcutNote(text: problem, isProblem: true)
-            return
+        switch target {
+        case .global(let action):
+            if let problem = ShortcutRules.problem(with: combo, for: action, current: shortcuts, isReservedBySystem: isReservedBySystem) {
+                shortcutNotes[action] = ShortcutNote(text: problem, isProblem: true)
+                return
+            }
+            finishRecording(action, saving: combo)
+        case .panel(let action):
+            let problem = ShortcutRules.problem(
+                with: combo,
+                for: action,
+                current: panelShortcuts,
+                fixedTitle: PanelKeymap.fixedShortcutTitle(for:),
+                isReservedBySystem: isReservedBySystem
+            )
+            if let problem {
+                panelShortcutNotes[action] = ShortcutNote(text: problem, isProblem: true)
+                return
+            }
+            finishPanelRecording(action, saving: combo)
         }
-        finishRecording(action, saving: combo)
     }
 
     /// 恢复默认。默认的组合已经给了另一个功能时不恢复，写明原因。
@@ -206,20 +277,57 @@ final class SettingsModel {
         }
         settings.resetShortcut(for: action)
         reloadShortcuts()
-        shortcutNotes[action] = nil
+        shortcutNotes[action] = PanelKeymap.isUsedByPanel(combo, shortcuts: panelShortcuts)
+            ? ShortcutNote(text: Self.usedByPanelNote, isProblem: false)
+            : nil
         onShortcutChange()
         noteIfNotRegistered(action)
+    }
+
+    /// 恢复面板内快捷键的默认值（#69）。默认的组合已经给了另一个面板功能时不恢复，写明原因。
+    func resetShortcut(_ action: PanelShortcutAction) {
+        cancelRecording()
+        let combo = action.defaultCombo
+        let problem = ShortcutRules.problem(
+            with: combo,
+            for: action,
+            current: panelShortcuts,
+            fixedTitle: PanelKeymap.fixedShortcutTitle(for:),
+            isReservedBySystem: { _ in false }
+        )
+        if let problem {
+            panelShortcutNotes[action] = ShortcutNote(text: problem, isProblem: true)
+            return
+        }
+        settings.resetShortcut(for: action)
+        reloadShortcuts()
+        panelShortcutNotes[action] = globalClashNote(for: combo)
+        onPanelShortcutChange(panelShortcuts)
     }
 
     private func finishRecording(_ action: GlobalAction, saving combo: KeyCombo?) {
         settings.setShortcut(combo, for: action)
         reloadShortcuts()
-        recordingShortcut = nil
-        shortcutNotes[action] = combo.map(PanelKeymap.isUsedByPanel) == true
-            ? ShortcutNote(text: "面板开着时，面板里这个组合原来的功能会用不了", isProblem: false)
+        recordingTarget = nil
+        shortcutNotes[action] = combo.map { PanelKeymap.isUsedByPanel($0, shortcuts: panelShortcuts) } == true
+            ? ShortcutNote(text: Self.usedByPanelNote, isProblem: false)
             : nil
         onShortcutRecording(false)
         noteIfNotRegistered(action)
+    }
+
+    private func finishPanelRecording(_ action: PanelShortcutAction, saving combo: KeyCombo?) {
+        settings.setShortcut(combo, for: action)
+        reloadShortcuts()
+        recordingTarget = nil
+        panelShortcutNotes[action] = combo.flatMap(globalClashNote(for:))
+        onShortcutRecording(false)
+        onPanelShortcutChange(panelShortcuts)
+    }
+
+    private func globalClashNote(for combo: KeyCombo) -> ShortcutNote? {
+        guard let global = GlobalAction.allCases.first(where: { shortcuts[$0] == combo }) else { return nil }
+        return ShortcutNote(text: "与全局快捷键「\(global.title)」冲突，会被优先拦截", isProblem: false)
     }
 
     private func noteIfNotRegistered(_ action: GlobalAction) {
@@ -228,11 +336,15 @@ final class SettingsModel {
         }
     }
 
+    private static let usedByPanelNote = "面板打开时会覆盖面板内的功能"
     /// 注册失败时的提示。别的应用注册了同一个组合时注册照样成功（见 `HotKeyCenter.register`），所以不猜原因。
-    static let notRegisteredNote = "没有生效：系统没有接受这个组合，换一个试试"
+    static let notRegisteredNote = "注册失败，请换一个组合"
 
     private func reloadShortcuts() {
         shortcuts = Dictionary(uniqueKeysWithValues: GlobalAction.allCases.compactMap { action in
+            settings.shortcut(for: action).map { (action, $0) }
+        })
+        panelShortcuts = Dictionary(uniqueKeysWithValues: PanelShortcutAction.allCases.compactMap { action in
             settings.shortcut(for: action).map { (action, $0) }
         })
     }
@@ -245,6 +357,12 @@ final class SettingsModel {
         onCursorStyleChange(style)
     }
 
+    func setPanelRepeatAction(_ action: PanelRepeatAction) {
+        settings.panelRepeatAction = action
+        panelRepeatAction = action
+        onPanelRepeatActionChange(action)
+    }
+
     func setShowDuringScreenSharing(_ on: Bool) {
         settings.showDuringScreenSharing = on
         showDuringScreenSharing = on
@@ -255,6 +373,12 @@ final class SettingsModel {
         settings.pasteImagesAsFiles = on
         pasteImagesAsFiles = on
         onImagesAsFilesChange(on)
+    }
+
+    func setCopyEditedToClipboard(_ on: Bool) {
+        settings.copyEditedToClipboard = on
+        copyEditedToClipboard = on
+        onCopyEditedChange(on)
     }
 
     /// 没装的应用不能选（视图里是灰的），这里也不接受。

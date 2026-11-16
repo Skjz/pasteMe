@@ -23,6 +23,17 @@ import Testing
             #expect(settings.shortcut(for: action) == action.defaultCombo)
         }
         #expect(GlobalAction.panel.defaultCombo == KeyCombo(keyCode: 9, modifiers: [.shift, .command]))
+        #expect(GlobalAction.pasteDecoded.defaultCombo == KeyCombo(keyCode: 9, modifiers: [.control, .option, .command]))
+        // 四个全局快捷键的默认组合互不重复。
+        #expect(Set(GlobalAction.allCases.map(\.defaultCombo)).count == GlobalAction.allCases.count)
+
+        for action in PanelShortcutAction.allCases {
+            #expect(settings.shortcut(for: action) == action.defaultCombo)
+        }
+        #expect(PanelShortcutAction.previousTab.defaultCombo == KeyCombo(keyCode: 123, modifiers: [.command]))
+        #expect(PanelShortcutAction.nextTab.defaultCombo == KeyCombo(keyCode: 124, modifiers: [.command]))
+        #expect(PanelShortcutAction.showConversions.defaultCombo == KeyCombo(keyCode: 17, modifiers: [.command]))
+        #expect(Set(PanelShortcutAction.allCases.map(\.defaultCombo)).count == PanelShortcutAction.allCases.count)
     }
 
     @Test func aRecordedShortcutPersists() {
@@ -52,8 +63,8 @@ import Testing
     }
 
     @Test func aShortcutNeedsCommandControlOrOption() {
-        #expect(problem(KeyCombo(keyCode: 9, modifiers: [])) == "要带上 ⌘、⌃ 或 ⌥ 中的至少一个")
-        #expect(problem(KeyCombo(keyCode: 9, modifiers: [.shift])) == "要带上 ⌘、⌃ 或 ⌥ 中的至少一个")
+        #expect(problem(KeyCombo(keyCode: 9, modifiers: [])) == "至少包含 ⌘、⌃ 或 ⌥")
+        #expect(problem(KeyCombo(keyCode: 9, modifiers: [.shift])) == "至少包含 ⌘、⌃ 或 ⌥")
         #expect(problem(KeyCombo(keyCode: 9, modifiers: [.control])) == nil)
         #expect(problem(Self.optionCommandK) == nil)
     }
@@ -67,5 +78,44 @@ import Testing
     @Test func systemShortcutsAreRejected() {
         let commandSpace = KeyCombo(keyCode: 49, modifiers: [.command])
         #expect(problem(commandSpace, reserved: [commandSpace]) == "系统已经用了这个组合")
+    }
+
+    @Test func panelShortcutsPersistClearResetAndValidate() {
+        let commandLeftBracket = KeyCombo(keyCode: 33, modifiers: [.command])
+        let commandC = KeyCombo(keyCode: 8, modifiers: [.command])
+        let settings = Settings(defaults: defaults)
+
+        settings.setShortcut(commandLeftBracket, for: .previousTab)
+        #expect(Settings(defaults: defaults).shortcut(for: .previousTab) == commandLeftBracket)
+        settings.setShortcut(nil, for: .previousTab)
+        #expect(Settings(defaults: defaults).shortcut(for: .previousTab) == nil)
+        settings.resetShortcut(for: .previousTab)
+        #expect(Settings(defaults: defaults).shortcut(for: .previousTab) == PanelShortcutAction.previousTab.defaultCombo)
+
+        defaults.set(["keyCode": "bad"], forKey: "panelShortcut.nextTab")
+        #expect(Settings(defaults: defaults).shortcut(for: .nextTab) == PanelShortcutAction.nextTab.defaultCombo)
+
+        let current = Dictionary(uniqueKeysWithValues: PanelShortcutAction.allCases.map { ($0, $0.defaultCombo) })
+        #expect(ShortcutRules.problem(
+            with: KeyCombo(keyCode: 33, modifiers: []),
+            for: .previousTab,
+            current: current,
+            fixedTitle: { _ in nil },
+            isReservedBySystem: { _ in false }
+        ) == "至少包含 ⌘、⌃ 或 ⌥")
+        #expect(ShortcutRules.problem(
+            with: PanelShortcutAction.nextTab.defaultCombo,
+            for: .previousTab,
+            current: current,
+            fixedTitle: { _ in nil },
+            isReservedBySystem: { _ in false }
+        ) == "和「切换到下一个标签」的快捷键相同")
+        #expect(ShortcutRules.problem(
+            with: commandC,
+            for: .previousTab,
+            current: current,
+            fixedTitle: { $0 == commandC ? "拷贝" : nil },
+            isReservedBySystem: { _ in false }
+        ) == "和面板里的「拷贝」快捷键相同")
     }
 }

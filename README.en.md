@@ -66,10 +66,10 @@ https://github.com/user-attachments/assets/3354eec4-f3db-4d77-bcdc-d2529a14f3c0
 
 Also:
 
-- **Paste Stack**: press ⌃⇧⌘C, copy several things in a row, then press ⌘V once for each to paste them in the order you copied them.
-- **Knows code and common formats**: code is colored by language; colors, timestamps, Base64 and hex get their own look, and the Convert menu turns one into another or computes hashes.
+- **Paste Stack**: press ⌃⇧⌘C and copy several things in a row—or press ⌘C on cards in the panel, or choose Add to Paste Stack from a card's menu—then press ⌘V once for each to paste them in order.
+- **Knows code and common formats**: code is colored by language; colors, timestamps, Base64 and hex get their own look, the Convert menu turns one into another or computes hashes, and ⌃⌥⌘V decodes Base64, hex or hexdump on the clipboard straight into text and pastes it.
 - **Filters**: type `@` to filter by type, source app or Pinboard, or filter by date.
-- **Drag out**: drag a card into any app. Files stay the original files, and images come with both the image and a PNG file.
+- **Drag out & AirDrop**: drag a card into any app—files stay the original files, and images come with both the image and a PNG file—or send text (as a `.txt` file), links, images and files via AirDrop from the card menu.
 - **Updates itself**: when a new version is out, the status bar menu shows Update to…; one click installs it, and only an installer signed by the publisher is accepted.
 
 The [user guide](docs/guide.md) covers every feature in detail (in Chinese).
@@ -94,7 +94,7 @@ The [user guide](docs/guide.md) covers every feature in detail (in Chinese).
 | ⌘⌫ / ⌘Z | Delete / undo |
 | ⌘P | Pin to a Pinboard |
 
-The full key list is in the [user guide](docs/guide.md#按键). The three global shortcuts (show the panel, pause recording, Paste Stack) can be changed in settings.
+The full key list is in the [user guide](docs/guide.md#按键). Global shortcuts (show the panel, decode clipboard and paste, pause recording, Paste Stack) and panel shortcuts (switch tabs, open the Convert menu) can be changed in settings.
 
 ## Install
 

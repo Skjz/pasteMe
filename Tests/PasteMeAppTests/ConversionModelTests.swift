@@ -91,6 +91,26 @@ import PasteMeCore
         let file = try store.insert(ClipContent(kind: .file, text: "/tmp/a.txt"), source: nil)
         #expect(model.conversionOptions(for: try item(file)).isEmpty)
     }
+
+    @Test func createdEditedAndConvertedTextsAreCopiedToClipboardWhenEnabled() throws {
+        var copiedTexts: [String?] = []
+        model.onCopy = { copied in copiedTexts.append(copied.preview) }
+
+        // 默认开启：新建（⌘N）、改正文（⌘E）、转换都会自动放进剪贴板；只改标题不会覆盖剪贴板。
+        model.addText("新建的文字", rtf: nil, title: nil)
+        model.saveEdits(of: plain, text: nil, rtf: nil, title: "仅改标题")
+        model.saveEdits(of: plain, text: "编辑后的文字", rtf: nil, title: "仅改标题")
+        model.convert(try item(base64), using: .text)
+        #expect(copiedTexts == ["新建的文字", "编辑后的文字", "Hello, 世界"])
+
+        // 关闭开关后不再自动放入剪贴板。
+        copiedTexts = []
+        model.copyEditedToClipboard = false
+        model.addText("第二条新建", rtf: nil, title: nil)
+        model.saveEdits(of: plain, text: "再次编辑", rtf: nil, title: nil)
+        model.convert(try item(base64), using: .text)
+        #expect(copiedTexts.isEmpty)
+    }
 }
 
 /// 在面板上计算哈希值（#37）：在后台算，结果和转换一样记成新条目放到最前面并选中。
@@ -145,7 +165,7 @@ import PasteMeCore
         let image = try store.insert(ClipContent(kind: .image, image: try #require(PanelTestImage.png)), source: nil)
         model.didShow()
 
-        #expect(model.hashUnavailableReason(for: try item(gone)) == "文件已经不在了")
+        #expect(model.hashUnavailableReason(for: try item(gone)) == "文件已移除")
         #expect(model.computeHash(try item(gone), using: .md5) == nil)
         #expect(model.computeHash(try item(image), using: .md5) == nil)
         // 文件不在了：菜单里照样列出，写明原因；图片不列出。

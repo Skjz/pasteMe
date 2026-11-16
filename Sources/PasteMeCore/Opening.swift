@@ -153,7 +153,7 @@ public struct OpenPlan: Equatable, Sendable {
 
     /// 打不开的原因，菜单里写在后面。有东西可以打开时为 nil。
     public var unavailableReason: String? {
-        targets.isEmpty ? "文件已经不在了" : nil
+        targets.isEmpty ? "文件已移除" : nil
     }
 
     /// 在文件系统里看路径现在是文件还是文件夹。应用、.rtfd 这类文件包虽然是文件夹，在访达里是一个文件，
