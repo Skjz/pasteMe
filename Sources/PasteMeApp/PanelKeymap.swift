@@ -168,7 +168,6 @@ enum PanelKeymap {
             case kVK_ANSI_N where !key.shift: return .run(.newText)
             case kVK_ANSI_E where !key.shift: return .run(.editSelected)
             case kVK_ANSI_J where !key.shift: return .run(.showInHistory)
-            case kVK_ANSI_T where !key.shift: return .run(.showConversions)
             case kVK_ANSI_O where !key.shift: return .run(.openSelected)
             case kVK_ANSI_R where !key.shift && onCards: return .run(.renameSelected)
             case kVK_ANSI_C where !key.shift && onCards: return .run(.copySelected)
@@ -214,6 +213,7 @@ enum PanelKeymap {
         switch action {
         case .previousTab: .switchTab(by: -1)
         case .nextTab: .switchTab(by: 1)
+        case .showConversions: .showConversions
         }
     }
 
@@ -246,7 +246,6 @@ enum PanelKeymap {
             case kVK_ANSI_N: return "新建文本"
             case kVK_ANSI_E: return "编辑"
             case kVK_ANSI_J: return "在历史里查看"
-            case kVK_ANSI_T: return "转换"
             case kVK_ANSI_O: return "打开"
             case kVK_ANSI_R: return "修改标题"
             case kVK_ANSI_C: return "拷贝"

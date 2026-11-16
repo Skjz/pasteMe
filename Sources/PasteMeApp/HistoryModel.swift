@@ -292,7 +292,7 @@ final class HistoryModel {
 
     /// 面板右上角提示里的切换标签按键（#69），例如 `"⌘← ⌘→ 切换标签"`；两项都清除了时为 nil。
     var tabShortcutHint: String? {
-        let symbols = PanelShortcutAction.allCases.compactMap { tabSwitchShortcuts[$0]?.symbol }
+        let symbols = [PanelShortcutAction.previousTab, .nextTab].compactMap { tabSwitchShortcuts[$0]?.symbol }
         guard !symbols.isEmpty else { return nil }
         return symbols.joined(separator: " ") + " 切换标签"
     }

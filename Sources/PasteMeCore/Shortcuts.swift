@@ -57,19 +57,22 @@ public enum GlobalAction: String, CaseIterable, Sendable {
 public enum PanelShortcutAction: String, CaseIterable, Sendable {
     case previousTab
     case nextTab
+    case showConversions
 
     public var title: String {
         switch self {
         case .previousTab: "切换到上一个标签"
         case .nextTab: "切换到下一个标签"
+        case .showConversions: "打开转换菜单"
         }
     }
 
-    /// 没改过时的快捷键。键码是 Carbon 的 `kVK_LeftArrow`（123）和 `kVK_RightArrow`（124）。
+    /// 没改过时的快捷键。键码是 Carbon 的 `kVK_LeftArrow`（123）、`kVK_RightArrow`（124）和 `kVK_ANSI_T`（17）。
     public var defaultCombo: KeyCombo {
         switch self {
         case .previousTab: KeyCombo(keyCode: 123, modifiers: [.command])
         case .nextTab: KeyCombo(keyCode: 124, modifiers: [.command])
+        case .showConversions: KeyCombo(keyCode: 17, modifiers: [.command])
         }
     }
 }

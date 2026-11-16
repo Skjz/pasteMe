@@ -32,6 +32,8 @@ import Testing
         }
         #expect(PanelShortcutAction.previousTab.defaultCombo == KeyCombo(keyCode: 123, modifiers: [.command]))
         #expect(PanelShortcutAction.nextTab.defaultCombo == KeyCombo(keyCode: 124, modifiers: [.command]))
+        #expect(PanelShortcutAction.showConversions.defaultCombo == KeyCombo(keyCode: 17, modifiers: [.command]))
+        #expect(Set(PanelShortcutAction.allCases.map(\.defaultCombo)).count == PanelShortcutAction.allCases.count)
     }
 
     @Test func aRecordedShortcutPersists() {

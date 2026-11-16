@@ -94,7 +94,7 @@ The [user guide](docs/guide.md) covers every feature in detail (in Chinese).
 | ⌘⌫ / ⌘Z | Delete / undo |
 | ⌘P | Pin to a Pinboard |
 
-The full key list is in the [user guide](docs/guide.md#按键). Global shortcuts (show the panel, decode clipboard and paste, pause recording, Paste Stack) and the tab-switching panel shortcuts can be changed in settings.
+The full key list is in the [user guide](docs/guide.md#按键). Global shortcuts (show the panel, decode clipboard and paste, pause recording, Paste Stack) and panel shortcuts (switch tabs, open the Convert menu) can be changed in settings.
 
 ## Install
 

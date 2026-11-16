@@ -14,19 +14,23 @@ final class AirDropController {
     }
 
     /// 系统现在能不能用隔空投送发送这类条目。菜单打开时用来决定「隔空投送…」是不是灰的，不写临时文件。
+    ///
+    /// `NSSharingService.canPerform(withItems:)` 会检查本地文件 URL 是否真的存在于磁盘上：传不存在的路径会返回 false。
+    /// 文本和图片在真正发送时会写成临时文件，这里用当前可执行文件作为已存在的本地文件探针来询问系统隔空投送服务是否可用。
     static func canSend(kind: ClipKind, urls: [URL]) -> Bool {
         guard let service = NSSharingService(named: .sendViaAirDrop) else { return false }
         let probeItems: [Any] = switch kind {
         case .link, .file:
             urls
-        case .text:
-            [URL(fileURLWithPath: "/tmp/PasteMe.txt")]
-        case .image:
-            [URL(fileURLWithPath: "/tmp/PasteMe.png")]
+        case .text, .image:
+            [existingLocalFileProbe]
         }
         guard !probeItems.isEmpty else { return false }
         return service.canPerform(withItems: probeItems)
     }
+
+    private static let existingLocalFileProbe: URL = Bundle.main.executableURL
+        ?? URL(fileURLWithPath: CommandLine.arguments[0])
 
     /// 写出需要的临时文件并弹出系统的隔空投送窗口。返回是否成功拉起窗口。
     @discardableResult

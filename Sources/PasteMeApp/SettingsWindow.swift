@@ -478,11 +478,8 @@ private struct PanelPage: View {
                 }
                 .padding(11)
             }
-            SettingsGroup {
-                SettingsRow(
-                    title: "面板开着时再按呼出快捷键",
-                    detail: panelRepeatDetail
-                ) {
+            SettingsGroup(title: "呼出快捷键", footer: panelRepeatDetail) {
+                SettingsRow(title: "面板开着时再按") {
                     Picker(
                         "面板开着时再按呼出快捷键",
                         selection: Binding(get: { model.panelRepeatAction }, set: model.setPanelRepeatAction)
@@ -495,7 +492,8 @@ private struct PanelPage: View {
                     .pickerStyle(.menu)
                     .fixedSize()
                 }
-                SettingsDivider()
+            }
+            SettingsGroup {
                 SettingsRow(
                     title: "共享屏幕时显示面板",
                     detail: "默认在共享屏幕、录屏和截图里隐藏面板和预览窗口，自己的屏幕上照常显示。录教程时再打开。"
@@ -526,7 +524,7 @@ private struct PanelPage: View {
     }
 
     private var panelRepeatDetail: String {
-        let symbols = PanelShortcutAction.allCases.compactMap { model.panelShortcuts[$0]?.symbol }
+        let symbols = [PanelShortcutAction.previousTab, .nextTab].compactMap { model.panelShortcuts[$0]?.symbol }
         if symbols.isEmpty {
             return "选「收起面板」后，点击面板左上角的标签切换 Pinboard；没有 Pinboard 时总是收起。"
         }

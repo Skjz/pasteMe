@@ -92,7 +92,7 @@ https://github.com/user-attachments/assets/3354eec4-f3db-4d77-bcdc-d2529a14f3c0
 | ⌘⌫ / ⌘Z | 删除 / 撤销 |
 | ⌘P | 固定到 Pinboard |
 
-完整的按键表见[使用说明](docs/guide.md#按键)。全局快捷键（呼出面板、解码剪贴板并粘贴、暂停记录、Paste Stack）和切换标签的面板快捷键都可以在设置里改。
+完整的按键表见[使用说明](docs/guide.md#按键)。全局快捷键（呼出面板、解码剪贴板并粘贴、暂停记录、Paste Stack）和部分面板快捷键（切换标签、打开转换菜单）都可以在设置里改。
 
 ## 安装
 

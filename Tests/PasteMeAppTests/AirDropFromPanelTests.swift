@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import PasteMeApp
@@ -50,5 +51,14 @@ import PasteMeCore
         #expect(sentPlans.count == 1)
         #expect(sentPlans[0].items == [.url(URL(fileURLWithPath: "/exists/a.pdf"))])
         #expect(notices == ["有 1 个文件已经不在了"])
+    }
+
+    @Test func systemAirDropProbeAcceptsTextAndImagesWhenAirDropIsEnabled() {
+        guard let service = NSSharingService(named: .sendViaAirDrop),
+              service.canPerform(withItems: [URL(string: "https://example.com")!])
+        else { return }
+        // 文本和图片不能因为临时文件尚未写盘而被误判为不可发送。
+        #expect(AirDropController.canSend(kind: .text, urls: []))
+        #expect(AirDropController.canSend(kind: .image, urls: []))
     }
 }

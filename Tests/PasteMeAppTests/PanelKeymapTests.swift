@@ -263,14 +263,20 @@ import Testing
         let custom: [PanelShortcutAction: KeyCombo] = [
             .previousTab: KeyCombo(keyCode: kVK_ANSI_LeftBracket, modifiers: [.command]),
             .nextTab: KeyCombo(keyCode: kVK_ANSI_RightBracket, modifiers: [.command]),
+            .showConversions: KeyCombo(keyCode: kVK_ANSI_D, modifiers: [.command]),
         ]
         let commandLeftBracket = PanelKey(keyCode: kVK_ANSI_LeftBracket, command: true, characters: "[")
         let commandRightBracket = PanelKey(keyCode: kVK_ANSI_RightBracket, command: true, characters: "]")
         let commandLeft = PanelKey(keyCode: kVK_LeftArrow, command: true, characters: "\u{F702}")
+        let commandD = PanelKey(keyCode: kVK_ANSI_D, command: true, characters: "d")
+        let commandT = PanelKey(keyCode: kVK_ANSI_T, command: true, characters: "t")
 
-        // 录成 ⌘[ ⌘] 后，卡片上和有文字的搜索框里都能切换标签。
+        // 录成 ⌘[ ⌘] 和 ⌘D 后，卡片上和有文字的搜索框里都能切换标签、打开转换菜单；原来的 ⌘T 不再触发。
         #expect(PanelKeymap.action(for: commandLeftBracket, in: Self.onCards, shortcuts: custom) == .run(.switchTab(by: -1)))
         #expect(PanelKeymap.action(for: commandRightBracket, in: Self.searching, shortcuts: custom) == .run(.switchTab(by: 1)))
+        #expect(PanelKeymap.action(for: commandD, in: Self.onCards, shortcuts: custom) == .run(.showConversions))
+        #expect(PanelKeymap.action(for: commandD, in: Self.searching, shortcuts: custom) == .run(.showConversions))
+        #expect(PanelKeymap.action(for: commandT, in: Self.onCards, shortcuts: custom) == .passThrough)
 
         // 原来的 ⌘← 不再切换标签，按 ← → 的规则移动选择或插入点。
         #expect(PanelKeymap.action(for: commandLeft, in: Self.onCards, shortcuts: custom) == .run(.moveSelection(by: -1)))
