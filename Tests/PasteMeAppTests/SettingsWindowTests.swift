@@ -24,17 +24,20 @@ import PasteMeCore
     @Test func togglesAreSavedAndPassedOnToTheApp() {
         var sharing: [Bool] = []
         var imagesAsFiles: [Bool] = []
+        var copyEdited: [Bool] = []
         var cursorStyles: [CursorStyle] = []
         var repeatActions: [PanelRepeatAction] = []
         var soundsPlayed = 0
         model.onScreenSharingChange = { sharing.append($0) }
         model.onImagesAsFilesChange = { imagesAsFiles.append($0) }
+        model.onCopyEditedChange = { copyEdited.append($0) }
         model.onCursorStyleChange = { cursorStyles.append($0) }
         model.onPanelRepeatActionChange = { repeatActions.append($0) }
         model.onPlaySound = { soundsPlayed += 1 }
 
         model.setShowDuringScreenSharing(true)
         model.setPasteImagesAsFiles(true)
+        model.setCopyEditedToClipboard(false)
         model.setCursorStyle(.flow)
         model.setPanelRepeatAction(.hidePanel)
         model.setLinkPreviewMode(.siteIcon)
@@ -43,6 +46,7 @@ import PasteMeCore
 
         #expect(settings.showDuringScreenSharing && model.showDuringScreenSharing && sharing == [true])
         #expect(settings.pasteImagesAsFiles && model.pasteImagesAsFiles && imagesAsFiles == [true])
+        #expect(!settings.copyEditedToClipboard && !model.copyEditedToClipboard && copyEdited == [false])
         #expect(settings.cursorStyle == .flow && model.cursorStyle == .flow && cursorStyles == [.flow])
         #expect(settings.panelRepeatAction == .hidePanel && model.panelRepeatAction == .hidePanel && repeatActions == [.hidePanel])
         #expect(settings.linkPreviewMode == .siteIcon && model.linkPreviewMode == .siteIcon)

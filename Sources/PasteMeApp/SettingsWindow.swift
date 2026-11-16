@@ -504,6 +504,14 @@ private struct PanelPage: View {
             }
             SettingsGroup(title: "粘贴") {
                 SettingsRow(
+                    title: "编辑或转换后自动拷贝",
+                    detail: "新建、编辑和转换得到的文本自动放入剪贴板，可直接 ⌘V 粘贴。"
+                ) {
+                    Toggle("编辑或转换后自动拷贝", isOn: Binding(get: { model.copyEditedToClipboard }, set: model.setCopyEditedToClipboard))
+                        .labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(
                     title: "图片以文件粘贴",
                     detail: "附带 PNG 文件以便粘贴到访达；部分聊天软件会当作附件发送。"
                 ) {

@@ -76,6 +76,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         model.cursorStyle = settings.cursorStyle
         model.tabSwitchShortcuts = initialPanelShortcuts
         model.pastesImagesAsFiles = settings.pasteImagesAsFiles
+        model.copyEditedToClipboard = settings.copyEditedToClipboard
         model.fileApp = settings.fileApp
         model.folderApp = settings.folderApp
         panel = PanelController(model: model)
@@ -237,6 +238,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             self?.pasteStack.showsDuringScreenSharing = on
         }
         settingsModel.onImagesAsFilesChange = { [weak self] on in self?.model.pastesImagesAsFiles = on }
+        settingsModel.onCopyEditedChange = { [weak self] on in self?.model.copyEditedToClipboard = on }
         settingsModel.onCursorStyleChange = { [weak self] style in self?.model.cursorStyle = style }
         settingsModel.onPanelRepeatActionChange = { [weak self] action in self?.panel.repeatAction = action }
         settingsModel.onPanelShortcutChange = { [weak self] shortcuts in

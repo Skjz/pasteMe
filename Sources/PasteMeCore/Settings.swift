@@ -89,6 +89,12 @@ public struct Settings {
         nonmutating set { defaults.set(newValue, forKey: Key.pasteImagesAsFiles) }
     }
 
+    /// 新建（⌘N）、编辑（⌘E）或转换得到的文本立即放进系统剪贴板，关掉面板后可直接 ⌘V 粘贴。默认 true。
+    public var copyEditedToClipboard: Bool {
+        get { defaults.object(forKey: Key.copyEditedToClipboard) as? Bool ?? true }
+        nonmutating set { defaults.set(newValue, forKey: Key.copyEditedToClipboard) }
+    }
+
     /// 复制被记录时播放提示音（#25）。默认 false：常驻后台的工具升级后突然开始出声会打扰用户，由用户自己打开。
     public var playsSoundOnRecord: Bool {
         get { defaults.bool(forKey: Key.playsSoundOnRecord) }
@@ -210,6 +216,7 @@ public struct Settings {
         static let panelRepeatAction = "panelRepeatAction"
         static let appAliases = "appAliases"
         static let pasteImagesAsFiles = "pasteImagesAsFiles"
+        static let copyEditedToClipboard = "copyEditedToClipboard"
         static let linkPreviewMode = "linkPreviewMode"
         static let lastPinboardID = "lastPinboardID"
         static let historyRetention = "historyRetention"

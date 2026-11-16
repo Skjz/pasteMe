@@ -488,8 +488,9 @@ private struct PreviewView: View {
 
     /// 新建和编辑文本时的提示，别的时候没有。
     private var hint: String? {
-        if state.isNewText { return "写好后按 esc，存进历史" }
-        if state.editing { return "关闭时保存" }
+        let suffix = model.copyEditedToClipboard ? "并拷贝" : ""
+        if state.isNewText { return "按 esc 保存\(suffix)" }
+        if state.editing { return "关闭时保存\(suffix)" }
         return nil
     }
 

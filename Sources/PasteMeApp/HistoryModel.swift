@@ -130,6 +130,8 @@ final class HistoryModel {
     var draggingID: Int64?
     /// 原样粘贴图片时也附带文件（`Settings.pasteImagesAsFiles`），这时右键菜单不再列出「以文件粘贴」。
     var pastesImagesAsFiles = false
+    /// 新建、编辑或转换后的文本自动放入系统剪贴板（`Settings.copyEditedToClipboard`）。
+    var copyEditedToClipboard = true
     /// 光标的样式。初始值和修改都来自 `Settings.cursorStyle`，放在这里是为了让视图随之更新。
     var cursorStyle = CursorStyle.breathe
     /// 面板内切换标签的快捷键（#69），右上角的按键提示用它显示。
@@ -277,6 +279,7 @@ final class HistoryModel {
         self.lastPinboardID = settings?.lastPinboardID
         self.now = now
         if let settings {
+            self.copyEditedToClipboard = settings.copyEditedToClipboard
             self.tabSwitchShortcuts = Dictionary(uniqueKeysWithValues: PanelShortcutAction.allCases.compactMap { action in
                 settings.shortcut(for: action).map { (action, $0) }
             })
@@ -748,6 +751,7 @@ final class HistoryModel {
         if content.kind == .link { onEdited(id) }
         guard let recorded = try store.item(id: id) else { return }
         showInHistory(recorded)
+        if copyEditedToClipboard { onCopy(recorded) }
     }
 
     // MARK: - 哈希值（#37）
@@ -852,8 +856,10 @@ final class HistoryModel {
 
     /// 保存预览里改过的文字和标题。`text` 为 nil 时不改文字。和其他条目内容相同时合并（见 `ClipStore.updateText`）。
     func saveEdits(of id: Int64, text: String?, rtf: Data?, title: String?) {
+        var textUpdated = false
         do {
             if let text, try store.updateText(text, rtf: rtf, id: id) {
+                textUpdated = true
                 onEdited(id)
             }
             try store.setTitle(title, id: id)
@@ -861,6 +867,9 @@ final class HistoryModel {
             NSLog("PasteMe: 保存修改失败：\(error)")
         }
         reload()
+        if textUpdated, copyEditedToClipboard, let updated = try? store.item(id: id) {
+            onCopy(updated)
+        }
     }
 
     /// ⌘N 写好的新文本：存进历史并排在最前，在 Pinboard 里时也固定到这里，然后选中它。空的不存。
@@ -874,6 +883,9 @@ final class HistoryModel {
             }
             reload()
             selectedID = id
+            if copyEditedToClipboard, let created = try store.item(id: id) {
+                onCopy(created)
+            }
         } catch {
             NSLog("PasteMe: 新建文本失败：\(error)")
         }

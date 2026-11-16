@@ -38,6 +38,7 @@ final class SettingsModel {
     private(set) var playsSoundOnRecord = false
     private(set) var showDuringScreenSharing = false
     private(set) var pasteImagesAsFiles = false
+    private(set) var copyEditedToClipboard = true
     private(set) var cursorStyle = CursorStyle.breathe
     private(set) var panelRepeatAction = PanelRepeatAction.cyclePinboard
     private(set) var fileApp = OpenApp.systemDefault
@@ -89,6 +90,7 @@ final class SettingsModel {
     @ObservationIgnored var onPlaySound: () -> Void = {}
     @ObservationIgnored var onScreenSharingChange: (Bool) -> Void = { _ in }
     @ObservationIgnored var onImagesAsFilesChange: (Bool) -> Void = { _ in }
+    @ObservationIgnored var onCopyEditedChange: (Bool) -> Void = { _ in }
     @ObservationIgnored var onCursorStyleChange: (CursorStyle) -> Void = { _ in }
     @ObservationIgnored var onPanelRepeatActionChange: (PanelRepeatAction) -> Void = { _ in }
     /// 改了面板内的快捷键（#69）：通知面板立即按新组合响应。
@@ -128,6 +130,7 @@ final class SettingsModel {
         playsSoundOnRecord = settings.playsSoundOnRecord
         showDuringScreenSharing = settings.showDuringScreenSharing
         pasteImagesAsFiles = settings.pasteImagesAsFiles
+        copyEditedToClipboard = settings.copyEditedToClipboard
         cursorStyle = settings.cursorStyle
         panelRepeatAction = settings.panelRepeatAction
         fileApp = settings.fileApp
@@ -370,6 +373,12 @@ final class SettingsModel {
         settings.pasteImagesAsFiles = on
         pasteImagesAsFiles = on
         onImagesAsFilesChange(on)
+    }
+
+    func setCopyEditedToClipboard(_ on: Bool) {
+        settings.copyEditedToClipboard = on
+        copyEditedToClipboard = on
+        onCopyEditedChange(on)
     }
 
     /// 没装的应用不能选（视图里是灰的），这里也不接受。
