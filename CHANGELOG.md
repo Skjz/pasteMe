@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-16
+
 ### Added
 
 - While Paste Stack is on, pressing ⌘C on a card in the panel (or choosing 拷贝 from its right-click menu) now adds that entry to the end of the stack in addition to putting it on the clipboard, so entries already in the history or on a Pinboard can be queued without going back to the original apps; copying the same card twice queues it twice, the panel stays open, and the notice shows its position in the stack. Cards also have a 加入 Paste Stack item in their right-click menu, which starts Paste Stack with that card as the first entry when Paste Stack is off (with the same pause and Accessibility checks as the shortcut). (#66)
@@ -163,7 +165,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The paste flow moved from `AppDelegate` into `Paster` in `PasteMeCore`. `paste(_:as:into:)` takes `.original` or `.plainText` and a target app, and returns `.pasted` or `.copiedOnly` (no accessibility permission). Writing the pasteboard and sending ⌘V are injected adapters, so tests run against in-memory fakes. The app hides the panel before calling it.
 - New `Settings` type in `PasteMeCore`, stored in the `io.github.skjz.PasteMe` defaults domain, where every user-facing switch is defined.
 
-[Unreleased]: https://github.com/Skjz/pasteMe/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/Skjz/pasteMe/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Skjz/pasteMe/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Skjz/pasteMe/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Skjz/pasteMe/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Skjz/pasteMe/releases/tag/v0.1.0

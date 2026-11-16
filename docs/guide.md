@@ -1,4 +1,4 @@
-# PasteMe 使用说明（0.2.1）
+# PasteMe 使用说明（0.3.0）
 
 这里写 PasteMe 每一项功能的细节。先看个大概，请看 [README](../README.md)。
 
