@@ -194,6 +194,14 @@ struct HistoryView: View {
                 guard let id = model.selectedID else { return }
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
             }
+            // 「在历史里查看」（#80）：列表整个换掉了，不从旧的位置滚过去，立刻显示到那张卡片，前后是和它挨着复制的内容。
+            // 写在上面两个之后：选中项同时变了的话，这一次后执行，盖掉带动画的那次。
+            .onChange(of: model.jumpToSelectionCount) {
+                guard let id = model.selectedID else { return }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { proxy.scrollTo(id, anchor: .center) }
+            }
             // 呼出面板时从最前面开始显示：上次可能用触控板滚到了后面，而选中项还是第一张，上面的 scrollTo 不会触发。
             // 已经在最前面时不滚：再滚一次，呼出动画会多缺一帧。
             .onChange(of: model.showCount) {

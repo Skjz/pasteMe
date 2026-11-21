@@ -268,6 +268,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// 和打字时一样；输入 `@` 可以检查候选列表。
     /// 加上 `PASTEME_SNAPSHOT_DELETE=1` 时删除选中的卡片，0.1 秒后再渲染：颗粒动画还在播放，
     /// 可以确认被删的卡片变成了空位、其他卡片没有移动（颗粒画在 Metal 图层上，不在渲染结果里）。
+    /// 加上 `PASTEME_SNAPSHOT_SHOW_IN_HISTORY=1` 时对选中的卡片「在历史里查看」（#80），和 `PASTEME_SNAPSHOT_QUERY` 一起用。
     /// 加上 `PASTEME_SNAPSHOT_TAB=n` 时切到第 n 个 Pinboard 的标签。
     /// 加上 `PASTEME_SNAPSHOT_PREVIEW=1` 时打开选中卡片的预览，`PASTEME_SNAPSHOT_EDITOR=1` 时打开新建 Pinboard 的窗口，
     /// 这两个窗口另存为 `<文件名>-preview.png`、`<文件名>-editor.png`。
@@ -310,6 +311,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         if let query = environment["PASTEME_SNAPSHOT_QUERY"] {
             model.focus = .search
             model.query = query
+        }
+        if environment["PASTEME_SNAPSHOT_SHOW_IN_HISTORY"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.model.showInHistory() }
         }
         if environment["PASTEME_SNAPSHOT_DELETE"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {

@@ -171,6 +171,18 @@ import PasteMeCore
         #expect(model.selectedID == a)
     }
 
+    /// 从搜索结果里查看的就是当时选中的那张：选中项没变，也要请求视图立刻跳到它（#80）。
+    @Test func showInHistoryJumpsToTheEntryEvenWhenTheSelectionStays() throws {
+        model.query = "a"
+        #expect(model.selectedID == a)
+        let jumps = model.jumpToSelectionCount
+
+        model.showInHistory()
+
+        #expect(model.selectedID == a)
+        #expect(model.jumpToSelectionCount == jumps + 1)
+    }
+
     @Test func showInHistoryReachesEntriesOlderThanTheFirstPage() throws {
         let old = try store.insert(ClipContent(kind: .text, text: "很早以前"), source: nil, at: Date(timeIntervalSince1970: 0))
         for i in 0..<250 {

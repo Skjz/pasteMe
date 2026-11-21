@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ⌘P now pins the selected entry to the top of the history instead of adding it to the Pinboard used last. A pinned-to-top entry stays first in 历史, ahead of everything copied after it, until you press ⌘P again, and then it goes back to its place by time. It doesn't go into any Pinboard. You can also pin or unpin with the mouse: hover over a card and click the pin that appears at its top-left corner, or click the pin that pinned cards always show. Clicking the pin only toggles it; it doesn't paste or change the selection. Cards also have 置顶 / 取消置顶 in their right-click menu. When several entries are pinned, the one pinned last comes first. Pinned entries also come first in search and filter results, but a Pinboard keeps its own order. Pinned entries are kept by automatic clearing and by 清空历史, and pasting one doesn't unpin it. To add an entry to a Pinboard, use 固定到 in the right-click menu or drag the card onto a tab. (#77)
 - For developers: the database moves to version 8, which adds a `pinned_top_at` column and an index sorted by it, then by copy time. `ClipStore.setPinnedToTop(_:id:at:)` pins and unpins, `ClipStore.pinnedCount()` became `keptCount()`, which counts what clearing the history keeps, and `Settings.lastPinboardID` was removed. Snapshot mode takes `PASTEME_SNAPSHOT_PIN=n` to pin the nth card and show the pin button on hover.
 
+### Fixed
+
+- 在历史里查看 now scrolls the history straight to the entry, centered with the entries copied around it. Before, only the selection moved there and the list stayed where it was, so the entry was often off screen, especially when it was already selected in the search results. Snapshot mode takes `PASTEME_SNAPSHOT_SHOW_IN_HISTORY=1` to try it together with `PASTEME_SNAPSHOT_QUERY`. (#80)
+
 ## [0.3.0] - 2026-11-16
 
 ### Added

@@ -164,6 +164,9 @@ final class HistoryModel {
     private(set) var showCount = 0
     /// 选中的卡片换了位置、选中项没变时加一（置顶、取消置顶，#77），视图据此滚到它。
     private(set) var revealSelectionCount = 0
+    /// 「在历史里查看」时加一（#80），视图据此不带动画、立刻把选中的卡片放到屏幕中间。
+    /// 不能只靠选中项变化：从搜索结果里查看的通常就是当时选中的那张，选中项没变，视图不会滚。
+    private(set) var jumpToSelectionCount = 0
     /// 鼠标所在的卡片，显示置顶按钮用（#77）。只有置顶按钮读它，鼠标移动时卡片列表不重新计算。
     private(set) var hoveredCardID: Int64?
     /// 鼠标所在的置顶按钮。按钮有一大半伸在卡片外面，鼠标移到那里时卡片收到移出，按钮还要留着。
@@ -831,6 +834,7 @@ final class HistoryModel {
         historyLimit = max(Self.defaultLimit, unpinnedRank + Self.revealMargin)
         reload()
         selectedID = item.id
+        jumpToSelectionCount += 1
         focus = .cards
     }
 
