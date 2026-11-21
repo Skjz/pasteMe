@@ -673,7 +673,7 @@ private struct HistoryPage: View {
             SettingsGroup {
                 SettingsRow(
                     title: "自动清除历史",
-                    detail: "定期清理超时未使用的条目，Pinboard 内的保留。"
+                    detail: "定期清理超时未使用的条目，Pinboard 内的和置顶的保留。"
                 ) {
                     Picker("自动清除历史", selection: Binding(get: { model.historyRetention }, set: model.chooseRetention)) {
                         ForEach(HistoryRetention.allCases, id: \.self) { retention in
@@ -685,7 +685,7 @@ private struct HistoryPage: View {
                     .fixedSize()
                 }
                 SettingsDivider()
-                SettingsRow(title: "清空历史", detail: "删除所有不在 Pinboard 里的条目。") {
+                SettingsRow(title: "清空历史", detail: "删除所有不在 Pinboard 里、也没有置顶的条目。") {
                     Button("清空…", role: .destructive) { model.requestClearHistory() }
                 }
             }

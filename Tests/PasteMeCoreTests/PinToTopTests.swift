@@ -109,6 +109,21 @@ import Testing
         #expect(try store.historyPosition(of: b) == 1)
     }
 
+    /// 在搜索结果里排第几：只数命中的条目，不看读取条数；没命中时为 nil。
+    @Test func positionCountsOnlyMatchingEntries() throws {
+        let old = try insert("apple old", at: 1)
+        try insert("banana", at: 2)
+        let new = try insert("apple new", at: 3)
+        let banana = try store.items().first { $0.preview == "banana" }!.id
+
+        #expect(try store.position(of: old, matching: ClipQuery(text: "apple", limit: 1)) == 1)
+        #expect(try store.position(of: new, matching: ClipQuery(text: "apple")) == 0)
+        #expect(try store.position(of: banana, matching: ClipQuery(text: "apple")) == nil)
+        try store.setPinnedToTop(true, id: old)
+        #expect(try store.position(of: old, matching: ClipQuery(text: "apple")) == 0)
+        #expect(try store.pinnedToTopCount() == 1)
+    }
+
     @Test func clearingAndAutoCleanupKeepPinnedEntries() throws {
         let pinned = try insert("pinned", at: 1)
         try insert("loose", at: 2)

@@ -230,6 +230,20 @@ public final class ClipStore {
 
     /// 条目在历史里排第几（从 0 开始）：按 `items(matching:)` 的顺序排在它前面的有多少条。不存在时为 nil。
     public func historyPosition(of id: Int64) throws -> Int? {
+        try position(of: id, matching: ClipQuery())
+    }
+
+    /// 条目在 `query` 的结果里排第几（从 0 开始），不看 `limit`。不在结果里时为 nil。只用于不按 Pinboard 的查询。
+    public func position(of id: Int64, matching query: ClipQuery) throws -> Int? {
+        precondition(query.pinboardID == nil, "Pinboard 里按固定的位置排，不按置顶和时间")
+        var condition = ""
+        var filterValues: [SQLValue] = []
+        if let filter = query.filter {
+            condition = " AND " + filter.clause
+            filterValues = filter.values
+        }
+        let member = try db.prepare("SELECT 1 FROM clips WHERE id = ?" + condition, [.int(id)] + filterValues)
+        guard try member.step() else { return nil }
         // 先按有没有置顶分组、组内再比置顶时间，和 ORDER BY 里 NULL 排在所有置顶时间后面一致；
         // 不拿某个时间戳代替 NULL，置顶时间是多少都不会排错。
         let statement = try db.prepare(
@@ -239,10 +253,17 @@ public final class ClipStore {
                  FROM clips WHERE id = ?) AS target
             WHERE (pinned_top_at IS NOT NULL, coalesce(pinned_top_at, 0), created_at, id)
                 > (target.pinned, target.p, target.t, ?)
-            """,
-            [.int(id), .int(id)]
+            """ + condition,
+            [.int(id), .int(id)] + filterValues
         )
-        guard try item(id: id) != nil, try statement.step() else { return nil }
+        guard try statement.step() else { return nil }
+        return Int(statement.int(0))
+    }
+
+    /// 置顶的条目有多少条。「历史」的读取条数只算没置顶的，加上它就是要读的行数。
+    public func pinnedToTopCount() throws -> Int {
+        let statement = try db.prepare("SELECT count(*) FROM clips WHERE pinned_top_at IS NOT NULL")
+        guard try statement.step() else { return 0 }
         return Int(statement.int(0))
     }
 

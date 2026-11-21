@@ -236,8 +236,12 @@ final class HistoryModel {
     @ObservationIgnored private let appNames: AppNames?
     /// `didShow` 一次改好搜索词和筛选条件，最后只查询一次。
     @ObservationIgnored private var resetting = false
-    /// 在历史里最多显示多少条。「在历史里查看」更早的条目时临时加大，读到它后面再多 100 条。
+    /// 在历史里最多显示多少条没置顶的条目；置顶的全部读出，排在前面，不占这个名额（`pinnedCount`）。
+    /// 「在历史里查看」更早的条目时临时加大，读到它后面再多 100 条。
     @ObservationIgnored private var historyLimit = HistoryModel.defaultLimit
+    /// 置顶的条目有多少条，每次读历史前更新。读取的行数是 `historyLimit` 加上它，
+    /// 否则置顶满 200 条后新复制的内容在「历史」里就看不到了。
+    @ObservationIgnored private var pinnedCount = 0
     private static let defaultLimit = 200
     /// 为了让某一条出现在列表里放大读取条数时，在它后面再多读的条数。
     private static let revealMargin = 100
@@ -274,7 +278,12 @@ final class HistoryModel {
         if let x = a.pinOrder, let y = b.pinOrder {
             if x != y { return x < y }
         } else if a.pinnedToTopAt != b.pinnedToTopAt {
-            return (a.pinnedToTopAt ?? .distantPast) > (b.pinnedToTopAt ?? .distantPast)
+            // 先按有没有置顶分组，再比置顶时间，和数据库里的规则一样；不拿某个时间代替「没置顶」。
+            switch (a.pinnedToTopAt, b.pinnedToTopAt) {
+            case let (x?, y?): return x > y
+            case (_?, nil): return true
+            default: return false
+            }
         }
         return a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.id > b.id
     }
@@ -323,7 +332,7 @@ final class HistoryModel {
     /// 搜索框里的文字和面板上的筛选条件合起来的查询条件。
     var currentQuery: ClipQuery {
         // Pinboard 不会太大，全部列出来；拖动排序也要看到全部条目才能写回顺序。
-        var query = ClipQuery.parse(searchInput, limit: pinboardID == nil ? historyLimit : 2_000)
+        var query = ClipQuery.parse(searchInput, limit: pinboardID == nil ? historyLimit + pinnedCount : 2_000)
         query.pinboardID = pinboardID
         if !filters.pinboardIDs.isEmpty {
             query.inPinboards = filters.pinboardIDs
@@ -516,12 +525,21 @@ final class HistoryModel {
     }
 
     func reload() {
+        apply(fetchItems())
+    }
+
+    private func fetchItems() -> [ClipItem] {
         do {
-            items = try store.items(matching: currentQuery)
+            if pinboardID == nil { pinnedCount = try store.pinnedToTopCount() }
+            return try store.items(matching: currentQuery)
         } catch {
             NSLog("PasteMe: 读取历史失败：\(error)")
-            items = []
+            return []
         }
+    }
+
+    private func apply(_ newItems: [ClipItem]) {
+        items = newItems
         if !items.contains(where: { $0.id == selectedID }) {
             selectedID = items.first?.id
         }
@@ -638,12 +656,18 @@ final class HistoryModel {
     /// 在「历史」里卡片移到最前面或回到按时间的位置，这就是反馈；选中的卡片挪了位置时视图滚过去。
     /// 在 Pinboard 里顺序不变、看不出变化，所以说一声。
     ///
-    /// 删除、撤销的颗粒还在播放时先停掉它们、去掉空位（撤销记录留着）：置顶要挪动卡片，
-    /// 而颗粒播放时卡片不能动（见「删除动画」）。总是停：改搜索词时空位已经清掉，颗粒却可能还在播放，
-    /// 只看有没有空位会漏掉；没有颗粒时停一下什么也不做。
+    /// 卡片要挪动时，删除、撤销的颗粒还在播放就先停掉它们、去掉空位（撤销记录留着）：颗粒播放时卡片不能动
+    /// （见「删除动画」）。改搜索词时空位已经清掉，颗粒却可能还在播放，所以不看有没有空位，只要挪动就停。
+    /// 不挪动时不停：没有卡片会滑进颗粒，而停掉会让 `CardDust` 忘了哪些卡片还在补位的途中，
+    /// 紧接着删除时颗粒会出现在卡片的终点而不是它现在的位置。
     ///
-    /// 取消置顶的条目回到按时间的位置，可能落在读出的条数（`historyLimit`）以外；选中的卡片也可能被挤出去。
-    /// 这时把条数放大到包含选中项，选中项不变，视图滚到它的新位置。
+    /// 取消置顶的条目回到按时间的位置，可能落在读出的条数以外；选中的卡片也可能被挤出去。
+    /// 这时按它在当前搜索结果里的位置放大读取条数，选中项不变，视图滚到它的新位置；
+    /// 没被截掉时不放大（按整个历史的位置算，搜索时会把读取条数放大到整个历史）。
+    ///
+    /// 只有卡片真的要挪动才用换位动画：换位动画播放期间删除、撤销不播颗粒（`isReordering`），
+    /// 而 Pinboard 里置顶不改顺序。要挪动的情况：顺序变了（去掉空位也算），或者撤销放回的卡片还藏着、
+    /// 这时要立即显示，旁边的卡片可能还在给它让位。
     func setPinnedToTop(_ pinned: Bool, _ item: ClipItem) {
         do {
             try store.setPinnedToTop(pinned, id: item.id, at: now())
@@ -651,16 +675,20 @@ final class HistoryModel {
             NSLog("PasteMe: 置顶失败：\(error)")
             return
         }
-        removalEffect?.cancelAll()
-        if pinboardID == nil, let selectedID,
-           let position = try? store.historyPosition(of: selectedID), position >= historyLimit {
-            historyLimit = position + Self.revealMargin
+        let before = cards.map(\.id)
+        var newItems = fetchItems()
+        if pinboardID == nil, let selectedID, !newItems.contains(where: { $0.id == selectedID }),
+           let position = try? store.position(of: selectedID, matching: currentQuery) {
+            historyLimit = max(historyLimit, position + Self.revealMargin)
+            newItems = fetchItems()
         }
-        animate(removalEffect?.reorderAnimation()) {
+        let moves = !hiddenIDs.isEmpty || newItems.map(\.id) != before
+        if moves { removalEffect?.cancelAll() }
+        animate(moves ? removalEffect?.reorderAnimation() : nil) {
             hiddenIDs = []
             gaps = []
             finishedGaps = []
-            reload()
+            apply(newItems)
         }
         // 卡片换了位置，鼠标已经不在它上面了，不会收到移出。
         if hoveredCardID == item.id { hoveredCardID = nil }

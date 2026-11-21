@@ -98,11 +98,31 @@ import PasteMeCore
         model.selectedID = c
         model.delete()
         model.query = "b"
+        model.query = ""
+        #expect(ids == [b, a])
+        #expect(model.cards.allSatisfy { !$0.isGap })
         let cancels = effect.cancelCount
 
-        model.setPinnedToTop(true, model.items[0])
+        model.setPinnedToTop(true, model.items[1])
 
+        #expect(ids == [a, b])
         #expect(effect.cancelCount == cancels + 1)
+    }
+
+    /// 置顶不改顺序时不停颗粒：停掉会让颗粒忘了哪些卡片还在补位的途中。
+    @Test func pinningWithoutAMoveLeavesTheParticlesAlone() {
+        let effect = FakeRemovalEffect()
+        model.removalEffect = effect
+        model.showTab(work.id)
+        model.selectedID = a
+        model.delete()
+        effect.finishDisappear()
+        let cancels = effect.cancelCount
+
+        model.togglePinToTop()
+
+        #expect(effect.cancelCount == cancels)
+        #expect(effect.reorderCount == 0)
     }
 
     /// 取消置顶一条很旧的条目：它回到按时间的位置，落在默认读出的 200 条以外。选中项不变，列表里还有它。
@@ -124,6 +144,74 @@ import PasteMeCore
         #expect(model.selectedID == oldest)
         #expect(model.items.last?.id == oldest)
         #expect(model.revealSelectionCount == reveals + 1)
+    }
+
+    /// 搜索只命中一条很旧的置顶条目，取消置顶后它还在结果里：不放大读取条数，清空搜索后仍只读出 200 条。
+    @Test func unpinningInASearchDoesNotGrowTheWholeHistory() throws {
+        let store = try ClipStore(path: ":memory:")
+        let needle = try store.insert(ClipContent(kind: .text, text: "needle"), source: nil, at: Date(timeIntervalSince1970: 1))
+        for i in 2...305 {
+            try store.insert(ClipContent(kind: .text, text: "entry \(i)"), source: nil, at: Date(timeIntervalSince1970: TimeInterval(i)))
+        }
+        try store.setPinnedToTop(true, id: needle)
+        let model = HistoryModel(store: store)
+        model.didShow()
+        model.query = "needle"
+        #expect(model.items.map(\.id) == [needle])
+
+        model.togglePinToTop()
+        #expect(model.items.map(\.id) == [needle])
+        #expect(model.selectedID == needle)
+
+        model.clearSearch()
+        #expect(model.items.count == 200)
+    }
+
+    /// 置顶的条目不占「历史」的 200 条名额：置顶满 200 条后，新复制的内容照样出现在列表里。
+    @Test func pinnedEntriesDoNotCrowdOutNewCopies() throws {
+        let store = try ClipStore(path: ":memory:")
+        for i in 1...200 {
+            let id = try store.insert(ClipContent(kind: .text, text: "pinned \(i)"), source: nil, at: Date(timeIntervalSince1970: TimeInterval(i)))
+            try store.setPinnedToTop(true, id: id, at: Date(timeIntervalSince1970: TimeInterval(1_000 + i)))
+        }
+        let fresh = try store.insert(ClipContent(kind: .text, text: "fresh"), source: nil, at: Date(timeIntervalSince1970: 500))
+        let model = HistoryModel(store: store)
+
+        model.didShow()
+
+        #expect(model.items.count == 201)
+        #expect(model.items.last?.id == fresh)
+    }
+
+    /// Pinboard 里置顶不改顺序：不播换位动画，紧接着的删除照常播颗粒。
+    @Test func insideAPinboardPinningDoesNotStartAReorder() {
+        let effect = FakeRemovalEffect()
+        model.removalEffect = effect
+        model.showTab(work.id)
+        model.selectedID = b
+
+        model.togglePinToTop()
+        #expect(effect.reorderCount == 0)
+
+        model.showTab(nil)
+        model.selectedID = b
+        model.togglePinToTop()
+        #expect(effect.reorderCount == 1)
+    }
+
+    /// 删除后的空位和列表用同一套规则：置顶时间是多少（哪怕早于 `Date.distantPast`）都排在没置顶的前面。
+    @Test func aGapForAPinnedCardStaysFirstForAnyPinTime() throws {
+        try store.setPinnedToTop(true, id: a, at: Date.distantPast.addingTimeInterval(-1))
+        model.reload()
+        #expect(ids == [a, c, b])
+        let effect = FakeRemovalEffect()
+        model.removalEffect = effect
+        model.selectedID = a
+
+        model.delete()
+
+        #expect(model.cards.map(\.id) == [a, c, b])
+        #expect(model.cards.first?.isGap == true)
     }
 
     @Test func aDeletedPinnedCardLeavesItsGapAtTheFront() {

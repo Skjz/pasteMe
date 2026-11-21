@@ -152,8 +152,11 @@ final class PanelSimulator {
         let cards = model.cards
         guard cards.indices.contains(position), !cards[position].isGap else { return }
         let item = cards[position].item
+        let before = model.cards.map(\.id)
+        let revealsHidden = !model.hiddenIDs.isEmpty
         model.setPinnedToTop(item.pinnedToTopAt == nil, item)
-        reorderSettlesAt = clock + SpringCurve.slide.settleTime
+        // 和模型一样：卡片要挪动（顺序变了，或者藏着的卡片要显示）才算换位；否则删除、撤销照常播颗粒。
+        if revealsHidden || model.cards.map(\.id) != before { reorderSettlesAt = clock + SpringCurve.slide.settleTime }
         render(animated: false)
     }
 
