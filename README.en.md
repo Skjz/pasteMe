@@ -92,7 +92,7 @@ The [user guide](docs/guide.md) covers every feature in detail (in Chinese).
 | Space | Preview |
 | ⌘1 … ⌘9 | Paste card 1 … 9 |
 | ⌘⌫ / ⌘Z | Delete / undo |
-| ⌘P | Pin to a Pinboard |
+| ⌘P | Pin to top: keep first in History; press again to unpin |
 
 The full key list is in the [user guide](docs/guide.md#按键). Global shortcuts (show the panel, decode clipboard and paste, pause recording, Paste Stack) and panel shortcuts (switch tabs, open the Convert menu) can be changed in settings.
 

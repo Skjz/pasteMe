@@ -131,6 +131,43 @@ import Testing
         )
     }
 
+    /// 删除、撤销中间穿插置顶和取消置顶（#77）：置顶让卡片换位置，颗粒还在播放时也一样不能出错。
+    @Test(arguments: seeds)
+    func randomSequencesWithPinToTop(seed: UInt64) async throws {
+        let panel = try await PanelSimulator.make(count: 14)
+        panel.trace = ProcessInfo.processInfo.environment["PM_TRACE"] == "pin-\(seed)"
+        var random = SeededGenerator(seed: seed &+ 20_000)
+        var steps: [String] = []
+        for _ in 0..<25 {
+            switch Int.random(in: 0..<100, using: &random) {
+            case 0..<25:
+                steps.append("删除选中")
+                panel.deleteSelected()
+            case 25..<45:
+                steps.append("撤销")
+                panel.undo()
+            case 45..<70:
+                let position = Int.random(in: 0..<6, using: &random)
+                steps.append("切换第 \(position) 格的置顶")
+                if panel.trace { print("[TRACE] op 切换第 \(position) 格的置顶") }
+                panel.togglePinToTop(atPosition: position)
+            case 70..<80:
+                let offset = Bool.random(using: &random) ? 1 : -1
+                steps.append("选中项移动 \(offset)")
+                panel.moveSelection(by: offset)
+            default:
+                let seconds = Double.random(in: 0.02...1.2, using: &random)
+                steps.append(String(format: "等 %.2f 秒", seconds))
+                panel.wait(seconds)
+            }
+        }
+        panel.settle()
+        #expect(
+            panel.problems.isEmpty,
+            "种子 \(seed)：\(steps.joined(separator: "，"))\n\(panel.problems.prefix(5).joined(separator: "\n"))"
+        )
+    }
+
     /// 平时跑 60 个种子，约 3 秒。改了删除动画的逻辑后，用 `PASTEME_FUZZ_SEEDS=2000 swift test --filter randomSequences` 多跑一些。
     nonisolated static let seeds = 0..<(ProcessInfo.processInfo.environment["PASTEME_FUZZ_SEEDS"].flatMap(UInt64.init) ?? 60)
 

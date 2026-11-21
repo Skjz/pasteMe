@@ -173,12 +173,6 @@ public struct Settings {
         defaults.set(value, forKey: key)
     }
 
-    /// 最近一次固定条目用的 Pinboard，⌘P 固定到这里。没有时为 nil。
-    public var lastPinboardID: Int64? {
-        get { (defaults.object(forKey: Key.lastPinboardID) as? NSNumber)?.int64Value }
-        nonmutating set { defaults.set(newValue.map { NSNumber(value: $0) }, forKey: Key.lastPinboardID) }
-    }
-
     /// 每天自动检查一次有没有新版本（ADR 0010）。默认 true：只向 GitHub 查最新的发布，不发送任何内容。
     public var checksForUpdates: Bool {
         get { defaults.object(forKey: Key.checksForUpdates) as? Bool ?? true }
@@ -218,7 +212,6 @@ public struct Settings {
         static let pasteImagesAsFiles = "pasteImagesAsFiles"
         static let copyEditedToClipboard = "copyEditedToClipboard"
         static let linkPreviewMode = "linkPreviewMode"
-        static let lastPinboardID = "lastPinboardID"
         static let historyRetention = "historyRetention"
         static let playsSoundOnRecord = "playsSoundOnRecord"
         static let fileApp = "fileApp"

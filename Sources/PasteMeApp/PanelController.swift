@@ -61,17 +61,21 @@ extension ClipPanel: KeepsCompanionActive {}
 /// 面板上的一下点击是不是落在卡片列表的空白处：卡片那一排的高度以内（上下各多 `margin`），又不在任何一张卡片上，
 /// 比如卡片之间的空隙、最后一张卡片右边。卡片的位置是 `CardDust` 记下的布局（放大之前）；只有选中的那张放大了，
 /// 它按放大后的大小算，其他卡片按原大小，卡片之间的空隙才有 18 点宽。
+/// 压在卡片左上角的置顶图钉（#77）有一半在卡片外面，点在它上面也不算空白；没显示图钉的角也这样算，差别只有几个点。
 enum CardListClick {
     static let margin: CGFloat = 10
+    /// 置顶图钉的半径，选中的卡片上跟着放大，往上取整。
+    static let badgeRadius: CGFloat = 11
 
     static func isBlank(_ point: CGPoint, cardFrames: [CGRect], selected: CGRect?) -> Bool {
         guard let top = cardFrames.map(\.minY).min(), let bottom = cardFrames.map(\.maxY).max(),
               point.y >= top - margin, point.y <= bottom + margin
         else { return false }
-        if let selected {
-            let grow = (HistoryView.selectedScale - 1) / 2
-            if selected.insetBy(dx: -selected.width * grow, dy: -selected.height * grow).contains(point) { return false }
-        }
+        let grow = (HistoryView.selectedScale - 1) / 2
+        let grownSelected = selected.map { $0.insetBy(dx: -$0.width * grow, dy: -$0.height * grow) }
+        if let grownSelected, grownSelected.contains(point) { return false }
+        let corners = cardFrames.map(\.origin) + (grownSelected.map { [$0.origin] } ?? [])
+        if corners.contains(where: { hypot(point.x - $0.x, point.y - $0.y) <= badgeRadius }) { return false }
         return !cardFrames.contains { $0.contains(point) }
     }
 }
@@ -528,8 +532,8 @@ final class PanelController: NSObject, NSWindowDelegate, NSDraggingSource {
             model.newText()
         case .switchTab(let offset):
             model.cycleTab(by: offset)
-        case .pinSelected:
-            model.pinToRecentPinboard()
+        case .togglePinToTop:
+            model.togglePinToTop()
         case .showInHistory:
             if model.canShowInHistory { model.showInHistory() }
         case .showConversions:

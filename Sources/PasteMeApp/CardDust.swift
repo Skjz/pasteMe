@@ -42,6 +42,8 @@ final class CardDust: CardRemovalEffect {
     private var slides: [Int64: [Slide]] = [:]
     /// 最近一次交出补位或让位动画（`slideAnimation()`）的时间。之后不久报上来的布局变化就是这次动画。
     private var lastSlideAnimation = -CFTimeInterval.infinity
+    /// 最近一次置顶换位置的动画开始的时间（#77）。
+    private var reorderStart: CFTimeInterval?
     /// 交出动画后多久以内的布局变化算作这次动画。SwiftUI 在下一两帧里报告新的布局位置。
     static let slideWindow = 0.2
 
@@ -75,6 +77,17 @@ final class CardDust: CardRemovalEffect {
         guard !Self.reduceMotion else { return .easeInOut(duration: 0.2) }
         lastSlideAnimation = now()
         return SpringCurve.slide.animation
+    }
+
+    func reorderAnimation() -> Animation? {
+        let animation = slideAnimation()
+        reorderStart = now()
+        return animation
+    }
+
+    var isReordering: Bool {
+        guard let reorderStart else { return false }
+        return now() - reorderStart < SpringCurve.slide.settleTime
     }
 
     /// 卡片的布局位置报上来了。刚交出过补位或让位动画时，位置的变化就是这次动画：记下来，
@@ -236,6 +249,11 @@ final class CardDust: CardRemovalEffect {
         pendingAppear = [:]
         slides = [:]
         scaleChanges = [:]
+        // 换位和补位动画也作废：切换标签、重新呼出面板后，旧列表的换位不该让新列表里的删除跳过颗粒，
+        // 新列表报上来的位置也不是一次滑动（否则颗粒会从卡片在旧列表里的位置出现）。
+        // 要换位的地方都是先停掉、再调用 `reorderAnimation()`，会重新记下时间。
+        reorderStart = nil
+        lastSlideAnimation = -.infinity
         view.cancelAll()
     }
 

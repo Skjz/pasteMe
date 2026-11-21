@@ -3,7 +3,7 @@ import Testing
 @testable import PasteMeApp
 import PasteMeCore
 
-/// 面板上的 Pinboard：标签、固定、⌘P、拿掉和撤销、拖动排序、拖到标签上、在历史里查看、按 Pinboard 筛选（#9）。
+/// 面板上的 Pinboard：标签、固定、拿掉和撤销、拖动排序、拖到标签上、在历史里查看、按 Pinboard 筛选（#9）。
 @MainActor
 @Suite final class PinboardModelTests {
     let suiteName = "PasteMeTests.PinboardModel.\(UUID().uuidString)"
@@ -72,31 +72,12 @@ import PasteMeCore
         #expect(ids == [b])
     }
 
-    @Test func commandPPinsToTheLastUsedPinboardAndRemembersIt() throws {
+    @Test func pinningSaysWhereTheEntryWent() {
         model.selectedID = c
         model.pin(to: code)
         #expect(notices.last == "已固定到「代码」")
-        #expect(settings.lastPinboardID == code.id)
-
-        model.selectedID = a
-        model.pinToRecentPinboard()
-        #expect(try store.items(matching: ClipQuery(pinboardID: code.id)).map(\.id) == [a, c])
-
-        model.pinToRecentPinboard()
+        model.pin(to: code)
         #expect(notices.last == "已经在「代码」里了")
-        // 重启后还记得。
-        #expect(HistoryModel(store: store, settings: settings).pinboardID == nil)
-        #expect(settings.lastPinboardID == code.id)
-    }
-
-    @Test func commandPWithoutPinboardsAsksForANewOne() throws {
-        try store.deletePinboard(work.id)
-        try store.deletePinboard(code.id)
-        model.didShow()
-
-        model.pinToRecentPinboard()
-
-        #expect(editRequests == [.create(pinning: model.items.first)])
     }
 
     @Test func creatingAPinboardCanPinTheEntryRightAway() throws {

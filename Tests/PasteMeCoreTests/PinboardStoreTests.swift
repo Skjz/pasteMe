@@ -85,7 +85,7 @@ import Testing
         try store.pin(a, to: board.id)
         try store.pin(b, to: board.id)
         try store.setOrder([a, b], inPinboard: board.id)
-        #expect(try store.pinnedCount() == 2)
+        #expect(try store.keptCount() == 2)
 
         try store.clearHistory()
 

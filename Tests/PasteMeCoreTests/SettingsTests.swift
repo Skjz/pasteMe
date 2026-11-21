@@ -67,19 +67,13 @@ import Testing
         let settings = Settings(defaults: defaults)
         #expect(!settings.pasteImagesAsFiles)
         #expect(settings.linkPreviewMode == .off)
-        #expect(settings.lastPinboardID == nil)
     }
 
     @Test func newSwitchesPersist() {
         Settings(defaults: defaults).pasteImagesAsFiles = true
         Settings(defaults: defaults).linkPreviewMode = .siteIcon
-        Settings(defaults: defaults).lastPinboardID = 3
         #expect(Settings(defaults: defaults).pasteImagesAsFiles)
         #expect(Settings(defaults: defaults).linkPreviewMode == .siteIcon)
-        #expect(Settings(defaults: defaults).lastPinboardID == 3)
-
-        Settings(defaults: defaults).lastPinboardID = nil
-        #expect(Settings(defaults: defaults).lastPinboardID == nil)
     }
 
     @Test func unknownLinkPreviewModeFallsBackToOff() {

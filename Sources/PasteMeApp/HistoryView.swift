@@ -17,6 +17,14 @@ struct HistoryView: View {
     /// 只给前几张卡片做依次出现的动画，屏幕外的卡片直接显示。
     private static let staggeredCards = 8
     nonisolated static let cardSpacing: CGFloat = 18
+    /// 每张卡片左边、卡片列表上边多留出的地方，放压在卡片左上角的置顶图钉（#77）。
+    /// 点击只送到卡片列表自己的范围里：第一张卡片的图钉伸出左边的那一半落在滚动区域的留白里，选中的卡片放大后
+    /// 图钉伸出卡片原来的上边约 16.5 点，超出了原来上面留的 10 点，不留地方就点不到（在真实应用里点过）。
+    /// 左边留在每一项里而不是整个列表上：`scrollTo` 按整项对齐留白，卡片离面板边缘仍是 `sideMargin`。
+    /// 项与项的间距、左边的留白和滚动区域的上边减掉同样多，卡片的位置不变。
+    nonisolated static let badgeRoom: CGFloat = 17
+    /// 卡片列表下边的留白。
+    private static let bottomRoom: CGFloat = 10
     /// 卡片列表左右两端的留白。选中的卡片放大、外面再套一圈光标后，离面板边缘仍有约 20 点。
     private static let sideMargin: CGFloat = 30
     /// 选中的卡片放大到的比例。
@@ -115,7 +123,7 @@ struct HistoryView: View {
         case .cards:
             let remove = model.pinboardID == nil ? "⌘⌫ 删除" : "⌘⌫ 移出   拖动排序"
             let tab = model.tabShortcutHint.map { "   \($0)" } ?? ""
-            return "空格 预览   ↩ 粘贴   ⌘P 固定   \(remove)   ⌘Z 撤销\(tab)"
+            return "空格 预览   ↩ 粘贴   ⌘P 置顶   \(remove)   ⌘Z 撤销\(tab)"
         }
     }
 
@@ -125,7 +133,7 @@ struct HistoryView: View {
                 .font(.system(size: 36))
             if model.searchIsEmpty, let pinboard = model.currentPinboard {
                 Text("「\(pinboard.name)」里还没有条目")
-                Text("在历史里选中卡片按 ⌘P，或者把卡片拖到这个标签上")
+                Text("在卡片的右键菜单里选「固定到」，或者把卡片拖到这个标签上")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             } else if model.searchIsEmpty {
@@ -147,19 +155,22 @@ struct HistoryView: View {
             // 没按住 ⌘ 时不读滚动位置，滚动时卡片列表不用重新计算。
             let firstShortcut = model.showsShortcutHints ? model.firstShortcutIndex : nil
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: Self.cardSpacing) {
+                LazyHStack(spacing: Self.cardSpacing - Self.badgeRoom) {
                     ForEach(Array(model.cards.enumerated()), id: \.element.id) { position, card in
                         cardView(card, position: position, searchText: searchText, firstShortcut: firstShortcut)
+                            .padding(.leading, Self.badgeRoom)
                             .transition(Self.cardTransition)
                             .id(card.id)
                     }
                 }
-                .padding(.vertical, 10)
-                // 卡片在滚动区域里竖直居中，光标也竖直居中，只按序号算横向位置。
+                .padding(.top, Self.badgeRoom)
+                .padding(.bottom, Self.bottomRoom)
+                // 卡片在卡片列表里竖直居中（列表可能比卡片高一点），光标也竖直居中，再补上上下留白不一样多的差；
+                // 不能从顶上按固定距离放，那样会比卡片高几点。横向按序号算位置。
                 .overlay(alignment: .leading) { cursor }
                 // ⌘1…⌘9 从第一张完整显示的卡片数起（#39）。滚动时每帧只算出一个序号，跨过一张卡片时才告诉模型。
                 .onGeometryChange(for: Int.self) { geometry in
-                    Self.firstFullyVisibleCard(contentMinX: geometry.frame(in: .named(Self.scrollSpace)).minX)
+                    Self.firstFullyVisibleCard(contentMinX: geometry.frame(in: .named(Self.scrollSpace)).minX + Self.badgeRoom)
                 } action: { first in
                     model.firstVisibleCard = first
                     if scrolledPastFirst != (first > 0) { scrolledPastFirst = first > 0 }
@@ -170,9 +181,17 @@ struct HistoryView: View {
             .scrollClipDisabled()
             // 左右留白用 contentMargins 而不是 padding：滚动到某张卡片时，scrollTo 也会留出这段距离，
             // 卡片不会贴着面板边缘。
-            .contentMargins(.horizontal, Self.sideMargin, for: .scrollContent)
+            .contentMargins(.leading, Self.sideMargin - Self.badgeRoom, for: .scrollContent)
+            .contentMargins(.trailing, Self.sideMargin, for: .scrollContent)
+            // 卡片上面原来留 10 点，现在留 `badgeRoom`：滚动区域往上伸出多出来的部分，卡片不往下移。
+            .padding(.top, 10 - Self.badgeRoom)
             .onChange(of: model.selectedID) { _, id in
                 guard let id else { return }
+                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
+            }
+            // 选中的卡片置顶或取消置顶后换了位置（#77），选中项没变，上面的不会触发。
+            .onChange(of: model.revealSelectionCount) {
+                guard let id = model.selectedID else { return }
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
             }
             // 呼出面板时从最前面开始显示：上次可能用触控板滚到了后面，而选中项还是第一张，上面的 scrollTo 不会触发。
@@ -238,6 +257,21 @@ struct HistoryView: View {
             // 在 Pinboard 里拖到别的卡片上时换位置。
             .onDrop(of: [.item], delegate: ReorderDropDelegate(item: item, model: model))
             .contextMenu { CardContextMenu(item: item, model: model) }
+            // 置顶按钮（#77）放在点击、拖动手势和右键菜单的外面：点它只切换置顶，不选中、不粘贴、不拖走卡片。
+            // 所以卡片自己的放大和依次出现的动画要在这里再做一遍，按钮才跟着卡片动。
+            .overlay {
+                PinToTopBadge(item: item, model: model, enabled: !card.isGap && !editingTitle)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .scaleEffect(scale(selected: selected))
+                    .animation(SpringCurve.selection.animation, value: selected)
+                    .opacity(visible ? 1 : 0)
+                    .modifier(StaggeredAppearance(
+                        index: position,
+                        revealed: cardsRevealed || position >= Self.staggeredCards,
+                        reduceMotion: reduceMotion
+                    ))
+            }
+            .onHover { inside in model.cardHovered(item.id, inside) }
     }
 
     private func scale(selected: Bool) -> CGFloat {
@@ -260,8 +294,10 @@ struct HistoryView: View {
                 animating: model.isPanelVisible && !reduceMotion
             )
             .frame(width: size.width + outset * 2, height: size.height + outset * 2)
+            // 光标画在卡片上面，会压住选中卡片左上角的置顶图钉（#77）：在图钉周围断开一段。
+            .mask { CursorBadgeGap(item: item, model: model, center: CGPoint(x: outset, y: outset)) }
             .scaleEffect(scale(selected: true))
-            .offset(x: CGFloat(index) * (size.width + Self.cardSpacing) - outset)
+            .offset(x: Self.badgeRoom + CGFloat(index) * (size.width + Self.cardSpacing) - outset, y: (Self.badgeRoom - Self.bottomRoom) / 2)
             // 卡片补位或让位时（这次变化带着动画），光标跟着卡片用同一个动画，一起滑动；
             // 平时（方向键、点击）用光标自己的弹簧。
             .transaction(value: index) { transaction in
@@ -320,6 +356,8 @@ private struct CardContextMenu: View {
                 .disabled(reason != nil)
             }
         }
+        Button(item.pinnedToTopAt == nil ? "置顶" : "取消置顶") { model.setPinnedToTop(item.pinnedToTopAt == nil, item) }
+            .keyboardShortcut("p", modifiers: .command)
         Menu("固定到") {
             ForEach(model.pinboards) { pinboard in
                 Toggle(pinboard.name, isOn: Binding(
@@ -448,6 +486,98 @@ private struct ReorderDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         true
+    }
+}
+
+/// 卡片左上角的置顶按钮（#77）：置顶的卡片一直显示，点它取消；没置顶的卡片在鼠标移进来时才出现，点它置顶。
+///
+/// 按钮的中心在卡片的左上角，大半伸到卡片外面，不挡标题。只读鼠标在哪张卡片、哪个按钮上（`showsPinButton`），
+/// 鼠标在卡片之间移动时只有这些小视图重新计算，卡片列表不用。不显示时整个按钮不在视图里，
+/// 每张卡片不用多带一层材质。
+private struct PinToTopBadge: View {
+    let item: ClipItem
+    let model: HistoryModel
+    /// 空位和正在编辑标题的卡片上不出现按钮，已经显示的标记也点不了。
+    let enabled: Bool
+
+    static let size: CGFloat = 20
+
+    /// 这张卡片上显示着图钉：置顶了，或者鼠标在卡片或按钮上。光标在图钉周围断开时也按它判断（`CursorBadgeGap`）。
+    static func isShowing(_ item: ClipItem, model: HistoryModel, enabled: Bool) -> Bool {
+        item.pinnedToTopAt != nil || (enabled && model.showsPinButton(for: item.id))
+    }
+
+    var body: some View {
+        let pinned = item.pinnedToTopAt != nil
+        let showing = Self.isShowing(item, model: model, enabled: enabled)
+        ZStack {
+            if showing {
+                button(pinned: pinned)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: showing)
+    }
+
+    private func button(pinned: Bool) -> some View {
+        Button {
+            model.setPinnedToTop(!pinned, item)
+        } label: {
+            Image(systemName: "pin.fill")
+                .font(.system(size: 9, weight: .bold))
+                .rotationEffect(.degrees(45))
+                .foregroundStyle(pinned ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                .frame(width: Self.size, height: Self.size)
+                .background(Circle().fill(pinned ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.regularMaterial)))
+                .overlay(Circle().strokeBorder(Color.primary.opacity(pinned ? 0 : 0.15), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.2), radius: 1.5, y: 0.5)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in model.pinButtonHovered(item.id, inside) }
+        .help(pinned ? "取消置顶" : "置顶：排在历史最前面，不进 Pinboard")
+        .offset(x: -Self.size / 2, y: -Self.size / 2)
+        .allowsHitTesting(enabled)
+    }
+}
+
+/// 光标的遮罩：选中的卡片显示着置顶图钉时，在图钉周围挖掉一个圆，光标在那里断开，图钉不被盖住。
+/// 单独做成一个视图：它读鼠标在哪张卡片上，鼠标移动时只有它重新计算，卡片列表不用。
+/// 光标和图钉都按卡片的中心放大，所以在光标自己的坐标里，图钉的中心总是 `center`（卡片的左上角）。
+/// 挖洞用奇偶填充的路径（`CursorGapShape`），不用 `blendMode(.destinationOut)`：后者在截图里挖出的圆大了一倍、位置也偏了。
+private struct CursorBadgeGap: View {
+    let item: ClipItem
+    let model: HistoryModel
+    let center: CGPoint
+
+    /// 图钉的半径再加上和光标之间的空隙。
+    static let radius = PinToTopBadge.size / 2 + 2.5
+
+    var body: some View {
+        let showing = PinToTopBadge.isShowing(item, model: model, enabled: model.titleEditingID != item.id)
+        CursorGapShape(center: center, radius: showing ? Self.radius : 0)
+            .fill(style: FillStyle(eoFill: true))
+            .animation(.easeOut(duration: 0.12), value: showing)
+    }
+}
+
+/// 比自己大一圈的矩形减去一个圆。矩形伸出 `glowReach`：光标的光晕伸在光标外面，遮罩要盖住它，否则光晕会被切掉。
+private struct CursorGapShape: Shape {
+    var center: CGPoint
+    var radius: CGFloat
+    static let glowReach: CGFloat = 60
+
+    var animatableData: CGFloat {
+        get { radius }
+        set { radius = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path(rect.insetBy(dx: -Self.glowReach, dy: -Self.glowReach))
+        if radius > 0 {
+            path.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+        }
+        return path
     }
 }
 

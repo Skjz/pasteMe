@@ -32,6 +32,10 @@ final class PanelSimulator {
     let dust = CardDust()
     private(set) var clock: CFTimeInterval = 1000
     private(set) var problems: [String] = []
+    /// 置顶、取消置顶后卡片换位置的动画什么时候播完（#77）。被置顶的卡片要从别的卡片旁边滑过去，其余卡片往反方向让开，
+    /// 这时删掉一张，颗粒也免不了被滑过的卡片盖住一下。所以播完之前不检查卡片之间、卡片和颗粒的重叠；
+    /// 颗粒跟着卡片走、最后一切停在布局位置上照样检查。
+    private var reorderSettlesAt: CFTimeInterval = 0
 
     private var timers: [(fire: CFTimeInterval, action: @MainActor () -> Void)] = []
 
@@ -115,6 +119,7 @@ final class PanelSimulator {
     func deleteSelected() {
         model.delete()
         render(animated: false)
+        extendReorder()
     }
 
     /// 右键菜单删除第 `position` 格的卡片（空位不算）。
@@ -123,15 +128,35 @@ final class PanelSimulator {
         guard cards.indices.contains(position), !cards[position].isGap else { return }
         model.delete(cards[position].item)
         render(animated: false)
+        extendReorder()
     }
 
     func undo() {
         model.undoDelete()
         render(animated: false)
+        extendReorder()
+    }
+
+    /// 换位置的动画还没播完时又删除或撤销：卡片在穿过别的卡片的途中又开始一段滑动，要等这段也播完。
+    private func extendReorder() {
+        if clock < reorderSettlesAt { reorderSettlesAt = clock + SpringCurve.slide.settleTime }
     }
 
     func moveSelection(by offset: Int) {
         model.moveSelection(by: offset)
+        render(animated: false)
+    }
+
+    /// 右键菜单置顶或取消置顶第 `position` 格的卡片（空位不算，#77）。
+    func togglePinToTop(atPosition position: Int) {
+        let cards = model.cards
+        guard cards.indices.contains(position), !cards[position].isGap else { return }
+        let item = cards[position].item
+        let before = model.cards.map(\.id)
+        let revealsHidden = !model.hiddenIDs.isEmpty
+        model.setPinnedToTop(item.pinnedToTopAt == nil, item)
+        // 和模型一样：卡片要挪动（顺序变了，或者藏着的卡片要显示）才算换位；否则删除、撤销照常播颗粒。
+        if revealsHidden || model.cards.map(\.id) != before { reorderSettlesAt = clock + SpringCurve.slide.settleTime }
         render(animated: false)
     }
 
@@ -259,7 +284,8 @@ final class PanelSimulator {
         }
         let cards = model.cards
         let visible = cards.filter { !$0.isGap && !model.hiddenIDs.contains($0.id) }.map(\.id)
-        for (left, right) in zip(visible, visible.dropFirst()) {
+        let reordering = clock < reorderSettlesAt
+        for (left, right) in zip(visible, visible.dropFirst()) where !reordering {
             let overlap = visibleFrame(left).maxX - visibleFrame(right).minX
             if overlap > Self.overlapTolerance {
                 problems.append("t=\(time) 卡片 \(right) 撞进了卡片 \(left) \(Int(overlap)) 点")
@@ -275,7 +301,7 @@ final class PanelSimulator {
             if state.reverse, abs(state.scale - visibleScale(id)) > Self.scaleTolerance {
                 problems.append(String(format: "t=\(time) 卡片 \(id) 的颗粒放大 %.3f，卡片是 %.3f", state.scale, visibleScale(id)))
             }
-            for other in visible where other != id {
+            for other in visible where other != id && !reordering {
                 let overlap = min(state.frame.maxX, visibleFrame(other).maxX) - max(state.frame.minX, visibleFrame(other).minX)
                 if overlap > Self.overlapTolerance {
                     problems.append("t=\(time) 卡片 \(other) 盖住了卡片 \(id) 的颗粒 \(Int(overlap)) 点")

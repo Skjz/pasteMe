@@ -673,7 +673,7 @@ private struct HistoryPage: View {
             SettingsGroup {
                 SettingsRow(
                     title: "自动清除历史",
-                    detail: "定期清理超时未使用的条目，Pinboard 内的保留。"
+                    detail: "定期清理超时未使用的条目，Pinboard 内的和置顶的保留。"
                 ) {
                     Picker("自动清除历史", selection: Binding(get: { model.historyRetention }, set: model.chooseRetention)) {
                         ForEach(HistoryRetention.allCases, id: \.self) { retention in
@@ -685,7 +685,7 @@ private struct HistoryPage: View {
                     .fixedSize()
                 }
                 SettingsDivider()
-                SettingsRow(title: "清空历史", detail: "删除所有不在 Pinboard 里的条目。") {
+                SettingsRow(title: "清空历史", detail: "删除所有不在 Pinboard 里、也没有置顶的条目。") {
                     Button("清空…", role: .destructive) { model.requestClearHistory() }
                 }
             }
@@ -699,7 +699,7 @@ private struct HistoryPage: View {
             Button("取消", role: .cancel) { model.cancelRetention() }
         } message: { pending in
             let days = pending.retention.days ?? 0
-            Text("将立即删除 \(pending.count) 个超过 \(days) 天未使用的条目（Pinboard 内的保留），此后定期自动清理。此操作无法撤销。")
+            Text("将立即删除 \(pending.count) 个超过 \(days) 天未使用的条目（Pinboard 内的和置顶的保留），此后定期自动清理。此操作无法撤销。")
         }
         .alert(
             "清空剪贴板历史？",
@@ -711,7 +711,7 @@ private struct HistoryPage: View {
         } message: { pinned in
             Text(pinned == 0
                 ? "所有条目都会被删除。此操作无法撤销。"
-                : "固定在 Pinboard 里的 \(pinned) 个条目会保留，其他条目都会被删除。此操作无法撤销。")
+                : "固定在 Pinboard 里和置顶的 \(pinned) 个条目会保留，其他条目都会被删除。此操作无法撤销。")
         }
     }
 
