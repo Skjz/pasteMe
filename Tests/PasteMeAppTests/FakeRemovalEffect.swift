@@ -47,6 +47,13 @@ final class FakeRemovalEffect: CardRemovalEffect {
         return nil
     }
 
+    /// 测试设成 true，模拟置顶换位置的动画还在播放。
+    var isReordering = false
+
+    func reorderAnimation() -> Animation? {
+        slideAnimation()
+    }
+
     func cancelAll() {
         cancelCount += 1
         pendingDisappear = [:]

@@ -27,6 +27,16 @@ import Testing
         #expect(CardListClick.isBlank(CGPoint(x: 900, y: 305), cardFrames: cards, selected: nil))
     }
 
+    @Test func theHalfOfThePinBadgeOutsideTheCardIsNotBlank() {
+        // 图钉压在左上角，半径 10 点：伸出卡片左边、上边的部分。
+        #expect(!CardListClick.isBlank(CGPoint(x: 294, y: 54), cardFrames: cards, selected: cards[0]))
+        #expect(!CardListClick.isBlank(CGPoint(x: 282, y: 64), cardFrames: cards, selected: cards[0]))
+        // 选中的卡片放大了，图钉跟着它的角往外移约 6 点。
+        #expect(!CardListClick.isBlank(CGPoint(x: 28, y: 48), cardFrames: cards, selected: cards[0]))
+        // 离角远一点的空隙还是空白。
+        #expect(CardListClick.isBlank(CGPoint(x: 279, y: 80), cardFrames: cards, selected: cards[0]))
+    }
+
     @Test func aboveTheCardsIsNotTheCardList() {
         // 搜索栏那一行：不算卡片列表的空白，点了不关预览。
         #expect(!CardListClick.isBlank(CGPoint(x: 900, y: 20), cardFrames: cards, selected: nil))

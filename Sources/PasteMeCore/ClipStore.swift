@@ -107,6 +107,14 @@ public final class ClipStore {
                 PRAGMA user_version = 7;
                 """)
         }
+        if try db.userVersion < 8 {
+            // 置顶（#77）：置顶的时间，没置顶时为 NULL。历史按它、再按 created_at 排序。
+            try db.execute("""
+                ALTER TABLE clips ADD COLUMN pinned_top_at REAL;
+                CREATE INDEX clips_pinned_top ON clips (pinned_top_at DESC, created_at DESC);
+                PRAGMA user_version = 8;
+                """)
+        }
     }
 
     /// 在一个事务里执行，出错时回滚。
@@ -158,14 +166,15 @@ public final class ClipStore {
         return statement.int(0)
     }
 
-    /// 返回符合 `query` 的条目：按时间倒序；按 Pinboard 查询时按条目在 Pinboard 里的顺序。
+    /// 返回符合 `query` 的条目：置顶的在前（按置顶时间倒序），其余按时间倒序；
+    /// 按 Pinboard 查询时按条目在 Pinboard 里的顺序，不看置顶。
     public func items(matching query: ClipQuery = ClipQuery()) throws -> [ClipItem] {
         var sql = """
             SELECT clips.id, kind, substr(text, 1, \(Self.previewLength)), length(text), thumbnail,
                    source_bundle_id, source_name, created_at, substr(ocr_text, 1, \(Self.previewLength)),
                    title, link_title, link_icon,
                    (SELECT group_concat(pinboard_id) FROM pinboard_items WHERE clip_id = clips.id),
-                   text_subtype
+                   text_subtype, pinned_top_at
             """
         var values: [SQLValue] = []
         if let pinboardID = query.pinboardID {
@@ -178,7 +187,9 @@ public final class ClipStore {
             sql += " WHERE " + filter.clause
             values += filter.values
         }
-        sql += " ORDER BY " + (query.pinboardID == nil ? "" : "pin.sort_order, ") + "created_at DESC, clips.id DESC LIMIT ?"
+        // SQLite 里 NULL 最小，DESC 时排在最后，所以没置顶的条目在置顶的后面。
+        sql += " ORDER BY " + (query.pinboardID == nil ? "pinned_top_at DESC, " : "pin.sort_order, ")
+            + "created_at DESC, clips.id DESC LIMIT ?"
         values.append(.int(Int64(query.limit)))
 
         let statement = try db.prepare(sql, values)
@@ -200,8 +211,9 @@ public final class ClipStore {
                 linkTitle: statement.text(10),
                 linkIcon: statement.blob(11),
                 pinboardIDs: Set(pins),
-                pinOrder: statement.isNull(14) ? nil : statement.int(14),
-                textSubtype: statement.text(13).flatMap(TextSubtype.init(rawValue:))
+                pinOrder: statement.isNull(15) ? nil : statement.int(15),
+                textSubtype: statement.text(13).flatMap(TextSubtype.init(rawValue:)),
+                pinnedToTopAt: statement.isNull(14) ? nil : Date(timeIntervalSince1970: statement.double(14))
             ))
         }
         return items
@@ -212,12 +224,14 @@ public final class ClipStore {
         try items(matching: ClipQuery(ids: [id], limit: 1)).first
     }
 
-    /// 条目在历史里排第几（从 0 开始）：比它新的条目有多少条。不存在时为 nil。
+    /// 条目在历史里排第几（从 0 开始）：按 `items(matching:)` 的顺序排在它前面的有多少条。不存在时为 nil。
     public func historyPosition(of id: Int64) throws -> Int? {
+        // 没置顶的当成 -1，比任何置顶时间都早，和 ORDER BY 里 NULL 排在最后一致。
         let statement = try db.prepare(
             """
-            SELECT count(*) FROM clips, (SELECT created_at AS t FROM clips WHERE id = ?) AS target
-            WHERE created_at > target.t OR (created_at = target.t AND id > ?)
+            SELECT count(*) FROM clips,
+                (SELECT coalesce(pinned_top_at, -1) AS p, created_at AS t FROM clips WHERE id = ?) AS target
+            WHERE (coalesce(pinned_top_at, -1), created_at, id) > (target.p, target.t, ?)
             """,
             [.int(id), .int(id)]
         )
@@ -232,6 +246,18 @@ public final class ClipStore {
             return nil
         }
         return ClipContent(kind: kind, text: statement.text(1), rtf: statement.blob(2), image: statement.blob(3))
+    }
+
+    /// 置顶或取消置顶（#77）。已经置顶的再置顶一次不改置顶时间。条目不在 Pinboard 里也不会被放进去。
+    public func setPinnedToTop(_ pinned: Bool, id: Int64, at date: Date = Date()) throws {
+        if pinned {
+            try db.run(
+                "UPDATE clips SET pinned_top_at = coalesce(pinned_top_at, ?) WHERE id = ?",
+                [.double(date.timeIntervalSince1970), .int(id)]
+            )
+        } else {
+            try db.run("UPDATE clips SET pinned_top_at = NULL WHERE id = ?", [.int(id)])
+        }
     }
 
     /// 把记录移到最前面，例如从历史里粘贴之后。
@@ -302,7 +328,7 @@ public final class ClipStore {
     /// 改条目的文字（#10），只能改文本和链接。`rtf` 是改后的富文本，链接没有富文本。
     ///
     /// 改完的内容和另一个条目相同时合并成一条：留下正在改的这条，复制时间取两条中较新的，
-    /// 这条没有标题时用另一条的标题，另一条所在的 Pinboard 也加进来，然后删掉另一条。
+    /// 这条没有标题时用另一条的标题，另一条所在的 Pinboard 也加进来，另一条置顶了这条也置顶，然后删掉另一条。
     /// 链接改了网址后，原来的网页标题、图标和预览图都作废，可以重新获取。
     /// 返回 false 表示没有改：条目不存在、不是文本或链接，或者改后的文字是空的。
     @discardableResult
@@ -317,7 +343,7 @@ public final class ClipStore {
         let hash = edited.contentHash
         try transaction {
             let other = try db.prepare(
-                "SELECT id, created_at, title FROM clips WHERE content_hash = ? AND id != ?",
+                "SELECT id, created_at, title, pinned_top_at FROM clips WHERE content_hash = ? AND id != ?",
                 [.text(hash), .int(id)]
             )
             if try other.step() {
@@ -332,8 +358,16 @@ public final class ClipStore {
                 try db.run("DELETE FROM pinboard_items WHERE clip_id = ?", [.int(otherID)])
                 try db.run("DELETE FROM clips WHERE id = ?", [.int(otherID)])
                 try db.run(
-                    "UPDATE clips SET created_at = max(created_at, ?), title = coalesce(title, ?) WHERE id = ?",
-                    [.double(other.double(1)), other.text(2).sqlValue, .int(id)]
+                    """
+                    UPDATE clips SET created_at = max(created_at, ?), title = coalesce(title, ?),
+                        pinned_top_at = coalesce(min(pinned_top_at, ?), pinned_top_at, ?)
+                    WHERE id = ?
+                    """,
+                    [
+                        .double(other.double(1)), other.text(2).sqlValue,
+                        other.isNull(3) ? .null : .double(other.double(3)),
+                        other.isNull(3) ? .null : .double(other.double(3)), .int(id),
+                    ]
                 )
             }
             let urlChanged = current.kind == .link && current.text != edited.text
@@ -554,32 +588,37 @@ public final class ClipStore {
         }
     }
 
-    /// 固定在至少一个 Pinboard 里的条目数。
-    public func pinnedCount() throws -> Int {
-        let statement = try db.prepare("SELECT count(DISTINCT clip_id) FROM pinboard_items")
+    /// 清空历史时保留的条目数：固定在至少一个 Pinboard 里的，加上置顶的（#77），每条只算一次。
+    public func keptCount() throws -> Int {
+        let statement = try db.prepare(
+            "SELECT count(*) FROM clips WHERE pinned_top_at IS NOT NULL OR id IN (SELECT clip_id FROM pinboard_items)"
+        )
         _ = try statement.step()
         return Int(statement.int(0))
     }
 
     // MARK: - 清空
 
-    /// 清空历史：删除不在任何 Pinboard 里的条目。固定在 Pinboard 里的条目和 Pinboard 本身都保留。
+    /// 清空历史：删除不在任何 Pinboard 里、也没置顶的条目。固定在 Pinboard 里的条目、置顶的条目和 Pinboard 本身都保留。
     public func clearHistory() throws {
-        try db.run("DELETE FROM clips WHERE id NOT IN (SELECT clip_id FROM pinboard_items)")
+        try db.run("DELETE FROM clips WHERE pinned_top_at IS NULL AND id NOT IN (SELECT clip_id FROM pinboard_items)")
         try db.execute("VACUUM")
     }
 
-    /// 不在任何 Pinboard 里、最后一次使用早于 `date` 的条目数，自动清除前提示用（#34）。
+    /// 不在任何 Pinboard 里、没置顶、最后一次使用早于 `date` 的条目数，自动清除前提示用（#34）。
     public func unpinnedCount(before date: Date) throws -> Int {
         let statement = try db.prepare(
-            "SELECT count(*) FROM clips WHERE created_at < ? AND id NOT IN (SELECT clip_id FROM pinboard_items)",
+            """
+            SELECT count(*) FROM clips
+            WHERE created_at < ? AND pinned_top_at IS NULL AND id NOT IN (SELECT clip_id FROM pinboard_items)
+            """,
             [.double(date.timeIntervalSince1970)]
         )
         _ = try statement.step()
         return Int(statement.int(0))
     }
 
-    /// 自动清除（#34）：删除不在任何 Pinboard 里、最后一次使用早于 `date` 的条目，返回删除的条数。
+    /// 自动清除（#34）：删除不在任何 Pinboard 里、没置顶、最后一次使用早于 `date` 的条目，返回删除的条数。
     /// 最后一次使用就是 `created_at`：再次复制和从面板粘贴（`touch`）都会更新它，常用的条目不会被删。
     ///
     /// 和 `clearHistory` 不同，这里不做 VACUUM：每小时都可能运行，大的数据库 VACUUM 一次要好一会儿，
@@ -587,7 +626,10 @@ public final class ClipStore {
     @discardableResult
     public func deleteUnpinned(before date: Date) throws -> Int {
         try db.run(
-            "DELETE FROM clips WHERE created_at < ? AND id NOT IN (SELECT clip_id FROM pinboard_items)",
+            """
+            DELETE FROM clips
+            WHERE created_at < ? AND pinned_top_at IS NULL AND id NOT IN (SELECT clip_id FROM pinboard_items)
+            """,
             [.double(date.timeIntervalSince1970)]
         )
         return db.changes

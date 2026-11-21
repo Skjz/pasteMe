@@ -60,10 +60,20 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 - 查询：`ClipQuery.pinboardID` 是标签，`ClipStore.items(matching:)` 这时 JOIN `pinboard_items`、按位置排序，`ClipItem.pinOrder` 带着位置；`ClipQuery.inPinboards` 是筛选，只限定条目、不改排序。`HistoryModel.comesBefore` 按 `pinOrder` 排空位，所以删除动画在 Pinboard 里也把空位放回原来的格子（`DeleteAnimationScenarioTests` 里有 Pinboard 的场景和随机序列）。
 - 删除：「历史」里 ⌘⌫ 删除条目，也从所有 Pinboard 里去掉；Pinboard 里 ⌘⌫ 只是移出（`ClipStore.unpin`）。两种都进 `HistoryModel.removals`，⌘Z 用 `restore` / `restorePin` 放回原来的位置。切换标签时撤销记录清空：撤销放回的卡片要在当前列表里才能播放聚拢的动画。
 - `ClipStore.delete(id:)` 把整行按列名存进 `DeletedClip`，连同它在各个 Pinboard 里的位置，`restore` 原样插回去。以后给 `clips` 加列，撤销删除不用改。
-- 清空历史（`ClipStore.clearHistory()`）只删除不在任何 Pinboard 里的条目。
-- 自动清除（#34，`Settings.historyRetention`）：`AppDelegate.clearOldHistory` 在启动 3 秒后和之后每小时（和 `TemporaryFiles.removeExpired` 用同一个定时器）调用 `ClipStore.deleteUnpinned(before:)`，删除不在 Pinboard 里、`created_at` 早于期限的条目；`created_at` 在再次复制和粘贴时更新，所以按的是最后一次使用。面板开着时跳过这一次。不做 VACUUM，免得大数据库每小时卡一下。换成更短的期限、马上会删条目时，先用 `unpinnedCount(before:)` 数出来、弹窗确认。
-- 标签：`HistoryModel.pinboardID` 为 nil 是「历史」，每次呼出面板回到「历史」。`PanelShortcutAction`（默认 ⌘← ⌘→，可在设置里录制，#69）和面板开着时的 ⇧⌘V（`PanelController.toggle`，默认循环切换，没有 Pinboard 或 `Settings.panelRepeatAction == .hidePanel` 时收起，#70）切换标签。⌘P 固定到 `Settings.lastPinboardID`，没有 Pinboard 时请求新建。
+- 清空历史（`ClipStore.clearHistory()`）只删除不在任何 Pinboard 里、也没置顶的条目，确认框里的保留条数是 `keptCount()`。
+- 自动清除（#34，`Settings.historyRetention`）：`AppDelegate.clearOldHistory` 在启动 3 秒后和之后每小时（和 `TemporaryFiles.removeExpired` 用同一个定时器）调用 `ClipStore.deleteUnpinned(before:)`，删除不在 Pinboard 里、没置顶、`created_at` 早于期限的条目；`created_at` 在再次复制和粘贴时更新，所以按的是最后一次使用。面板开着时跳过这一次。不做 VACUUM，免得大数据库每小时卡一下。换成更短的期限、马上会删条目时，先用 `unpinnedCount(before:)` 数出来、弹窗确认。
+- 标签：`HistoryModel.pinboardID` 为 nil 是「历史」，每次呼出面板回到「历史」。`PanelShortcutAction`（默认 ⌘← ⌘→，可在设置里录制，#69）和面板开着时的 ⇧⌘V（`PanelController.toggle`，默认循环切换，没有 Pinboard 或 `Settings.panelRepeatAction == .hidePanel` 时收起，#70）切换标签。固定到 Pinboard 只能用右键菜单「固定到」和拖到标签上，⌘P 是置顶（见下一节）。
 - 新建、重命名、删除确认都在 `PinboardEditorController` 的小窗口里（见下一节），不用系统提示框：`NSAlert` 要激活 PasteMe，目标应用就不在前台了，关掉面板后 ⌘V 会落空。
+
+## 置顶
+
+- 置顶（#77）不是 Pinboard：`clips.pinned_top_at`（第 8 级迁移）记置顶的时间，没置顶时为 NULL。`ClipStore.items(matching:)` 不按 Pinboard 查询时按 `pinned_top_at DESC, created_at DESC, id DESC` 排序（NULL 在 DESC 下排最后），索引 `clips_pinned_top` 和它对得上；按 Pinboard 查询时只按 Pinboard 里的位置。`historyPosition(of:)` 和 `HistoryModel.comesBefore` 要和这个顺序一致，否则「在历史里查看」读的条数不够，删除置顶卡片时空位会插错地方。
+- 再置顶一次不改时间（`coalesce`），再次复制、粘贴（`touch`）只改 `created_at`，不取消置顶。编辑后和另一条合并时，两条里有一条置顶，留下的就置顶。撤销删除时整行按列名放回，置顶跟着回来。
+- 面板上三个入口都走 `HistoryModel.setPinnedToTop`：⌘P（`togglePinToTop`，作用于选中项）、右键菜单、卡片左上角的 `PinToTopBadge`。卡片移动用 `slideAnimation()`；选中的卡片挪了位置、选中项没变时 `revealSelectionCount` 加一，`HistoryView` 据此滚过去。在 Pinboard 里顺序不变，用 Toast 说一声。
+- `PinToTopBadge` 叠在卡片的点击、拖动手势和右键菜单外面：放在里面的话，`simultaneousGesture` 的单击会把卡片选中、双击会粘贴。代价是卡片的放大和依次出现的动画要在叠层上再做一遍。没置顶的卡片在鼠标移进来时才显示按钮：卡片的 `onHover` 写 `HistoryModel.hoveredCardID`，按钮自己的 `onHover` 写 `hoveredPinButtonID`（按钮大半伸在卡片外面，鼠标移到那里时卡片收到移出），只有按钮读这两个值，鼠标移动时卡片列表不重新计算。不显示时按钮不在视图里。点按钮不粘贴、不改选中项没有自动测试：在测试窗口里用 `sendEvent` 合成的点击连对照（点卡片中间选中它）都送不到，要在真实应用里点。
+- 点击只送到卡片列表（`LazyHStack`）自己的范围里，`scrollClipDisabled` 只管画不管点：第一张卡片的图钉伸出左边的那一半落在滚动区域的留白里，选中的卡片放大后图钉伸出卡片原来的上边约 16.5 点。所以每张卡片左边、卡片列表上边多留 `HistoryView.badgeRoom`（17 点），项与项的间距、左边的留白（`contentMargins`）和滚动区域的上边减掉同样多，光标的位置和 `firstFullyVisibleCard` 也加上它，卡片的位置不变（改这里时用截图模式前后逐像素对比）。左边留在每一项里而不是整个列表上：`scrollTo` 按整项对齐留白，滚回最前面或往左选时卡片离面板边缘仍是 30 点（`SwiftUIAssumptionTests.scrollingReportsTheFirstFullyVisibleCard`）。预览开着时点图钉伸出卡片外的部分不算点了空白处（`CardListClick.badgeRadius`）。
+- 在真实应用里点图钉时，计算机操作工具的截图坐标是按屏幕缩放过的，一个像素不是一个点：先用卡片间距（248 点）换算出比例，再放大截图找准图钉中心。按点算的偏移直接当像素用，测试点会落在图钉外面，看起来像是点不到。每次点击前先移过去停一下，再用临时日志（写文件）确认点击落在按钮上还是卡片上。
+- 和删除动画：置顶要挪动卡片，被置顶的卡片会从别的卡片旁边滑过去。颗粒还在播放时 `setPinnedToTop` 先停掉它们、去掉空位（撤销记录留着），再用 `CardRemovalEffect.reorderAnimation()` 换位置；换位置的动画播完之前（`isReordering`，`SpringCurve.slide.settleTime` 约 0.8 秒）删除和撤销不播放颗粒，和「减少动态效果」时一样直接补上或出现。`DeleteAnimationScenarioTests.randomSequencesWithPinToTop` 把置顶穿插进随机序列；`PanelSimulator` 在换位置的动画期间不查卡片之间、卡片和颗粒的重叠，颗粒跟着卡片走和最后停在布局位置上照样查。
 
 ## 预览和附属窗口
 
@@ -143,7 +153,7 @@ ADR 0002 规划的模块里，只有 `MCPServer`（`PasteMeMCP` target）还没�
 
 **规则**（每一条都对应过一个真实的显示问题）
 
-- **空位**：条目在 `delete()` 里马上从 `items` 去掉，选中项、⌘1…⌘9 和接下来的按键都按新列表算；屏幕上由 `HistoryModel.cards` 在原来的地方插一个空位。空位按被删条目的复制时间排进列表（和 `ClipStore` 的顺序一样），不记「第几格」：中间又删掉或放回别的卡片时格数会过时，卡片会换位置。不能改用「列表立即变化、动画推迟开始」：推迟期间 SwiftUI 报告的已经是新位置，连续删除时颗粒会出现在错误的地方。
+- **空位**：条目在 `delete()` 里马上从 `items` 去掉，选中项、⌘1…⌘9 和接下来的按键都按新列表算；屏幕上由 `HistoryModel.cards` 在原来的地方插一个空位。空位按被删条目的置顶时间和复制时间排进列表（和 `ClipStore` 的顺序一样），不记「第几格」：中间又删掉或放回别的卡片时格数会过时，卡片会换位置。不能改用「列表立即变化、动画推迟开始」：推迟期间 SwiftUI 报告的已经是新位置，连续删除时颗粒会出现在错误的地方。
 - 卡片变成空位时还是同一个视图，只是透明、不接收点击（`HistoryView.cardView`）。换成另一种视图的话，正在播放选中动画的卡片会被多留一会儿，后面的卡片被挤开一格。透明度要放在 `.animation(_:value: selected)` 外面，否则删除选中的卡片时它会跟着选中的弹簧慢慢变淡。空位去掉时要立即移除（`HistoryView.cardTransition`），之后撤销放回同一个条目时才是新视图。
 - **一次改完**：删除和撤销对视图可见的状态（`items`、`gaps`、`hiddenIDs`、`selectedID`）要在同一个 `animate` 里改。SwiftUI 进入 `withAnimation` 前会先渲染之前的改动；先加空位、再在里面重新查询的话，中间有一帧同一个条目出现两次。
 - **颗粒播放时卡片不动**：颗粒画在所有卡片上面，卡片滑进它的范围就会和深色颗粒混成一片碎块。所以空位要等所有消失动画和撤销时的出现动画都播完，才一起去掉。撤销时颗粒要等卡片的位置上现在和接下来都没有别的卡片挡着才开始聚拢（`CardDust.tryToStart`，沿着别的卡片剩下的滑动轨迹逐帧检查，因为滑到一半改了终点的卡片会带着速度冲过头）；回到自己空位时一般马上开始。撤销后还在等着开始聚拢的卡片又被删除：原来的颗粒还在飘就让它接着飘完、照常留空位，已经飘完就当这张卡片没出现过。
@@ -215,7 +225,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 - **筛选的来源**：面板上的按钮和菜单改 `HistoryModel.filters`（`PanelFilters`）；搜索框里的 `type:`、`app:` 由 `ClipQuery.parse` 解析，不回写到按钮上。搜索框末尾的 `@词`（`FilterMention`）弹出候选列表（`HistoryModel.suggestions`：`ClipKind.matching`、名字包含这段文字的 Pinboard，再加上 `AppNames.apps(matching:)`），选中后从搜索框里去掉这个词、写进 `filters`，所以显示在按钮上。有候选项时这个词不参与搜索；没有候选项或按 esc 关掉列表后，它按普通文字搜索。`HistoryModel.currentQuery` 把两者合起来，类型取交集（`ClipQuery.kinds` 为空集合时什么都不返回）。`query` 和 `filters` 改动后立即重新查询；`didShow` 一次清空两者，只查询一次，因为它在呼出动画的第一帧之前运行。
 - **来源应用菜单**：用 AppKit 的 `NSMenu`，点开时才调用 `ClipStore.sourceApps()`，不在呼出面板时查询。
 - **按应用的其他名字搜索**：条目只记了复制时的应用名（中文系统下是「访达」）。`HistoryModel.currentQuery` 最后调用 `ClipQuery.resolvingAppNames`，由 `AppNames` 找出名字、其他语言的名字（`AppBundleNames`，只读用户语言和英文）或应用别名（`Settings.appAliases`）包含搜索文字的应用，SQL 里加 `OR source_bundle_id IN (…)`。从应用包读名字一个应用要一两毫秒，所以启动 3 秒后 `AppNames.prefetch()` 在后台读完历史里的应用；应用列表在每次呼出面板时（`historyChanged()`）作废，第一次搜索时重新查。别名在设置窗口的「应用别名」页（`AppAliasesModel`）里编辑，输入时就保存，不需要通知 `AppNames`。
-- **数据库迁移**：`ClipStore.migrate()` 按 `user_version` 逐级升级，每一级一个 `if` 块，最后设新的版本号。改表结构时加一级，并在 `ClipStoreMigrationTests` 里用上一版的表结构建库，确认旧数据还在。现在是第 7 级：4 加标题，5 加链接预览，6 加 Pinboard，7 加文本子类型。外键在每次打开数据库时用 `PRAGMA foreign_keys = ON` 打开，但删除条目和 Pinboard 时仍然显式删掉 `pinboard_items` 里的行，不只靠级联。
+- **数据库迁移**：`ClipStore.migrate()` 按 `user_version` 逐级升级，每一级一个 `if` 块，最后设新的版本号。改表结构时加一级，并在 `ClipStoreMigrationTests` 里用上一版的表结构建库，确认旧数据还在。现在是第 8 级：4 加标题，5 加链接预览，6 加 Pinboard，7 加文本子类型，8 加置顶。外键在每次打开数据库时用 `PRAGMA foreign_keys = ON` 打开，但删除条目和 Pinboard 时仍然显式删掉 `pinboard_items` 里的行，不只靠级联。
 - **设置项**：所有开关都定义在 `Settings` 上，键名放在 `Settings.Key` 里。每个开关都写默认值测试和读写测试，参照 `SettingsTests`。
 - **设置窗口**：开关的界面都在设置窗口里，菜单栏菜单只放打开历史、暂停记录、Paste Stack 这类操作。`SettingsModel` 读写 `Settings`，应用里要跟着变的地方（面板的 `sharingType`、`HistoryModel.cursorStyle` 等）通过它的 `on…` 回调通知，由 `AppDelegate.makeSettingsModel` 接上；会删条目的操作（换成更短的自动清除期限、清空历史）先放进 `pending…`，视图弹出确认后才执行。各页的视图在 `SettingsWindow.swift`，新开关加在对应的页里，在 `SettingsWindowTests` 里测读写和回调。窗口大小固定（`SettingsWindow.size`），侧栏自己画，不用 `NavigationSplitView`（原因见 `SettingsView` 的注释）。离屏检查排版可以在测试里用 `cacheDisplay` 画窗口的 `contentView?.superview`，但画不出材质；DEBUG 构建里 `PASTEME_SHOW_SETTINGS=<页>`（`SettingsModel.Page` 的 rawValue）启动后直接打开设置窗口，点不了菜单栏图标时用它在真实屏幕上看。
 

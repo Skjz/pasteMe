@@ -201,7 +201,7 @@ import Testing
             PanelKey(keyCode: code, command: true, characters: character)
         }
         for context in [Self.onCards, Self.searching] {
-            #expect(action(command(kVK_ANSI_P, "p"), context) == .run(.pinSelected))
+            #expect(action(command(kVK_ANSI_P, "p"), context) == .run(.togglePinToTop))
             #expect(action(command(kVK_ANSI_N, "n"), context) == .run(.newText))
             #expect(action(command(kVK_ANSI_E, "e"), context) == .run(.editSelected))
             #expect(action(command(kVK_ANSI_J, "j"), context) == .run(.showInHistory))

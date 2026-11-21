@@ -10,6 +10,11 @@ protocol CardRemovalEffect: AnyObject {
     /// 卡片要在这次变化里移动位置（补上空位，或者撤销删除时让位）：返回用的动画。
     /// 实现方据此知道紧接着的布局变化是这个动画，用来算出卡片滑到一半时的位置。
     func slideAnimation() -> Animation?
+    /// 卡片要因为置顶、取消置顶换位置（#77）：返回用的动画，和 `slideAnimation` 一样记下紧接着的布局变化。
+    /// 被置顶的卡片会从别的卡片旁边滑过去，别的卡片往反方向让开，播完之前 `isReordering` 为 true。
+    func reorderAnimation() -> Animation?
+    /// 置顶换位置的动画还在播放。这时删除不播放颗粒：颗粒要跟着卡片、不能被别的卡片盖住，而卡片正互相穿过。
+    var isReordering: Bool { get }
     /// 卡片将从列表里删除：开始播放它消失的动画，播完时调用 `completion`。`shortcut` 是卡片上现在显示的 ⌘n，
     /// 没有显示时为 nil。返回 false 表示没有播放（例如开启了「减少动态效果」），也不会调用 `completion`。
     func playDisappear(
@@ -157,6 +162,12 @@ final class HistoryModel {
     private(set) var shortcutKeysHeld = false
     /// 每次面板弹出时加一，视图据此同步焦点、重新播放卡片出现的动画。
     private(set) var showCount = 0
+    /// 选中的卡片换了位置、选中项没变时加一（置顶、取消置顶，#77），视图据此滚到它。
+    private(set) var revealSelectionCount = 0
+    /// 鼠标所在的卡片，显示置顶按钮用（#77）。只有置顶按钮读它，鼠标移动时卡片列表不重新计算。
+    private(set) var hoveredCardID: Int64?
+    /// 鼠标所在的置顶按钮。按钮有一大半伸在卡片外面，鼠标移到那里时卡片收到移出，按钮还要留着。
+    private(set) var hoveredPinButtonID: Int64?
     /// 撤销删除后、出现动画播完之前的卡片。视图不画它们，由动画代替。
     private(set) var hiddenIDs: Set<Int64> = []
     /// 删除后留下的空位（被删的条目）。空位按条目的复制时间排在 `cards` 里，所以总在被删卡片原来的地方，
@@ -219,9 +230,7 @@ final class HistoryModel {
     @ObservationIgnored private let store: ClipStore
     /// 开启时，面板里按 ⌘C 拷贝卡片也会把条目加进栈（#66）。
     @ObservationIgnored private let pasteStack: PasteStack?
-    /// 记住 ⌘P 用的 Pinboard。为 nil 时（测试）只在内存里记。
     @ObservationIgnored private let settings: PasteMeCore.Settings?
-    @ObservationIgnored private var lastPinboardID: Int64?
     @ObservationIgnored private let now: () -> Date
     /// 按应用的其他名字和别名找来源应用。为 nil 时只按记录时的应用名搜索。
     @ObservationIgnored private let appNames: AppNames?
@@ -257,10 +266,14 @@ final class HistoryModel {
         return cards
     }
 
-    /// 和 `ClipStore.items(matching:)` 一样的顺序：Pinboard 里按固定的位置，其余按复制时间从新到旧，
-    /// 同一时间时 id 大的在前。
+    /// 和 `ClipStore.items(matching:)` 一样的顺序：Pinboard 里按固定的位置；其余置顶的在前、按置顶时间从新到旧（#77），
+    /// 再按复制时间从新到旧，同一时间时 id 大的在前。
     private static func comesBefore(_ a: ClipItem, _ b: ClipItem) -> Bool {
-        if let x = a.pinOrder, let y = b.pinOrder, x != y { return x < y }
+        if let x = a.pinOrder, let y = b.pinOrder {
+            if x != y { return x < y }
+        } else if a.pinnedToTopAt != b.pinnedToTopAt {
+            return (a.pinnedToTopAt ?? .distantPast) > (b.pinnedToTopAt ?? .distantPast)
+        }
         return a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.id > b.id
     }
 
@@ -276,7 +289,6 @@ final class HistoryModel {
         self.appNames = appNames
         self.settings = settings
         self.pasteStack = pasteStack
-        self.lastPinboardID = settings?.lastPinboardID
         self.now = now
         if let settings {
             self.copyEditedToClipboard = settings.copyEditedToClipboard
@@ -472,6 +484,9 @@ final class HistoryModel {
         historyLimit = Self.defaultLimit
         draggingID = nil
         reorderPending = false
+        // 上次收起面板时鼠标可能停在卡片上，没收到移出。
+        hoveredCardID = nil
+        hoveredPinButtonID = nil
         forgetRemovals()
         // 上次打开面板后可能记录了新的来源应用。
         appNames?.historyChanged()
@@ -556,12 +571,11 @@ final class HistoryModel {
         showTab(tabs[((current + offset) % count + count) % count])
     }
 
-    /// 把条目（默认是选中的）固定到 Pinboard，并记下这个 Pinboard 给 ⌘P 用。
+    /// 把条目（默认是选中的）固定到 Pinboard。
     func pin(_ item: ClipItem? = nil, to pinboard: Pinboard) {
         guard let item = item ?? selectedItem else { return }
         do {
             let added = try store.pin(item.id, to: pinboard.id)
-            remember(pinboard)
             onNotice(added ? "已固定到「\(pinboard.name)」" : "已经在「\(pinboard.name)」里了", "pin")
         } catch {
             NSLog("PasteMe: 固定失败：\(error)")
@@ -586,19 +600,67 @@ final class HistoryModel {
         }
     }
 
-    /// ⌘P：固定到最近用过的 Pinboard。还没有 Pinboard 时先新建一个。
-    func pinToRecentPinboard() {
-        guard let item = selectedItem else { return }
-        if let pinboard = pinboards.first(where: { $0.id == lastPinboardID }) ?? pinboards.first {
-            pin(item, to: pinboard)
-        } else {
-            onEditPinboard(.create(pinning: item))
+    // MARK: - 置顶（#77）
+
+    /// 鼠标移进、移出一张卡片。移到相邻的卡片时，新卡片的「移进」可能先于旧卡片的「移出」到达，所以只清掉自己。
+    func cardHovered(_ id: Int64, _ inside: Bool) {
+        if inside {
+            hoveredCardID = id
+        } else if hoveredCardID == id {
+            hoveredCardID = nil
         }
     }
 
-    private func remember(_ pinboard: Pinboard) {
-        lastPinboardID = pinboard.id
-        settings?.lastPinboardID = pinboard.id
+    /// 鼠标移进、移出一张卡片的置顶按钮。
+    func pinButtonHovered(_ id: Int64, _ inside: Bool) {
+        if inside {
+            hoveredPinButtonID = id
+        } else if hoveredPinButtonID == id {
+            hoveredPinButtonID = nil
+        }
+    }
+
+    /// 这张卡片要显示置顶按钮：鼠标在卡片上或在按钮上。
+    func showsPinButton(for id: Int64) -> Bool {
+        hoveredCardID == id || hoveredPinButtonID == id
+    }
+
+    /// ⌘P：置顶或取消置顶选中的条目。
+    func togglePinToTop() {
+        guard let item = selectedItem else { return }
+        setPinnedToTop(item.pinnedToTopAt == nil, item)
+    }
+
+    /// 卡片上的图钉按钮、右键菜单和 ⌘P：置顶或取消置顶，不改选中项。
+    ///
+    /// 在「历史」里卡片移到最前面或回到按时间的位置，这就是反馈；选中的卡片挪了位置时视图滚过去。
+    /// 在 Pinboard 里顺序不变、看不出变化，所以说一声。
+    ///
+    /// 删除、撤销的颗粒还在播放时先停掉它们、去掉空位（撤销记录留着）：置顶要挪动卡片，
+    /// 而颗粒播放时卡片不能动（见「删除动画」）。
+    func setPinnedToTop(_ pinned: Bool, _ item: ClipItem) {
+        do {
+            try store.setPinnedToTop(pinned, id: item.id, at: now())
+        } catch {
+            NSLog("PasteMe: 置顶失败：\(error)")
+            return
+        }
+        if !gaps.isEmpty || !hiddenIDs.isEmpty {
+            removalEffect?.cancelAll()
+        }
+        animate(removalEffect?.reorderAnimation()) {
+            hiddenIDs = []
+            gaps = []
+            finishedGaps = []
+            reload()
+        }
+        // 卡片换了位置，鼠标已经不在它上面了，不会收到移出。
+        if hoveredCardID == item.id { hoveredCardID = nil }
+        if hoveredPinButtonID == item.id { hoveredPinButtonID = nil }
+        if item.id == selectedID { revealSelectionCount += 1 }
+        if pinboardID != nil {
+            onNotice(pinned ? "已置顶，在「历史」里排在最前面" : "已取消置顶", pinned ? "pin" : "pin.slash")
+        }
     }
 
     /// 新建 Pinboard，`item` 不为 nil 时把它固定进去。名字是空的时不建。
@@ -1116,7 +1178,8 @@ final class HistoryModel {
         guard let removal else { return }
         removals.append(removal)
 
-        let played = index.map { index in
+        // 置顶换位置的动画还在播放时不播放颗粒，和「减少动态效果」时一样直接补上。
+        let played = removalEffect?.isReordering == true ? false : index.map { index in
             removalEffect?.playDisappear(
                 item, shortcut: shortcutNumber(forItemAt: index), selected: item.id == selectedID,
                 searchText: currentQuery.text,
@@ -1180,7 +1243,8 @@ final class HistoryModel {
             selectedID = id
         }
         finishedGaps.remove(id)
-        let played = items.firstIndex { $0.id == id }.map { index in
+        // 置顶换位置的动画还在播放时卡片直接出现，和删除时一样。
+        let played = removalEffect?.isReordering == true ? false : items.firstIndex { $0.id == id }.map { index in
             removalEffect?.playAppear(
                 items[index], shortcut: shortcutNumber(forItemAt: index), searchText: currentQuery.text
             ) { [weak self] in

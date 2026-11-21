@@ -699,7 +699,7 @@ private struct HistoryPage: View {
             Button("取消", role: .cancel) { model.cancelRetention() }
         } message: { pending in
             let days = pending.retention.days ?? 0
-            Text("将立即删除 \(pending.count) 个超过 \(days) 天未使用的条目（Pinboard 内的保留），此后定期自动清理。此操作无法撤销。")
+            Text("将立即删除 \(pending.count) 个超过 \(days) 天未使用的条目（Pinboard 内的和置顶的保留），此后定期自动清理。此操作无法撤销。")
         }
         .alert(
             "清空剪贴板历史？",
@@ -711,7 +711,7 @@ private struct HistoryPage: View {
         } message: { pinned in
             Text(pinned == 0
                 ? "所有条目都会被删除。此操作无法撤销。"
-                : "固定在 Pinboard 里的 \(pinned) 个条目会保留，其他条目都会被删除。此操作无法撤销。")
+                : "固定在 Pinboard 里和置顶的 \(pinned) 个条目会保留，其他条目都会被删除。此操作无法撤销。")
         }
     }
 

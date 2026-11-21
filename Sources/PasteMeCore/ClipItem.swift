@@ -78,6 +78,8 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
     public var pinOrder: Int64?
     /// 文本的子类型（#26），不是文本、不是任何子类型或者还没识别时为 nil。
     public var textSubtype: TextSubtype?
+    /// 置顶的时间（#77），没置顶时为 nil。置顶的条目在历史里排在没置顶的前面。
+    public var pinnedToTopAt: Date?
 
     public init(
         id: Int64,
@@ -94,7 +96,8 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
         linkIcon: Data? = nil,
         pinboardIDs: Set<Int64> = [],
         pinOrder: Int64? = nil,
-        textSubtype: TextSubtype? = nil
+        textSubtype: TextSubtype? = nil,
+        pinnedToTopAt: Date? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -111,6 +114,7 @@ public struct ClipItem: Identifiable, Sendable, Equatable {
         self.pinboardIDs = pinboardIDs
         self.pinOrder = pinOrder
         self.textSubtype = textSubtype
+        self.pinnedToTopAt = pinnedToTopAt
     }
 
     public var filePaths: [String] {

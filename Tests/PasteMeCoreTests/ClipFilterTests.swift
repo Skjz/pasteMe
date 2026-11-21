@@ -223,7 +223,7 @@ import Testing
             """)
 
         let store = try ClipStore(path: path)
-        #expect(try old.userVersion == 7)
+        #expect(try old.userVersion == 8)
         #expect(try store.items().map(\.preview) == ["old entry"])
         #expect(try store.items(matching: ClipQuery(sourceBundleID: "com.apple.Notes")).count == 1)
         // 迁移加上的 ocr_text 列为 NULL，旧条目照常能搜到。
@@ -253,7 +253,7 @@ import Testing
             """)
 
         let store = try ClipStore(path: path)
-        #expect(try old.userVersion == 7)
+        #expect(try old.userVersion == 8)
         let item = try #require(try store.items().first)
         #expect(item.preview == "https://example.com")
         #expect(item.title == nil && item.linkTitle == nil && item.pinboardIDs.isEmpty)
@@ -275,16 +275,39 @@ import Testing
             try old.insert(ClipContent(kind: .text, text: text), source: nil, at: Date(timeIntervalSince1970: Double(i)))
         }
         try old.insert(ClipContent(kind: .link, text: "https://example.com"), source: nil, at: Date(timeIntervalSince1970: 9))
-        // 退回第 6 版：去掉子类型列。
+        // 退回第 6 版：去掉子类型列（和第 8 版加的置顶列）。
         let raw = try SQLiteDatabase(path: path)
-        try raw.execute("ALTER TABLE clips DROP COLUMN text_subtype; PRAGMA user_version = 6;")
+        try raw.execute("""
+            DROP INDEX clips_pinned_top; ALTER TABLE clips DROP COLUMN pinned_top_at;
+            ALTER TABLE clips DROP COLUMN text_subtype; PRAGMA user_version = 6;
+            """)
 
         let store = try ClipStore(path: path)
-        #expect(try raw.userVersion == 7)
+        #expect(try raw.userVersion == 8)
         #expect(try store.items().allSatisfy { $0.textSubtype == nil })
         #expect(try store.backfillTextSubtypes(limit: 3) == 3)
         #expect(try store.backfillTextSubtypes(limit: 3) == 1)
         #expect(try store.backfillTextSubtypes(limit: 3) == 0)
         #expect(try store.items(matching: ClipQuery(kinds: [.text])).map(\.textSubtype) == [.base64, .color, nil, .timestamp])
+    }
+
+    @Test func versionSevenDatabaseGainsPinToTop() throws {
+        let dir = try ClipStoreTests.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("history.sqlite").path
+
+        let old = try ClipStore(path: path)
+        let first = try old.insert(ClipContent(kind: .text, text: "first"), source: nil, at: Date(timeIntervalSince1970: 1))
+        try old.insert(ClipContent(kind: .text, text: "second"), source: nil, at: Date(timeIntervalSince1970: 2))
+        // 退回第 7 版：去掉置顶列和它的索引。
+        let raw = try SQLiteDatabase(path: path)
+        try raw.execute("DROP INDEX clips_pinned_top; ALTER TABLE clips DROP COLUMN pinned_top_at; PRAGMA user_version = 7;")
+
+        let store = try ClipStore(path: path)
+        #expect(try raw.userVersion == 8)
+        #expect(try store.items().map(\.preview) == ["second", "first"])
+        #expect(try store.items().allSatisfy { $0.pinnedToTopAt == nil })
+        try store.setPinnedToTop(true, id: first)
+        #expect(try store.items().map(\.preview) == ["first", "second"])
     }
 }

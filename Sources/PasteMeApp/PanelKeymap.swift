@@ -65,7 +65,8 @@ enum PanelCommand: Equatable {
     case editSelected
     case newText
     case switchTab(by: Int)
-    case pinSelected
+    /// ⌘P：置顶或取消置顶选中的卡片（#77）。
+    case togglePinToTop
     case showInHistory
     case showConversions
     /// ⌘R：在选中卡片的标题栏里起标题、改标题（#33）。
@@ -164,7 +165,7 @@ enum PanelKeymap {
 
         if key.command, !key.control, !key.option {
             switch key.keyCode {
-            case kVK_ANSI_P where !key.shift: return .run(.pinSelected)
+            case kVK_ANSI_P where !key.shift: return .run(.togglePinToTop)
             case kVK_ANSI_N where !key.shift: return .run(.newText)
             case kVK_ANSI_E where !key.shift: return .run(.editSelected)
             case kVK_ANSI_J where !key.shift: return .run(.showInHistory)
@@ -242,7 +243,7 @@ enum PanelKeymap {
     static func fixedShortcutTitle(for combo: KeyCombo) -> String? {
         if combo.modifiers == [.command] {
             switch combo.keyCode {
-            case kVK_ANSI_P: return "固定到 Pinboard"
+            case kVK_ANSI_P: return "置顶"
             case kVK_ANSI_N: return "新建文本"
             case kVK_ANSI_E: return "编辑"
             case kVK_ANSI_J: return "在历史里查看"

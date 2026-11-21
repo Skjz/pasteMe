@@ -274,6 +274,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// 加上 `PASTEME_SNAPSHOT_APPEARANCE=light` 或 `dark` 时不管系统设置，按浅色或深色外观画。
     /// 加上 `PASTEME_SNAPSHOT_RENAME=1` 时在选中卡片的标题栏里编辑标题（#33）。
     /// 加上 `PASTEME_SNAPSHOT_HINTS=n` 时往右选 n 张（卡片列表跟着滚动），再当作按住了 ⌘，画出 ⌘1…⌘9（#39）。
+    /// 加上 `PASTEME_SNAPSHOT_PIN=n` 时置顶第 n 张（从 0 数），再当作鼠标停在第一张没置顶的卡片上，画出置顶标记和置顶按钮（#77）。
     private func writeSnapshot(to path: String) {
         let environment = ProcessInfo.processInfo.environment
         switch environment["PASTEME_SNAPSHOT_APPEARANCE"] {
@@ -295,6 +296,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 self.model.moveSelection(by: offset)
                 self.model.shortcutKeysChanged(held: true)
+            }
+        }
+        if let index = environment["PASTEME_SNAPSHOT_PIN"].flatMap(Int.init), model.items.indices.contains(index) {
+            model.setPinnedToTop(true, model.items[index])
+            if let next = model.items.first(where: { $0.pinnedToTopAt == nil }) {
+                model.cardHovered(next.id, true)
             }
         }
         if environment["PASTEME_SNAPSHOT_EDITOR"] == "1" {

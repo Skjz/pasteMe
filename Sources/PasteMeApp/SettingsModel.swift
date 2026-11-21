@@ -433,7 +433,7 @@ final class SettingsModel {
     }
 
     func requestClearHistory() {
-        pendingClear = (try? store.pinnedCount()) ?? 0
+        pendingClear = (try? store.keptCount()) ?? 0
     }
 
     func confirmClearHistory() {
