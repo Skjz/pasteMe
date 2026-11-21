@@ -23,6 +23,8 @@ struct HistoryView: View {
     /// 左边留在每一项里而不是整个列表上：`scrollTo` 按整项对齐留白，卡片离面板边缘仍是 `sideMargin`。
     /// 项与项的间距、左边的留白和滚动区域的上边减掉同样多，卡片的位置不变。
     nonisolated static let badgeRoom: CGFloat = 17
+    /// 卡片列表下边的留白。
+    private static let bottomRoom: CGFloat = 10
     /// 卡片列表左右两端的留白。选中的卡片放大、外面再套一圈光标后，离面板边缘仍有约 20 点。
     private static let sideMargin: CGFloat = 30
     /// 选中的卡片放大到的比例。
@@ -162,9 +164,10 @@ struct HistoryView: View {
                     }
                 }
                 .padding(.top, Self.badgeRoom)
-                .padding(.bottom, 10)
-                // 光标按选中卡片的序号算出位置，和卡片一样从留给图钉的地方后面开始。
-                .overlay(alignment: .topLeading) { cursor }
+                .padding(.bottom, Self.bottomRoom)
+                // 卡片在卡片列表里竖直居中（列表可能比卡片高一点），光标也竖直居中，再补上上下留白不一样多的差；
+                // 不能从顶上按固定距离放，那样会比卡片高几点。横向按序号算位置。
+                .overlay(alignment: .leading) { cursor }
                 // ⌘1…⌘9 从第一张完整显示的卡片数起（#39）。滚动时每帧只算出一个序号，跨过一张卡片时才告诉模型。
                 .onGeometryChange(for: Int.self) { geometry in
                     Self.firstFullyVisibleCard(contentMinX: geometry.frame(in: .named(Self.scrollSpace)).minX + Self.badgeRoom)
@@ -291,8 +294,10 @@ struct HistoryView: View {
                 animating: model.isPanelVisible && !reduceMotion
             )
             .frame(width: size.width + outset * 2, height: size.height + outset * 2)
+            // 光标画在卡片上面，会压住选中卡片左上角的置顶图钉（#77）：在图钉周围断开一段。
+            .mask { CursorBadgeGap(item: item, model: model, center: CGPoint(x: outset, y: outset)) }
             .scaleEffect(scale(selected: true))
-            .offset(x: Self.badgeRoom + CGFloat(index) * (size.width + Self.cardSpacing) - outset, y: Self.badgeRoom - outset)
+            .offset(x: Self.badgeRoom + CGFloat(index) * (size.width + Self.cardSpacing) - outset, y: (Self.badgeRoom - Self.bottomRoom) / 2)
             // 卡片补位或让位时（这次变化带着动画），光标跟着卡片用同一个动画，一起滑动；
             // 平时（方向键、点击）用光标自己的弹簧。
             .transaction(value: index) { transaction in
@@ -497,9 +502,14 @@ private struct PinToTopBadge: View {
 
     static let size: CGFloat = 20
 
+    /// 这张卡片上显示着图钉：置顶了，或者鼠标在卡片或按钮上。光标在图钉周围断开时也按它判断（`CursorBadgeGap`）。
+    static func isShowing(_ item: ClipItem, model: HistoryModel, enabled: Bool) -> Bool {
+        item.pinnedToTopAt != nil || (enabled && model.showsPinButton(for: item.id))
+    }
+
     var body: some View {
         let pinned = item.pinnedToTopAt != nil
-        let showing = pinned || (enabled && model.showsPinButton(for: item.id))
+        let showing = Self.isShowing(item, model: model, enabled: enabled)
         ZStack {
             if showing {
                 button(pinned: pinned)
@@ -528,6 +538,46 @@ private struct PinToTopBadge: View {
         .help(pinned ? "取消置顶" : "置顶：排在历史最前面，不进 Pinboard")
         .offset(x: -Self.size / 2, y: -Self.size / 2)
         .allowsHitTesting(enabled)
+    }
+}
+
+/// 光标的遮罩：选中的卡片显示着置顶图钉时，在图钉周围挖掉一个圆，光标在那里断开，图钉不被盖住。
+/// 单独做成一个视图：它读鼠标在哪张卡片上，鼠标移动时只有它重新计算，卡片列表不用。
+/// 光标和图钉都按卡片的中心放大，所以在光标自己的坐标里，图钉的中心总是 `center`（卡片的左上角）。
+/// 挖洞用奇偶填充的路径（`CursorGapShape`），不用 `blendMode(.destinationOut)`：后者在截图里挖出的圆大了一倍、位置也偏了。
+private struct CursorBadgeGap: View {
+    let item: ClipItem
+    let model: HistoryModel
+    let center: CGPoint
+
+    /// 图钉的半径再加上和光标之间的空隙。
+    static let radius = PinToTopBadge.size / 2 + 2.5
+
+    var body: some View {
+        let showing = PinToTopBadge.isShowing(item, model: model, enabled: model.titleEditingID != item.id)
+        CursorGapShape(center: center, radius: showing ? Self.radius : 0)
+            .fill(style: FillStyle(eoFill: true))
+            .animation(.easeOut(duration: 0.12), value: showing)
+    }
+}
+
+/// 比自己大一圈的矩形减去一个圆。矩形伸出 `glowReach`：光标的光晕伸在光标外面，遮罩要盖住它，否则光晕会被切掉。
+private struct CursorGapShape: Shape {
+    var center: CGPoint
+    var radius: CGFloat
+    static let glowReach: CGFloat = 60
+
+    var animatableData: CGFloat {
+        get { radius }
+        set { radius = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path(rect.insetBy(dx: -Self.glowReach, dy: -Self.glowReach))
+        if radius > 0 {
+            path.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+        }
+        return path
     }
 }
 
