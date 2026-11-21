@@ -50,6 +50,7 @@ PASTEME_SNAPSHOT=/tmp/panel.png swift run PasteMe
 - `PASTEME_SNAPSHOT_QUERY='type:图片 报销'` 先在搜索框里输入这段文字，用来检查筛选和搜索结果。
 - `PASTEME_SNAPSHOT_DELETE=1` 先删除选中的卡片，用来检查删除后其他卡片有没有移动。
 - `PASTEME_SNAPSHOT_TAB=1` 切到第一个 Pinboard。
+- `PASTEME_SNAPSHOT_SHOW_IN_HISTORY=1` 对选中的卡片「在历史里查看」，和 `PASTEME_SNAPSHOT_QUERY` 一起用，检查列表有没有跳到那张卡片。
 - `PASTEME_SNAPSHOT_PREVIEW=1`、`PASTEME_SNAPSHOT_EDITOR=1` 打开预览窗口、新建 Pinboard 的窗口，另存为 `<文件名>-preview.png`、`<文件名>-editor.png`。
 - `PASTEME_SNAPSHOT_APPEARANCE=light` 或 `dark` 不管系统设置，按浅色或深色外观画。
 - `PASTEME_SNAPSHOT_RENAME=1` 在选中卡片的标题栏里编辑标题；`PASTEME_SNAPSHOT_HINTS=n` 往右选 n 张，再当作按住了 ⌘，画出 ⌘1…⌘9。
