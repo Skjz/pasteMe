@@ -239,6 +239,8 @@ final class HistoryModel {
     /// 在历史里最多显示多少条。「在历史里查看」更早的条目时临时加大，读到它后面再多 100 条。
     @ObservationIgnored private var historyLimit = HistoryModel.defaultLimit
     private static let defaultLimit = 200
+    /// 为了让某一条出现在列表里放大读取条数时，在它后面再多读的条数。
+    private static let revealMargin = 100
     /// 拖动排序改了 Pinboard 里的顺序，还没有写进数据库。
     @ObservationIgnored private var reorderPending = false
     /// 这次打开面板后最后一次 ⌘C 拷贝的条目，面板收起时移到历史最前（#35）。
@@ -637,7 +639,11 @@ final class HistoryModel {
     /// 在 Pinboard 里顺序不变、看不出变化，所以说一声。
     ///
     /// 删除、撤销的颗粒还在播放时先停掉它们、去掉空位（撤销记录留着）：置顶要挪动卡片，
-    /// 而颗粒播放时卡片不能动（见「删除动画」）。
+    /// 而颗粒播放时卡片不能动（见「删除动画」）。总是停：改搜索词时空位已经清掉，颗粒却可能还在播放，
+    /// 只看有没有空位会漏掉；没有颗粒时停一下什么也不做。
+    ///
+    /// 取消置顶的条目回到按时间的位置，可能落在读出的条数（`historyLimit`）以外；选中的卡片也可能被挤出去。
+    /// 这时把条数放大到包含选中项，选中项不变，视图滚到它的新位置。
     func setPinnedToTop(_ pinned: Bool, _ item: ClipItem) {
         do {
             try store.setPinnedToTop(pinned, id: item.id, at: now())
@@ -645,8 +651,10 @@ final class HistoryModel {
             NSLog("PasteMe: 置顶失败：\(error)")
             return
         }
-        if !gaps.isEmpty || !hiddenIDs.isEmpty {
-            removalEffect?.cancelAll()
+        removalEffect?.cancelAll()
+        if pinboardID == nil, let selectedID,
+           let position = try? store.historyPosition(of: selectedID), position >= historyLimit {
+            historyLimit = position + Self.revealMargin
         }
         animate(removalEffect?.reorderAnimation()) {
             hiddenIDs = []
@@ -773,7 +781,7 @@ final class HistoryModel {
         resetting = false
         pinboardID = nil
         forgetRemovals()
-        historyLimit = max(Self.defaultLimit, position + 100)
+        historyLimit = max(Self.defaultLimit, position + Self.revealMargin)
         reload()
         selectedID = item.id
         focus = .cards

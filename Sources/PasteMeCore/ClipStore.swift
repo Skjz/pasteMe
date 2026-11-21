@@ -109,11 +109,15 @@ public final class ClipStore {
         }
         if try db.userVersion < 8 {
             // 置顶（#77）：置顶的时间，没置顶时为 NULL。历史按它、再按 created_at 排序。
-            try db.execute("""
-                ALTER TABLE clips ADD COLUMN pinned_top_at REAL;
-                CREATE INDEX clips_pinned_top ON clips (pinned_top_at DESC, created_at DESC);
-                PRAGMA user_version = 8;
-                """)
+            // 放在一个事务里：一次执行的几条语句各自提交，建索引失败（例如磁盘满了）时列已经加上、版本号还是 7，
+            // 下次启动再加同一列就会出错，应用打不开。user_version 也随事务回滚。
+            try transaction {
+                try db.execute("""
+                    ALTER TABLE clips ADD COLUMN pinned_top_at REAL;
+                    CREATE INDEX clips_pinned_top ON clips (pinned_top_at DESC, created_at DESC);
+                    PRAGMA user_version = 8;
+                    """)
+            }
         }
     }
 
@@ -226,12 +230,15 @@ public final class ClipStore {
 
     /// 条目在历史里排第几（从 0 开始）：按 `items(matching:)` 的顺序排在它前面的有多少条。不存在时为 nil。
     public func historyPosition(of id: Int64) throws -> Int? {
-        // 没置顶的当成 -1，比任何置顶时间都早，和 ORDER BY 里 NULL 排在最后一致。
+        // 先按有没有置顶分组、组内再比置顶时间，和 ORDER BY 里 NULL 排在所有置顶时间后面一致；
+        // 不拿某个时间戳代替 NULL，置顶时间是多少都不会排错。
         let statement = try db.prepare(
             """
             SELECT count(*) FROM clips,
-                (SELECT coalesce(pinned_top_at, -1) AS p, created_at AS t FROM clips WHERE id = ?) AS target
-            WHERE (coalesce(pinned_top_at, -1), created_at, id) > (target.p, target.t, ?)
+                (SELECT pinned_top_at IS NOT NULL AS pinned, coalesce(pinned_top_at, 0) AS p, created_at AS t
+                 FROM clips WHERE id = ?) AS target
+            WHERE (pinned_top_at IS NOT NULL, coalesce(pinned_top_at, 0), created_at, id)
+                > (target.pinned, target.p, target.t, ?)
             """,
             [.int(id), .int(id)]
         )

@@ -91,6 +91,41 @@ import PasteMeCore
         #expect(notices.isEmpty)
     }
 
+    /// 删除后马上改搜索词：空位已经清掉，颗粒还在播放。这时置顶要挪动卡片，也要先停掉颗粒。
+    @Test func pinningAfterASearchStillStopsTheParticles() {
+        let effect = FakeRemovalEffect()
+        model.removalEffect = effect
+        model.selectedID = c
+        model.delete()
+        model.query = "b"
+        let cancels = effect.cancelCount
+
+        model.setPinnedToTop(true, model.items[0])
+
+        #expect(effect.cancelCount == cancels + 1)
+    }
+
+    /// 取消置顶一条很旧的条目：它回到按时间的位置，落在默认读出的 200 条以外。选中项不变，列表里还有它。
+    @Test func unpinningAnOldEntryKeepsItSelected() throws {
+        let store = try ClipStore(path: ":memory:")
+        let oldest = try store.insert(ClipContent(kind: .text, text: "oldest"), source: nil, at: Date(timeIntervalSince1970: 1))
+        for i in 2...205 {
+            try store.insert(ClipContent(kind: .text, text: "entry \(i)"), source: nil, at: Date(timeIntervalSince1970: TimeInterval(i)))
+        }
+        try store.setPinnedToTop(true, id: oldest)
+        let model = HistoryModel(store: store)
+        model.didShow()
+        #expect(model.items.first?.id == oldest)
+        model.selectedID = oldest
+        let reveals = model.revealSelectionCount
+
+        model.togglePinToTop()
+
+        #expect(model.selectedID == oldest)
+        #expect(model.items.last?.id == oldest)
+        #expect(model.revealSelectionCount == reveals + 1)
+    }
+
     @Test func aDeletedPinnedCardLeavesItsGapAtTheFront() {
         model.selectedID = a
         model.togglePinToTop()

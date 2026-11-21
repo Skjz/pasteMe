@@ -98,6 +98,17 @@ import Testing
         #expect(try store.historyPosition(of: b) == 2)
     }
 
+    /// 名次和列表用同一套规则：置顶时间是多少（哪怕早于 1970 年）都排在没置顶的前面。
+    @Test func historyPositionMatchesTheListForAnyPinTime() throws {
+        let a = try insert("a", at: 1)
+        let b = try insert("b", at: 2)
+        try store.setPinnedToTop(true, id: a, at: Date(timeIntervalSince1970: -2))
+
+        #expect(try previews() == ["a", "b"])
+        #expect(try store.historyPosition(of: a) == 0)
+        #expect(try store.historyPosition(of: b) == 1)
+    }
+
     @Test func clearingAndAutoCleanupKeepPinnedEntries() throws {
         let pinned = try insert("pinned", at: 1)
         try insert("loose", at: 2)

@@ -310,4 +310,35 @@ import Testing
         try store.setPinnedToTop(true, id: first)
         #expect(try store.items().map(\.preview) == ["first", "second"])
     }
+
+    /// 第 8 版迁移中途失败（这里用一个同名的索引让建索引出错，真实情况是磁盘满了）时整个回滚，
+    /// 问题解决后再打开能接着升级，不会因为列已经加过而再也打不开。
+    @Test func versionEightMigrationCanBeRetriedAfterAFailure() throws {
+        let dir = try ClipStoreTests.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("history.sqlite").path
+
+        let old = try ClipStore(path: path)
+        try old.insert(ClipContent(kind: .text, text: "first"), source: nil, at: Date(timeIntervalSince1970: 1))
+        let raw = try SQLiteDatabase(path: path)
+        try raw.execute("""
+            DROP INDEX clips_pinned_top; ALTER TABLE clips DROP COLUMN pinned_top_at; PRAGMA user_version = 7;
+            CREATE INDEX clips_pinned_top ON clips (created_at);
+            """)
+        func hasPinColumn() throws -> Bool {
+            let statement = try raw.prepare("SELECT count(*) FROM pragma_table_info('clips') WHERE name = 'pinned_top_at'")
+            _ = try statement.step()
+            return statement.int(0) == 1
+        }
+
+        #expect(throws: (any Error).self) { try ClipStore(path: path) }
+        #expect(try raw.userVersion == 7)
+        #expect(try !hasPinColumn())
+
+        try raw.execute("DROP INDEX clips_pinned_top;")
+        let store = try ClipStore(path: path)
+        #expect(try raw.userVersion == 8)
+        #expect(try hasPinColumn())
+        #expect(try store.items().map(\.preview) == ["first"])
+    }
 }
