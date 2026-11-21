@@ -68,6 +68,7 @@ Also:
 
 - **Paste Stack**: press ⌃⇧⌘C and copy several things in a row—or press ⌘C on cards in the panel, or choose Add to Paste Stack from a card's menu—then press ⌘V once for each to paste them in order.
 - **Knows code and common formats**: code is colored by language; colors, timestamps, Base64 and hex get their own look, the Convert menu turns one into another or computes hashes, and ⌃⌥⌘V decodes Base64, hex or hexdump on the clipboard straight into text and pastes it.
+- **Pin to top**: press ⌘P or click the pin at a card's top-left corner to keep an entry first in your history; press again when you're done, no Pinboard needed.
 - **Filters**: type `@` to filter by type, source app or Pinboard, or filter by date.
 - **Drag out & AirDrop**: drag a card into any app—files stay the original files, and images come with both the image and a PNG file—or send text (as a `.txt` file), links, images and files via AirDrop from the card menu.
 - **Updates itself**: when a new version is out, the status bar menu shows Update to…; one click installs it, and only an installer signed by the publisher is accepted.
