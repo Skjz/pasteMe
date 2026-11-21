@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-21
+
 ### Changed
 
 - ⌘P now pins the selected entry to the top of the history instead of adding it to the Pinboard used last. A pinned-to-top entry stays first in 历史, ahead of everything copied after it, until you press ⌘P again, and then it goes back to its place by time. It doesn't go into any Pinboard. You can also pin or unpin with the mouse: hover over a card and click the pin that appears at its top-left corner, or click the pin that pinned cards always show. Clicking the pin only toggles it; it doesn't paste or change the selection. Cards also have 置顶 / 取消置顶 in their right-click menu. When several entries are pinned, the one pinned last comes first. Pinned entries also come first in search and filter results, but a Pinboard keeps its own order. Pinned entries are kept by automatic clearing and by 清空历史, and pasting one doesn't unpin it. To add an entry to a Pinboard, use 固定到 in the right-click menu or drag the card onto a tab. (#77)
@@ -174,7 +176,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The paste flow moved from `AppDelegate` into `Paster` in `PasteMeCore`. `paste(_:as:into:)` takes `.original` or `.plainText` and a target app, and returns `.pasted` or `.copiedOnly` (no accessibility permission). Writing the pasteboard and sending ⌘V are injected adapters, so tests run against in-memory fakes. The app hides the panel before calling it.
 - New `Settings` type in `PasteMeCore`, stored in the `io.github.skjz.PasteMe` defaults domain, where every user-facing switch is defined.
 
-[Unreleased]: https://github.com/Skjz/pasteMe/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Skjz/pasteMe/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/Skjz/pasteMe/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Skjz/pasteMe/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Skjz/pasteMe/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Skjz/pasteMe/compare/v0.1.0...v0.2.0
