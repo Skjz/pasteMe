@@ -164,6 +164,40 @@ import PasteMeCore
         }
     }
 
+    /// 「最近 7 天」筛选下跨过午夜取消置顶：读列表、算名次、再读一次用同一个日期范围，选中项不变。
+    /// 午夜前范围里有 200 条置顶，午夜后它们出了范围；选中的条目两边都在范围里，前面有 300 条普通条目。
+    @Test func unpinningAcrossMidnightKeepsTheSelection() throws {
+        let midnight = Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000))
+        let day = 86_400.0
+        for phase in [0, 1] {
+            let store = try ClipStore(path: ":memory:")
+            for i in 1...200 {
+                let id = try store.insert(ClipContent(kind: .text, text: "leaving \(i)"), source: nil, at: midnight.addingTimeInterval(-7 * day + Double(i) * 60))
+                try store.setPinnedToTop(true, id: id)
+            }
+            let selected = try store.insert(ClipContent(kind: .text, text: "selected"), source: nil, at: midnight.addingTimeInterval(-3 * day))
+            try store.setPinnedToTop(true, id: selected)
+            for i in 1...300 {
+                try store.insert(ClipContent(kind: .text, text: "loose \(i)"), source: nil, at: midnight.addingTimeInterval(-2 * day + Double(i) * 60))
+            }
+            let clock = Box(0)
+            let model = HistoryModel(store: store, now: {
+                clock.value += 1
+                return clock.value % 2 == 1 ? midnight.addingTimeInterval(-1) : midnight.addingTimeInterval(1)
+            })
+            model.didShow()
+            model.filters.timeRange = .last7Days
+            model.selectedID = selected
+            #expect(model.selectedID == selected)
+
+            clock.value = phase
+            model.togglePinToTop()
+
+            #expect(model.selectedID == selected, "相位 \(phase)")
+            #expect(model.items.contains { $0.id == selected }, "相位 \(phase)")
+        }
+    }
+
     /// 置顶不改顺序时不停颗粒：停掉会让颗粒忘了哪些卡片还在补位的途中。
     @Test func pinningWithoutAMoveLeavesTheParticlesAlone() {
         let effect = FakeRemovalEffect()

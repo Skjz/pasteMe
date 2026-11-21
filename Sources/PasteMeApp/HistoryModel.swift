@@ -532,11 +532,12 @@ final class HistoryModel {
         apply(fetchItems())
     }
 
-    private func fetchItems() -> [ClipItem] {
+    /// 按 `base`（不给时是 `currentQuery`）读列表，读取条数按当前的 `historyLimit` 和命中的置顶条数重新算。
+    private func fetchItems(_ base: ClipQuery? = nil) -> [ClipItem] {
         do {
             // 查询条件只构造一次：「今天」「昨天」这类筛选每次构造都读一次时钟，数置顶和读列表各构造一次的话，
             // 两次可能落在午夜两边，数的是一天、读的是另一天。
-            var query = currentQuery
+            var query = base ?? currentQuery
             if pinboardID == nil {
                 pinnedCount = try store.pinnedToTopCount(matching: query)
                 query.limit = historyLimit + pinnedCount
@@ -686,12 +687,14 @@ final class HistoryModel {
             return
         }
         let before = cards.map(\.id)
-        var newItems = fetchItems()
+        // 读列表、算名次、再读一次都用这一份查询条件，置顶条数也是按它数的：跨过午夜时日期筛选不会前后不一致。
+        let query = currentQuery
+        var newItems = fetchItems(query)
         // 被截掉的选中项一定没置顶：名次减去排在前面的置顶条数，就是它在普通条目里排第几，和 `historyLimit` 一样只数普通条目。
         if pinboardID == nil, let selectedID, !newItems.contains(where: { $0.id == selectedID }),
-           let position = try? store.position(of: selectedID, matching: currentQuery) {
+           let position = try? store.position(of: selectedID, matching: query) {
             historyLimit = max(historyLimit, position - pinnedCount + Self.revealMargin)
-            newItems = fetchItems()
+            newItems = fetchItems(query)
         }
         let moves = !hiddenIDs.isEmpty || newItems.map(\.id) != before
         let itemMoved = before.firstIndex(of: item.id) != newItems.firstIndex { $0.id == item.id }

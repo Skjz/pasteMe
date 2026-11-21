@@ -88,6 +88,20 @@ extension SpringCurveTests {
         #expect(!dust.isReordering)
     }
 
+    /// 停掉所有动画后报上来的新位置不是一次滑动：切换标签后，两边都有的卡片直接在新位置，颗粒也从那里开始。
+    @Test func aLayoutChangeAfterCancellingIsNotASlide() {
+        let clock = Box(100.0)
+        dust.now = { clock.value }
+        dust.cardLaidOut(1, at: slot2)
+        _ = dust.reorderAnimation()
+
+        dust.cancelAll()
+        clock.value += 0.01
+        dust.cardLaidOut(1, at: slot0)
+
+        #expect(dust.visibleFrame(of: 1) == slot0)
+    }
+
     @Test func layoutChangeRightAfterTheSlideAnimationIsFollowedAlongTheSpring() {
         let clock = Box(100.0)
         dust.now = { clock.value }
