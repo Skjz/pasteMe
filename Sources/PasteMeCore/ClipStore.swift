@@ -340,12 +340,12 @@ public final class ClipStore {
             )
             guard try statement.step() else { throw SQLiteError(code: -1, message: "恢复后找不到条目") }
             let id = statement.int(0)
-            // 删除后又复制或新建了同样的内容时，上面没有插入，留下的是那一条：把置顶也补给它（#77），
-            // 和固定的 Pinboard 一样。两条都置顶时取较早的置顶时间，和编辑合并时一样。
+            // 删除后又复制或新建了同样的内容时，上面没有插入，留下的是那一条：它还没置顶时把置顶补给它（#77），
+            // 和固定的 Pinboard 一样。它已经置顶时保留它自己的置顶时间：那是用户后来重新置顶的，顺序以它为准。
             if let pinnedAt = clip.row["pinned_top_at"], pinnedAt != .null {
                 try db.run(
-                    "UPDATE clips SET pinned_top_at = coalesce(min(pinned_top_at, ?), ?) WHERE id = ?",
-                    [pinnedAt, pinnedAt, .int(id)]
+                    "UPDATE clips SET pinned_top_at = coalesce(pinned_top_at, ?) WHERE id = ?",
+                    [pinnedAt, .int(id)]
                 )
             }
             for pin in clip.pins {

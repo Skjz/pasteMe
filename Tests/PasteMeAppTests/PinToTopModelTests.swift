@@ -122,6 +122,48 @@ import PasteMeCore
         #expect(model.revealSelectionCount == reveals)
     }
 
+    /// 在「历史」里置顶后马上切到 Pinboard：旧的换位已经作废，在那里删除照常播颗粒。
+    @Test func switchingTabsEndsTheReorder() {
+        let dust = CardDust()
+        dust.now = { 100 }
+        model.removalEffect = dust
+        model.selectedID = a
+        model.togglePinToTop()
+        #expect(dust.isReordering)
+
+        model.showTab(work.id)
+
+        #expect(!dust.isReordering)
+    }
+
+    /// 「昨天」筛选跨过午夜：数置顶和读列表要用同一个日期范围，否则数的是一天、读的是另一天，
+    /// 读取条数少算了置顶的，同一天的普通条目会被挤掉。时钟每读一次就在午夜前后来回跳。
+    @Test func countingPinsAndReadingTheListUseTheSameDay() throws {
+        let midnight = Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000))
+        let store = try ClipStore(path: ":memory:")
+        for i in 1...200 {
+            let id = try store.insert(ClipContent(kind: .text, text: "pinned \(i)"), source: nil, at: midnight.addingTimeInterval(-Double(i) * 60))
+            try store.setPinnedToTop(true, id: id)
+        }
+        for i in 1...3 {
+            try store.insert(ClipContent(kind: .text, text: "loose \(i)"), source: nil, at: midnight.addingTimeInterval(-20_000 - Double(i)))
+        }
+        let clock = Box(0)
+        let model = HistoryModel(store: store, now: {
+            clock.value += 1
+            return clock.value % 2 == 1 ? midnight.addingTimeInterval(-1) : midnight.addingTimeInterval(1)
+        })
+        model.didShow()
+        model.filters.timeRange = .yesterday
+
+        for phase in [0, 1] {
+            clock.value = phase
+            model.reload()
+            // 按午夜前的「昨天」一条都没有，按午夜后的「昨天」是全部 203 条；不能只读出一部分。
+            #expect([0, 203].contains(model.items.count), "读出了 \(model.items.count) 条")
+        }
+    }
+
     /// 置顶不改顺序时不停颗粒：停掉会让颗粒忘了哪些卡片还在补位的途中。
     @Test func pinningWithoutAMoveLeavesTheParticlesAlone() {
         let effect = FakeRemovalEffect()

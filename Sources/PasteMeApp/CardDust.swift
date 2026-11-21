@@ -249,6 +249,9 @@ final class CardDust: CardRemovalEffect {
         pendingAppear = [:]
         slides = [:]
         scaleChanges = [:]
+        // 换位动画也作废：切换标签、重新呼出面板后，旧列表的换位不该让新列表里的删除跳过颗粒。
+        // 要换位的地方都是先停掉、再调用 `reorderAnimation()`。
+        reorderStart = nil
         view.cancelAll()
     }
 

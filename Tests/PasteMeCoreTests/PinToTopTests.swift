@@ -137,6 +137,21 @@ import Testing
         #expect(try store.item(id: again)?.pinnedToTopAt == Date(timeIntervalSince1970: 5))
     }
 
+    /// 同内容的新条目已经重新置顶过：撤销删除不改它的置顶时间，顺序以用户后来的置顶为准。
+    @Test func undoingADeleteKeepsTheNewEntrysOwnPin() throws {
+        let pinned = try insert("same", at: 1)
+        try store.setPinnedToTop(true, id: pinned, at: Date(timeIntervalSince1970: 5))
+        let other = try insert("other", at: 2)
+        try store.setPinnedToTop(true, id: other, at: Date(timeIntervalSince1970: 6))
+        let deleted = try #require(try store.delete(id: pinned))
+        let again = try insert("same", at: 10)
+        try store.setPinnedToTop(true, id: again, at: Date(timeIntervalSince1970: 20))
+
+        #expect(try store.restore(deleted) == again)
+        #expect(try store.item(id: again)?.pinnedToTopAt == Date(timeIntervalSince1970: 20))
+        #expect(try previews() == ["same", "other"])
+    }
+
     @Test func clearingAndAutoCleanupKeepPinnedEntries() throws {
         let pinned = try insert("pinned", at: 1)
         try insert("loose", at: 2)

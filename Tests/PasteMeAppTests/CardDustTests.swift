@@ -76,6 +76,18 @@ extension SpringCurveTests {
     let slot0 = CGRect(x: 30, y: 64, width: 230, height: 240)
     let slot2 = CGRect(x: 526, y: 64, width: 230, height: 240)
 
+    /// 停掉所有动画时换位的计时也作废：切换标签后，旧列表的换位不让新列表里的删除跳过颗粒。
+    @Test func cancellingEndsTheReorder() {
+        let clock = Box(100.0)
+        dust.now = { clock.value }
+        _ = dust.reorderAnimation()
+        #expect(dust.isReordering)
+
+        dust.cancelAll()
+
+        #expect(!dust.isReordering)
+    }
+
     @Test func layoutChangeRightAfterTheSlideAnimationIsFollowedAlongTheSpring() {
         let clock = Box(100.0)
         dust.now = { clock.value }

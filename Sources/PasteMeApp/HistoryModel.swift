@@ -534,8 +534,14 @@ final class HistoryModel {
 
     private func fetchItems() -> [ClipItem] {
         do {
-            if pinboardID == nil { pinnedCount = try store.pinnedToTopCount(matching: currentQuery) }
-            return try store.items(matching: currentQuery)
+            // 查询条件只构造一次：「今天」「昨天」这类筛选每次构造都读一次时钟，数置顶和读列表各构造一次的话，
+            // 两次可能落在午夜两边，数的是一天、读的是另一天。
+            var query = currentQuery
+            if pinboardID == nil {
+                pinnedCount = try store.pinnedToTopCount(matching: query)
+                query.limit = historyLimit + pinnedCount
+            }
+            return try store.items(matching: query)
         } catch {
             NSLog("PasteMe: 读取历史失败：\(error)")
             return []
