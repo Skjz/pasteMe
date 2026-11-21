@@ -109,6 +109,19 @@ import PasteMeCore
         #expect(effect.cancelCount == cancels + 1)
     }
 
+    /// 卡片没挪动时（Pinboard 里）鼠标还在它上面：图钉留着，也不请求滚动。
+    @Test func pinningInPlaceKeepsTheHoverAndDoesNotScroll() {
+        model.showTab(work.id)
+        model.selectedID = b
+        model.cardHovered(b, true)
+        let reveals = model.revealSelectionCount
+
+        model.togglePinToTop()
+
+        #expect(model.showsPinButton(for: b))
+        #expect(model.revealSelectionCount == reveals)
+    }
+
     /// 置顶不改顺序时不停颗粒：停掉会让颗粒忘了哪些卡片还在补位的途中。
     @Test func pinningWithoutAMoveLeavesTheParticlesAlone() {
         let effect = FakeRemovalEffect()
@@ -162,6 +175,69 @@ import PasteMeCore
         model.togglePinToTop()
         #expect(model.items.map(\.id) == [needle])
         #expect(model.selectedID == needle)
+
+        model.clearSearch()
+        #expect(model.items.count == 200)
+    }
+
+    /// 搜索时只给命中的置顶条目让出名额：200 条置顶都不命中时，搜索结果还是 200 条，不多读。
+    @Test func pinnedEntriesFilteredOutOfASearchDoNotAddRows() throws {
+        let store = try ClipStore(path: ":memory:")
+        for i in 1...200 {
+            let id = try store.insert(ClipContent(kind: .text, text: "pinned \(i)"), source: nil, at: Date(timeIntervalSince1970: TimeInterval(i)))
+            try store.setPinnedToTop(true, id: id)
+        }
+        for i in 1...300 {
+            try store.insert(ClipContent(kind: .text, text: "match \(i)"), source: nil, at: Date(timeIntervalSince1970: TimeInterval(1_000 + i)))
+        }
+        let model = HistoryModel(store: store)
+        model.didShow()
+
+        model.query = "match"
+
+        #expect(model.items.count == 200)
+    }
+
+    /// 「在历史里查看」一条较早的普通条目：读到它后面再多 100 条为止，名次里排在前面的置顶条目不再多算一次。
+    @Test func showingAnOldEntryInHistoryReadsUpToItPlusAMargin() throws {
+        let store = try ClipStore(path: ":memory:")
+        for i in 1...50 {
+            let id = try store.insert(ClipContent(kind: .text, text: "pinned \(i)"), source: nil, at: Date(timeIntervalSince1970: TimeInterval(10_000 + i)))
+            try store.setPinnedToTop(true, id: id)
+        }
+        var target: Int64 = 0
+        for i in 1...600 {
+            let id = try store.insert(ClipContent(kind: .text, text: "entry \(i)"), source: nil, at: Date(timeIntervalSince1970: TimeInterval(i)))
+            if i == 300 { target = id }
+        }
+        let position = try #require(try store.historyPosition(of: target))
+        #expect(position == 50 + 300)
+        let model = HistoryModel(store: store)
+        model.didShow()
+        model.query = "entry 300"
+
+        model.showInHistory(model.items.first { $0.id == target })
+
+        #expect(model.items.count == position + 100)
+        #expect(model.selectedID == target)
+    }
+
+    /// 搜索时为了留住选中项放大的读取条数，清空搜索后不再沿用。
+    @Test func clearingTheSearchDropsTheGrownLimit() throws {
+        let store = try ClipStore(path: ":memory:")
+        let oldest = try store.insert(ClipContent(kind: .text, text: "entry 1"), source: nil, at: Date(timeIntervalSince1970: 1))
+        for i in 2...300 {
+            try store.insert(ClipContent(kind: .text, text: "entry \(i)"), source: nil, at: Date(timeIntervalSince1970: TimeInterval(i)))
+        }
+        try store.setPinnedToTop(true, id: oldest)
+        let model = HistoryModel(store: store)
+        model.didShow()
+        model.query = "entry"
+        model.selectedID = oldest
+
+        model.togglePinToTop()
+        #expect(model.selectedID == oldest)
+        #expect(model.items.contains { $0.id == oldest })
 
         model.clearSearch()
         #expect(model.items.count == 200)

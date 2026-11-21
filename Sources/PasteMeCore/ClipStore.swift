@@ -260,9 +260,17 @@ public final class ClipStore {
         return Int(statement.int(0))
     }
 
-    /// 置顶的条目有多少条。「历史」的读取条数只算没置顶的，加上它就是要读的行数。
-    public func pinnedToTopCount() throws -> Int {
-        let statement = try db.prepare("SELECT count(*) FROM clips WHERE pinned_top_at IS NOT NULL")
+    /// `query` 的结果里有多少条置顶的条目，不看 `limit`。「历史」的读取条数只算没置顶的，加上它就是要读的行数。
+    /// 只用于不按 Pinboard 的查询。
+    public func pinnedToTopCount(matching query: ClipQuery = ClipQuery()) throws -> Int {
+        precondition(query.pinboardID == nil, "Pinboard 里不按置顶排序")
+        var sql = "SELECT count(*) FROM clips WHERE pinned_top_at IS NOT NULL"
+        var values: [SQLValue] = []
+        if let filter = query.filter {
+            sql += " AND " + filter.clause
+            values = filter.values
+        }
+        let statement = try db.prepare(sql, values)
         guard try statement.step() else { return 0 }
         return Int(statement.int(0))
     }
@@ -332,6 +340,14 @@ public final class ClipStore {
             )
             guard try statement.step() else { throw SQLiteError(code: -1, message: "恢复后找不到条目") }
             let id = statement.int(0)
+            // 删除后又复制或新建了同样的内容时，上面没有插入，留下的是那一条：把置顶也补给它（#77），
+            // 和固定的 Pinboard 一样。两条都置顶时取较早的置顶时间，和编辑合并时一样。
+            if let pinnedAt = clip.row["pinned_top_at"], pinnedAt != .null {
+                try db.run(
+                    "UPDATE clips SET pinned_top_at = coalesce(min(pinned_top_at, ?), ?) WHERE id = ?",
+                    [pinnedAt, pinnedAt, .int(id)]
+                )
+            }
             for pin in clip.pins {
                 try restorePin(UnpinnedClip(clipID: id, position: pin))
             }

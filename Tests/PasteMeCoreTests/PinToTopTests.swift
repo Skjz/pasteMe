@@ -122,6 +122,19 @@ import Testing
         try store.setPinnedToTop(true, id: old)
         #expect(try store.position(of: old, matching: ClipQuery(text: "apple")) == 0)
         #expect(try store.pinnedToTopCount() == 1)
+        #expect(try store.pinnedToTopCount(matching: ClipQuery(text: "apple")) == 1)
+        #expect(try store.pinnedToTopCount(matching: ClipQuery(text: "banana")) == 0)
+    }
+
+    /// 删除一条置顶的条目后又存了同样的内容，再撤销删除：留下的是新存的那条，置顶也补给它。
+    @Test func undoingADeleteOntoTheSameContentKeepsThePin() throws {
+        let pinned = try insert("same", at: 1)
+        try store.setPinnedToTop(true, id: pinned, at: Date(timeIntervalSince1970: 5))
+        let deleted = try #require(try store.delete(id: pinned))
+        let again = try insert("same", at: 10)
+
+        #expect(try store.restore(deleted) == again)
+        #expect(try store.item(id: again)?.pinnedToTopAt == Date(timeIntervalSince1970: 5))
     }
 
     @Test func clearingAndAutoCleanupKeepPinnedEntries() throws {

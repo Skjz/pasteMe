@@ -239,8 +239,9 @@ final class HistoryModel {
     /// 在历史里最多显示多少条没置顶的条目；置顶的全部读出，排在前面，不占这个名额（`pinnedCount`）。
     /// 「在历史里查看」更早的条目时临时加大，读到它后面再多 100 条。
     @ObservationIgnored private var historyLimit = HistoryModel.defaultLimit
-    /// 置顶的条目有多少条，每次读历史前更新。读取的行数是 `historyLimit` 加上它，
-    /// 否则置顶满 200 条后新复制的内容在「历史」里就看不到了。
+    /// 当前搜索结果里有多少条置顶的条目，每次读历史前按当前的搜索和筛选条件数一次。读取的行数是
+    /// `historyLimit` 加上它，否则置顶满 200 条后新复制的内容在「历史」里就看不到了；按全库的置顶数加，
+    /// 搜索时会多读被筛掉的置顶条数那么多的普通条目。
     @ObservationIgnored private var pinnedCount = 0
     private static let defaultLimit = 200
     /// 为了让某一条出现在列表里放大读取条数时，在它后面再多读的条数。
@@ -396,6 +397,7 @@ final class HistoryModel {
         query = ""
         filters = PanelFilters()
         resetting = false
+        historyLimit = Self.defaultLimit
         gaps = []
         finishedGaps = []
         reload()
@@ -519,6 +521,8 @@ final class HistoryModel {
     /// 搜索条件变了：列表整个换掉，空位不再对应原来的卡片，一起去掉。
     private func reloadUnlessResetting() {
         guard !resetting else { return }
+        // 为了让某一条出现在结果里放大的读取条数只对当时的搜索有效。
+        historyLimit = Self.defaultLimit
         gaps = []
         finishedGaps = []
         reload()
@@ -530,7 +534,7 @@ final class HistoryModel {
 
     private func fetchItems() -> [ClipItem] {
         do {
-            if pinboardID == nil { pinnedCount = try store.pinnedToTopCount() }
+            if pinboardID == nil { pinnedCount = try store.pinnedToTopCount(matching: currentQuery) }
             return try store.items(matching: currentQuery)
         } catch {
             NSLog("PasteMe: 读取历史失败：\(error)")
@@ -677,12 +681,14 @@ final class HistoryModel {
         }
         let before = cards.map(\.id)
         var newItems = fetchItems()
+        // 被截掉的选中项一定没置顶：名次减去排在前面的置顶条数，就是它在普通条目里排第几，和 `historyLimit` 一样只数普通条目。
         if pinboardID == nil, let selectedID, !newItems.contains(where: { $0.id == selectedID }),
            let position = try? store.position(of: selectedID, matching: currentQuery) {
-            historyLimit = max(historyLimit, position + Self.revealMargin)
+            historyLimit = max(historyLimit, position - pinnedCount + Self.revealMargin)
             newItems = fetchItems()
         }
         let moves = !hiddenIDs.isEmpty || newItems.map(\.id) != before
+        let itemMoved = before.firstIndex(of: item.id) != newItems.firstIndex { $0.id == item.id }
         if moves { removalEffect?.cancelAll() }
         animate(moves ? removalEffect?.reorderAnimation() : nil) {
             hiddenIDs = []
@@ -690,10 +696,12 @@ final class HistoryModel {
             finishedGaps = []
             apply(newItems)
         }
-        // 卡片换了位置，鼠标已经不在它上面了，不会收到移出。
-        if hoveredCardID == item.id { hoveredCardID = nil }
-        if hoveredPinButtonID == item.id { hoveredPinButtonID = nil }
-        if item.id == selectedID { revealSelectionCount += 1 }
+        // 卡片换了位置，鼠标已经不在它上面了，不会收到移出。没挪动时（例如在 Pinboard 里）鼠标还在它上面，图钉留着，也不用滚动。
+        if itemMoved {
+            if hoveredCardID == item.id { hoveredCardID = nil }
+            if hoveredPinButtonID == item.id { hoveredPinButtonID = nil }
+            if item.id == selectedID { revealSelectionCount += 1 }
+        }
         if pinboardID != nil {
             onNotice(pinned ? "已置顶，在「历史」里排在最前面" : "已取消置顶", pinned ? "pin" : "pin.slash")
         }
@@ -801,7 +809,9 @@ final class HistoryModel {
     /// 在历史里查看：清空搜索和筛选，回到「历史」，选中这个条目，前后是和它挨着复制的内容。
     func showInHistory(_ item: ClipItem? = nil) {
         guard let item = item ?? selectedItem else { return }
+        // 置顶的条目全部读出、不占名额，所以名次要减去置顶的条数，换成在普通条目里排第几（置顶的条目减完不大于 0）。
         let position = (try? store.historyPosition(of: item.id)) ?? 0
+        let unpinnedRank = max(0, position - ((try? store.pinnedToTopCount()) ?? 0))
         finishReordering()
         resetting = true
         query = ""
@@ -809,7 +819,7 @@ final class HistoryModel {
         resetting = false
         pinboardID = nil
         forgetRemovals()
-        historyLimit = max(Self.defaultLimit, position + Self.revealMargin)
+        historyLimit = max(Self.defaultLimit, unpinnedRank + Self.revealMargin)
         reload()
         selectedID = item.id
         focus = .cards
