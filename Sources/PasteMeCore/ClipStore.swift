@@ -119,6 +119,83 @@ public final class ClipStore {
                     """)
             }
         }
+        if try db.userVersion < 9 {
+            // 重建只是为了让搜索快，表里的列（按名字读写）不变。失败时（多半是磁盘放不下第二份历史）整个回滚，
+            // 停在第 8 版接着用，下次打开再试；不能让应用因此打不开。
+            do {
+                try moveLargeColumnsLast()
+            } catch {
+                NSLog("PasteMe: 重建历史表失败，下次打开再试：\(error)")
+            }
+        }
+    }
+
+    /// 第 9 版（#89）：重建 clips 表，把图片、RTF、缩略图、网站图标这些大块数据放到每一行的最后。
+    ///
+    /// SQLite 读一列时要先走过它前面的列，放不下一页的大块数据存在一串溢出页里，只能一页一页往后读。
+    /// 原来的表里 `source_name`、`ocr_text` 排在图片后面，搜索时没命中的每一条图片都要把整张图片读一遍：
+    /// 5000 条、两百多 MB 的历史里，命中很少的搜索要 50 ms，挪到后面以后 3～4 ms。只在第一次打开时做一次，两百多 MB 的历史重建和整理各要一秒左右。
+    /// 以后 `ALTER TABLE ADD COLUMN` 加的列会排在大块数据后面，`largeColumnsComeLastInEveryRow` 会提醒照这里重建。
+    ///
+    /// 按 SQLite 文档里改表结构的步骤：先关外键（在事务里关不了），否则删旧表时 pinboard_items 会跟着清空；
+    /// 改名后 pinboard_items 的外键仍然写着 clips，指向新表。
+    private func moveLargeColumnsLast() throws {
+        let columns = """
+            id, kind, source_bundle_id, source_name, content_hash, created_at, pinned_top_at, text_subtype,
+            title, link_title, ocr_text, text, thumbnail, link_icon, rtf, image
+            """
+        try db.execute("PRAGMA foreign_keys = OFF")
+        defer { try? db.execute("PRAGMA foreign_keys = ON") }
+        try transaction {
+            // 删掉的条目 id 不再用（撤销删除要用原来的 id 放回去），新表的自增序号接着旧表的。
+            // 语句要在删表之前结束，否则 SQLite 报表被锁住。
+            let lastID: Int64 = try {
+                let sequence = try db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'clips'")
+                return try sequence.step() ? sequence.int(0) : 0
+            }()
+            try db.execute("""
+                CREATE TABLE clips_v9 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    source_bundle_id TEXT,
+                    source_name TEXT,
+                    content_hash TEXT NOT NULL UNIQUE,
+                    created_at REAL NOT NULL,
+                    pinned_top_at REAL,
+                    text_subtype TEXT,
+                    title TEXT,
+                    link_title TEXT,
+                    ocr_text TEXT,
+                    text TEXT,
+                    thumbnail BLOB,
+                    link_icon BLOB,
+                    rtf BLOB,
+                    image BLOB
+                );
+                INSERT INTO clips_v9 (\(columns)) SELECT \(columns) FROM clips;
+                DROP TABLE clips;
+                ALTER TABLE clips_v9 RENAME TO clips;
+                CREATE INDEX clips_created_at ON clips (created_at DESC);
+                CREATE INDEX clips_source_bundle_id ON clips (source_bundle_id);
+                CREATE INDEX clips_pinned_top ON clips (pinned_top_at DESC, created_at DESC);
+                """)
+            try db.run(
+                "INSERT INTO sqlite_sequence (name, seq) SELECT 'clips', ? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'clips')",
+                [.int(lastID)]
+            )
+            try db.run("UPDATE sqlite_sequence SET seq = max(seq, ?) WHERE name = 'clips'", [.int(lastID)])
+            let broken: Bool = try {
+                let check = try db.prepare("PRAGMA foreign_key_check")
+                return try check.step()
+            }()
+            if broken { throw SQLiteError(code: -1, message: "重建 clips 表后外键对不上") }
+            try db.execute("PRAGMA user_version = 9")
+        }
+        // 旧表的页留在空闲列表里，文件变成原来的两倍大，整理一遍再还给磁盘（两百多 MB 约 1 秒）。
+        // 重建和整理时整张表都写进了 WAL，写回数据库后把 WAL 文件截短，不留一个和历史一样大的文件。
+        // 这两步失败（例如磁盘不够、有别的连接正在读）不影响使用，但下次打开不会重做：空闲页留在文件里，以后写入时再用上。
+        try? db.execute("VACUUM")
+        try? db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     }
 
     /// 在一个事务里执行，出错时回滚。

@@ -223,7 +223,7 @@ import Testing
             """)
 
         let store = try ClipStore(path: path)
-        #expect(try old.userVersion == 8)
+        #expect(try old.userVersion == 9)
         #expect(try store.items().map(\.preview) == ["old entry"])
         #expect(try store.items(matching: ClipQuery(sourceBundleID: "com.apple.Notes")).count == 1)
         // 迁移加上的 ocr_text 列为 NULL，旧条目照常能搜到。
@@ -253,7 +253,7 @@ import Testing
             """)
 
         let store = try ClipStore(path: path)
-        #expect(try old.userVersion == 8)
+        #expect(try old.userVersion == 9)
         let item = try #require(try store.items().first)
         #expect(item.preview == "https://example.com")
         #expect(item.title == nil && item.linkTitle == nil && item.pinboardIDs.isEmpty)
@@ -283,7 +283,7 @@ import Testing
             """)
 
         let store = try ClipStore(path: path)
-        #expect(try raw.userVersion == 8)
+        #expect(try raw.userVersion == 9)
         #expect(try store.items().allSatisfy { $0.textSubtype == nil })
         #expect(try store.backfillTextSubtypes(limit: 3) == 3)
         #expect(try store.backfillTextSubtypes(limit: 3) == 1)
@@ -304,11 +304,158 @@ import Testing
         try raw.execute("DROP INDEX clips_pinned_top; ALTER TABLE clips DROP COLUMN pinned_top_at; PRAGMA user_version = 7;")
 
         let store = try ClipStore(path: path)
-        #expect(try raw.userVersion == 8)
+        #expect(try raw.userVersion == 9)
         #expect(try store.items().map(\.preview) == ["second", "first"])
         #expect(try store.items().allSatisfy { $0.pinnedToTopAt == nil })
         try store.setPinnedToTop(true, id: first)
         #expect(try store.items().map(\.preview) == ["first", "second"])
+    }
+
+    /// 第 9 版把图片、RTF、缩略图、网站图标这些大块数据挪到每一行的最后（#89）。SQLite 读一列时要先走过它前面的列，
+    /// 大块数据放在搜索的列前面时，搜索每一条图片都要把整张图片从磁盘读一遍：5000 条的历史里没命中的搜索要 50 ms。
+    /// 以后用 `ALTER TABLE ADD COLUMN` 加的列会排在大块数据后面，这个测试会失败：按第 9 版的做法重建表，把新列放到前面。
+    @Test func largeColumnsComeLastInEveryRow() throws {
+        let dir = try ClipStoreTests.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("history.sqlite").path
+        _ = try ClipStore(path: path)
+
+        let raw = try SQLiteDatabase(path: path)
+        let statement = try raw.prepare("SELECT name, type FROM pragma_table_info('clips') ORDER BY cid")
+        var columns: [(name: String, type: String)] = []
+        while try statement.step() {
+            columns.append((statement.text(0) ?? "", statement.text(1) ?? ""))
+        }
+        let large = ["thumbnail", "link_icon", "rtf", "image"]
+        #expect(Array(columns.suffix(large.count).map(\.name)) == large)
+        #expect(columns.dropLast(large.count).allSatisfy { $0.type != "BLOB" })
+    }
+
+    /// 从第 8 版升级时整张表重建（#89）：条目、id、Pinboard 里的位置、置顶、索引都不变，
+    /// 删掉的最大 id 也不会被新条目再用（撤销删除要用原来的 id 放回去）。
+    @Test func versionEightDatabaseIsRebuiltWithLargeColumnsLast() throws {
+        let dir = try ClipStoreTests.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("history.sqlite").path
+
+        // 第 8 版的表结构：大块数据在中间，后来加的列在最后。
+        let old = try SQLiteDatabase(path: path)
+        try old.execute("""
+            PRAGMA journal_mode = WAL;
+            CREATE TABLE clips (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, text TEXT, rtf BLOB, image BLOB,
+                thumbnail BLOB, source_bundle_id TEXT, source_name TEXT, content_hash TEXT NOT NULL UNIQUE,
+                created_at REAL NOT NULL, ocr_text TEXT, title TEXT, link_title TEXT, link_icon BLOB,
+                text_subtype TEXT, pinned_top_at REAL
+            );
+            CREATE INDEX clips_created_at ON clips (created_at DESC);
+            CREATE INDEX clips_source_bundle_id ON clips (source_bundle_id);
+            CREATE INDEX clips_pinned_top ON clips (pinned_top_at DESC, created_at DESC);
+            CREATE TABLE pinboards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, color TEXT NOT NULL, sort_order INTEGER NOT NULL
+            );
+            CREATE TABLE pinboard_items (
+                pinboard_id INTEGER NOT NULL REFERENCES pinboards (id) ON DELETE CASCADE,
+                clip_id INTEGER NOT NULL REFERENCES clips (id) ON DELETE CASCADE,
+                sort_order INTEGER NOT NULL,
+                PRIMARY KEY (pinboard_id, clip_id)
+            );
+            CREATE INDEX pinboard_items_clip_id ON pinboard_items (clip_id);
+            INSERT INTO clips (id, kind, text, rtf, source_bundle_id, source_name, content_hash, created_at, text_subtype)
+                VALUES (1, 'text', 'hello', x'7B5C727466', 'com.apple.Notes', '备忘录', 'hash-1', 1, '');
+            INSERT INTO clips (id, kind, image, thumbnail, content_hash, created_at, ocr_text, title, pinned_top_at)
+                VALUES (2, 'image', x'89504E47', x'FFD8', 'hash-2', 2, '发票', '截图', 5);
+            INSERT INTO clips (id, kind, text, thumbnail, link_title, link_icon, content_hash, created_at)
+                VALUES (3, 'link', 'https://example.com', x'0A0B', '示例', x'1C1D', 'hash-3', 4);
+            INSERT INTO clips (id, kind, text, content_hash, created_at) VALUES (7, 'text', 'deleted', 'hash-7', 3);
+            DELETE FROM clips WHERE id = 7;
+            INSERT INTO pinboards (name, color, sort_order) VALUES ('工作', 'blue', 0);
+            INSERT INTO pinboard_items (pinboard_id, clip_id, sort_order) VALUES (1, 1, 0), (1, 2, 1);
+            PRAGMA user_version = 8;
+            """)
+
+        let store = try ClipStore(path: path)
+        #expect(try old.userVersion == 9)
+        let items = try store.items()
+        #expect(items.map(\.id) == [2, 3, 1])
+        #expect(items[0].title == "截图" && items[0].recognizedText == "发票" && items[0].pinnedToTopAt != nil)
+        #expect(items[0].thumbnail == Data([0xFF, 0xD8]))
+        #expect(try store.content(id: 2)?.image == Data([0x89, 0x50, 0x4E, 0x47]))
+        // 四列大块数据都搬过去了。
+        #expect(items[1].linkTitle == "示例" && items[1].linkIcon == Data([0x1C, 0x1D]) && items[1].thumbnail == Data([0x0A, 0x0B]))
+        #expect(try store.content(id: 1)?.rtf == Data([0x7B, 0x5C, 0x72, 0x74, 0x66]))
+        #expect(items[2].preview == "hello" && items[2].sourceName == "备忘录" && items[2].pinboardIDs == [1])
+        // Pinboard 里的位置原样保留：和复制时间的顺序相反，位置丢了就会按时间排。
+        let pinned = try store.items(matching: ClipQuery(pinboardID: 1))
+        #expect(pinned.map(\.id) == [1, 2])
+        #expect(pinned.map(\.pinOrder) == [0, 1])
+        #expect(try store.items(matching: ClipQuery(text: "发票")).map(\.id) == [2])
+        #expect(try store.items(matching: ClipQuery(sourceBundleID: "com.apple.Notes")).map(\.id) == [1])
+        #expect(try store.insert(ClipContent(kind: .text, text: "new"), source: nil) == 8)
+
+        let indexes = try old.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'clips' AND sql IS NOT NULL ORDER BY name")
+        var names: [String] = []
+        while try indexes.step() { names.append(indexes.text(0) ?? "") }
+        #expect(names == ["clips_created_at", "clips_pinned_top", "clips_source_bundle_id"])
+        // 升级时关掉的外键检查在这个连接上重新打开了：不能把不存在的条目放进 Pinboard。
+        #expect(throws: (any Error).self) { try store.pin(999, to: 1) }
+        // pinboard_items 的外键仍然指向 clips（新表改名后的名字），不是已经删掉的旧表。
+        let keys = try old.prepare("SELECT \"table\" FROM pragma_foreign_key_list('pinboard_items') ORDER BY \"table\"")
+        var targets: [String] = []
+        while try keys.step() { targets.append(keys.text(0) ?? "") }
+        #expect(targets == ["clips", "pinboards"])
+        // 旧表的页整理掉了，文件不会变成两倍大。
+        let free = try old.prepare("PRAGMA freelist_count")
+        _ = try free.step()
+        #expect(free.int(0) == 0)
+    }
+
+    /// 第 9 版重建失败（这里用一张同名的表挡住，真实情况多半是磁盘放不下第二份历史）时应用照样能打开：
+    /// 整个重建回滚，停在第 8 版接着用，外键检查也重新打开；问题解决后下次打开再重建。
+    @Test func versionNineRebuildFailureKeepsVersionEight() throws {
+        let dir = try ClipStoreTests.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("history.sqlite").path
+
+        let old = try ClipStore(path: path)
+        let id = try old.insert(ClipContent(kind: .text, text: "first"), source: nil, at: Date(timeIntervalSince1970: 1))
+        let board = try old.createPinboard(name: "工作", color: .blue)
+        try old.pin(id, to: board.id)
+        // 退回第 8 版的列顺序：大块数据排在中间。
+        let raw = try SQLiteDatabase(path: path)
+        try raw.execute("""
+            PRAGMA foreign_keys = OFF;
+            CREATE TABLE clips_v8 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, text TEXT, rtf BLOB, image BLOB,
+                thumbnail BLOB, source_bundle_id TEXT, source_name TEXT, content_hash TEXT NOT NULL UNIQUE,
+                created_at REAL NOT NULL, ocr_text TEXT, title TEXT, link_title TEXT, link_icon BLOB,
+                text_subtype TEXT, pinned_top_at REAL
+            );
+            INSERT INTO clips_v8 (id, kind, text, content_hash, created_at) SELECT id, kind, text, content_hash, created_at FROM clips;
+            DROP TABLE clips;
+            ALTER TABLE clips_v8 RENAME TO clips;
+            CREATE INDEX clips_created_at ON clips (created_at DESC);
+            CREATE INDEX clips_source_bundle_id ON clips (source_bundle_id);
+            CREATE INDEX clips_pinned_top ON clips (pinned_top_at DESC, created_at DESC);
+            CREATE TABLE clips_v9 (id INTEGER);
+            PRAGMA user_version = 8;
+            """)
+        func firstColumnAfterText() throws -> String? {
+            let statement = try raw.prepare("SELECT name FROM pragma_table_info('clips') WHERE cid = 3")
+            return try statement.step() ? statement.text(0) : nil
+        }
+
+        let store = try ClipStore(path: path)
+        #expect(try raw.userVersion == 8)
+        #expect(try firstColumnAfterText() == "rtf")
+        #expect(try store.items(matching: ClipQuery(text: "fir")).map(\.id) == [id])
+        #expect(try store.items(matching: ClipQuery(pinboardID: board.id)).map(\.id) == [id])
+        #expect(throws: (any Error).self) { try store.pin(999, to: board.id) }
+
+        try raw.execute("DROP TABLE clips_v9;")
+        let retried = try ClipStore(path: path)
+        #expect(try raw.userVersion == 9)
+        #expect(try retried.items(matching: ClipQuery(pinboardID: board.id)).map(\.id) == [id])
     }
 
     /// 第 8 版迁移中途失败（这里用一个同名的索引让建索引出错，真实情况是磁盘满了）时整个回滚，
@@ -337,7 +484,7 @@ import Testing
 
         try raw.execute("DROP INDEX clips_pinned_top;")
         let store = try ClipStore(path: path)
-        #expect(try raw.userVersion == 8)
+        #expect(try raw.userVersion == 9)
         #expect(try hasPinColumn())
         #expect(try store.items().map(\.preview) == ["first"])
     }

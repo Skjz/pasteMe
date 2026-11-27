@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # 面板呼出和收起动画的性能基准。读数和用法见 docs/agents/ui-performance.md。
 #
-# 用法：scripts/bench-panel.sh [--delete | --move] [循环次数] [传给应用的参数…]
+# 用法：scripts/bench-panel.sh [--delete | --move | --search] [循环次数] [传给应用的参数…]
 #   scripts/bench-panel.sh                      # 9 次，第一次冷启动不计入中位数
 #   scripts/bench-panel.sh 9 -cursorStyle flow  # 用流光光标测
 #   scripts/bench-panel.sh --delete             # 呼出面板后反复删除选中的卡片再撤销，测颗粒动画
 #   scripts/bench-panel.sh --move               # 呼出面板后像按住 → ← 一样连续移动光标，测选中项变化时的重画
+#   scripts/bench-panel.sh --search 3           # 呼出面板后在搜索框里逐字打常见的词、罕见的词、用拼音组字，每个词再逐字删掉，测每次按键
 #
 # 构建当前目录的 debug 版，在一个空的临时 home 里运行（应用会自动填入测试历史），结束后删掉临时 home。
 # 运行期间面板会在屏幕底部反复弹出并取得键盘焦点。
@@ -19,11 +20,15 @@ cd "$(dirname "$0")/.."
 
 DELETE=0
 MOVE=0
+SEARCH=0
 if [[ "${1:-}" == "--delete" ]]; then
   DELETE=1
   shift
 elif [[ "${1:-}" == "--move" ]]; then
   MOVE=1
+  shift
+elif [[ "${1:-}" == "--search" ]]; then
+  SEARCH=1
   shift
 fi
 
@@ -46,4 +51,4 @@ if [[ -n "${PASTEME_BENCH_HISTORY:-}" ]]; then
   sqlite3 "$PASTEME_BENCH_HISTORY" ".backup '$BENCH_HOME/Library/Application Support/PasteMe Dev/history.sqlite'"
 fi
 
-CFFIXED_USER_HOME="$BENCH_HOME" PASTEME_BENCH="$CYCLES" PASTEME_BENCH_DELETE="$DELETE" PASTEME_BENCH_MOVE="$MOVE" "$BIN" "$@" 2>/dev/null
+CFFIXED_USER_HOME="$BENCH_HOME" PASTEME_BENCH="$CYCLES" PASTEME_BENCH_DELETE="$DELETE" PASTEME_BENCH_MOVE="$MOVE" PASTEME_BENCH_SEARCH="$SEARCH" "$BIN" "$@" 2>/dev/null

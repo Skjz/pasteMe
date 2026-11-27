@@ -9,7 +9,8 @@ import QuartzCore
 /// `PASTEME_BENCH=<次数>` 启动时运行：历史为空时先填入测试条目，然后反复呼出、收起面板，
 /// 每次记录两组数据后打印，最后打印中位数并退出。
 /// 再加上 `PASTEME_BENCH_DELETE=1` 时改为呼出面板后反复删除选中的卡片、再撤销，测颗粒动画和补位动画；
-/// `PASTEME_BENCH_MOVE=1` 时改为呼出面板后像按住方向键一样连续向右、再向左移动光标，测选中项变化时的重画。
+/// `PASTEME_BENCH_MOVE=1` 时改为呼出面板后像按住方向键一样连续向右、再向左移动光标，测选中项变化时的重画；
+/// `PASTEME_BENCH_SEARCH=1` 时改为呼出面板后在搜索框里逐字打字、用输入法组字、再逐字删掉，测每次按键的耗时。
 /// - 主线程：display link 回调之间的间隔，以及 `show()` / `hide()` 本身的耗时。
 /// - 实际上屏：面板里一个 2×2 的 Metal 图层每帧提交一次，`presentedTime` 之间的空档就是用户看到的掉帧。
 @MainActor
@@ -35,6 +36,14 @@ enum PanelBenchmark {
         ProcessInfo.processInfo.environment["PASTEME_BENCH_MOVE"] == "1"
     }
 
+    private static var measuresSearch: Bool {
+        ProcessInfo.processInfo.environment["PASTEME_BENCH_SEARCH"] == "1"
+    }
+
+    /// 打字的间隔。连续打字时一个字大约 80 ms。按键按固定的节奏发出，不等上一次按键处理完：
+    /// 慢的版本不会因此打得更慢。
+    private static let keyInterval = 0.08
+
     /// 按住方向键时一次连发移动几格、间隔多久（系统最快的按键重复约 30 ms 一次）。
     private static let moveSteps = 8
     private static let moveInterval = 0.05
@@ -59,7 +68,8 @@ enum PanelBenchmark {
     static func run(panel: PanelController, model: HistoryModel, store: ClipStore, cycles: Int) {
         seedIfEmpty(store)
         var results: [String: [Sample]] = [:]
-        let phases = measuresDelete ? ["delete", "undo"] : measuresMove ? ["right", "left"] : ["show", "hide"]
+        let phases = measuresDelete ? ["delete", "undo"] : measuresMove ? ["right", "left"]
+            : measuresSearch ? SearchKey.phases : ["show", "hide"]
 
         func measure(
             _ phase: String, for duration: Double = window, _ action: () -> Void,
@@ -78,17 +88,19 @@ enum PanelBenchmark {
                 ticker?.stop()
                 let sample = Sample(call: call, ticks: ticks, presented: probe?.presented ?? [])
                 print("\(phase) \(sample.line)")
-                results[phase, default: []].append(sample)
+                results[SearchKey.phase(of: phase), default: []].append(sample)
                 next()
             }
         }
 
         func cycle(_ index: Int) {
             guard index < cycles else {
-                // 第一次是冷启动，不计入中位数。
+                // 第一次是冷启动，不计入中位数。测搜索时去掉第一轮的所有按键。
                 for phase in phases {
-                    let samples = Array((results[phase] ?? []).dropFirst())
+                    let firstRound = measuresSearch ? SearchKey.script.filter { $0.phase == phase }.count : 1
+                    let samples = Array((results[phase] ?? []).dropFirst(firstRound))
                     print("median \(phase) \(Sample.medianLine(samples))")
+                    if measuresSearch { print("worst \(phase) \(Sample.worstLine(samples))") }
                 }
                 fflush(stdout)
                 NSApp.terminate(nil)
@@ -101,6 +113,16 @@ enum PanelBenchmark {
                             after(0.3) { cycle(index + 1) }
                         }
                     }
+                }
+                return
+            }
+            if measuresSearch {
+                typeRound(in: panel.window) { keys in
+                    for (key, sample) in keys {
+                        print("\(key.label) \(sample.line)")
+                        results[key.phase, default: []].append(sample)
+                    }
+                    after(0.3) { cycle(index + 1) }
                 }
                 return
             }
@@ -131,9 +153,64 @@ enum PanelBenchmark {
                 ticker = BenchTicker(window: panel.window)
                 after(1.0) { cycle(0) }
             }
+        } else if measuresSearch {
+            if let count = try? store.count(), count < 1_000 {
+                print("search: 历史只有 \(count) 条，看不出查询和换卡片的开销，用 PASTEME_BENCH_HISTORY 指向几千条的历史")
+            }
+            // 焦点放到搜索框上，按键交给它的字段编辑器，和真的打字一样经过 `TextField` 的绑定。
+            after(1.0) {
+                panel.show()
+                model.focus = .search
+                ticker = BenchTicker(window: panel.window)
+                after(1.0) { cycle(0) }
+            }
         } else {
             after(1.0) { cycle(0) }
         }
+    }
+
+    /// 按 `SearchKey.script` 打一轮字，每 `keyInterval` 发一次按键。整轮连续记录主线程的帧和上屏的帧，
+    /// 打完再按按键的时间切开：每次按键的读数从它发出算到下一次按键发出，跨过两次按键的空档算在后一次上。
+    private static func typeRound(in window: NSWindow, done: @escaping @MainActor ([(SearchKey, Sample)]) -> Void) {
+        let keys = SearchKey.script
+        var starts: [CFTimeInterval] = []
+        var calls: [Double] = []
+        ticks = []
+        probe?.reset()
+        recording = true
+        ticker?.start()
+        let origin = CACurrentMediaTime()
+
+        func press(_ index: Int) {
+            guard index < keys.count else {
+                // 等最后一次按键的结果上屏，上屏的回调也送回来。
+                after(keyInterval + 0.15) {
+                    recording = false
+                    ticker?.stop()
+                    let end = CACurrentMediaTime()
+                    let frames = (probe?.frames ?? []).sorted { $0.presented < $1.presented }
+                    done(keys.indices.map { i in
+                        let sample = Sample(
+                            call: calls[i], start: starts[i], end: i + 1 < starts.count ? starts[i + 1] : end,
+                            ticks: ticks, frames: frames
+                        )
+                        return (keys[i], sample)
+                    })
+                }
+                return
+            }
+            let start = CACurrentMediaTime()
+            guard keys[index].send(to: window) else {
+                print("search: 搜索框不是第一响应者，按键没有送到，停止")
+                fflush(stdout)
+                exit(1)
+            }
+            calls.append(CACurrentMediaTime() - start)
+            starts.append(start)
+            let next = origin + Double(index + 1) * keyInterval
+            after(max(0, next - CACurrentMediaTime())) { press(index + 1) }
+        }
+        press(0)
     }
 
     /// 第一格立刻移动（计入 `call_ms`），其余的按连发的间隔接着移动。
@@ -158,12 +235,37 @@ enum PanelBenchmark {
         var presented: Int
         var presentMissed: Int
         var presentLongestMS: Double
+        /// 测搜索时：从按键发出到这次按键的排版和图层提交做完。只看主线程，没有上屏的帧时也有。
+        var keyToCommitMS: Double?
+        /// 测搜索时：从按键发出到它的结果上屏。没有上屏的帧（例如远程桌面的虚拟显示器）时为 nil。
+        var keyToPresentMS: Double?
 
         init(call: Double, ticks: [CFTimeInterval], presented: [CFTimeInterval]) {
             callMS = call * 1000
             (mainMissed, mainLongestMS) = Self.gaps(ticks)
             self.presented = presented.count
             (presentMissed, presentLongestMS) = Self.gaps(presented.sorted())
+        }
+
+        /// 一次按键在连续记录里的那一段：从 `start` 到 `end`（下一次按键发出）。前一段最后的那一帧也带上，
+        /// 跨过两次按键的空档算在这一次上。
+        ///
+        /// 按键的同步部分做完以后的第二帧 display link 时，这次按键的排版和图层提交一定已经做完（第一帧时可能还在提交）：
+        /// 到这一帧为止是 `keyToCommitMS`，最多比实际晚一帧；这一帧探针画面的上屏时间是 `keyToPresentMS`。
+        init(call: Double, start: CFTimeInterval, end: CFTimeInterval, ticks: [CFTimeInterval], frames: [PresentProbe.Frame]) {
+            let window = ticks.filter { $0 >= start && $0 < end }
+            self.init(
+                call: call,
+                ticks: [start] + window,
+                presented: (frames.last { $0.presented < start }.map { [$0.presented] } ?? [])
+                    + frames.map(\.presented).filter { $0 >= start && $0 < end }
+            )
+            presented = frames.filter { $0.presented >= start && $0.presented < end }.count
+            let second = ticks.filter { $0 > start + call }.dropFirst().first
+            keyToCommitMS = second.map { ($0 - start) * 1000 }
+            keyToPresentMS = second.flatMap { tick in
+                frames.first { $0.submitted >= tick }.map { ($0.presented - start) * 1000 }
+            }
         }
 
         /// 相邻时间点之间缺了几帧（累计），以及最长的间隔。
@@ -177,7 +279,13 @@ enum PanelBenchmark {
             String(
                 format: "present_missed=%d presented=%d present_longest_ms=%.1f main_missed=%d main_longest_ms=%.1f call_ms=%.1f",
                 presentMissed, presented, presentLongestMS, mainMissed, mainLongestMS, callMS
-            )
+            ) + Self.latencies(commit: keyToCommitMS, present: keyToPresentMS)
+        }
+
+        /// 测搜索时的两个延迟，有哪个打印哪个。
+        static func latencies(commit: Double?, present: Double?) -> String {
+            (commit.map { String(format: " key_to_commit_ms=%.1f", $0) } ?? "")
+                + (present.map { String(format: " key_to_present_ms=%.1f", $0) } ?? "")
         }
 
         static func medianLine(_ samples: [Sample]) -> String {
@@ -188,7 +296,19 @@ enum PanelBenchmark {
                   let mainMissed = median(samples.map(\.mainMissed)),
                   let call = median(samples.map(\.callMS))
             else { return "no samples" }
-            return String(format: "present_missed=%d main_missed=%d call_ms=%.1f (n=%d)", presentMissed, mainMissed, call, samples.count)
+            return String(format: "present_missed=%d main_missed=%d call_ms=%.1f", presentMissed, mainMissed, call)
+                + latencies(commit: median(samples.compactMap(\.keyToCommitMS)), present: median(samples.compactMap(\.keyToPresentMS)))
+                + " (n=\(samples.count))"
+        }
+
+        /// 最差的那次：缺帧最多、主线程卡得最久、调用最慢的各是多少。
+        static func worstLine(_ samples: [Sample]) -> String {
+            guard !samples.isEmpty else { return "no samples" }
+            return String(
+                format: "present_missed=%d present_longest_ms=%.1f main_longest_ms=%.1f call_ms=%.1f",
+                samples.map(\.presentMissed).max()!, samples.map(\.presentLongestMS).max()!,
+                samples.map(\.mainLongestMS).max()!, samples.map(\.callMS).max()!
+            ) + latencies(commit: samples.compactMap(\.keyToCommitMS).max(), present: samples.compactMap(\.keyToPresentMS).max())
         }
     }
 
@@ -245,6 +365,69 @@ enum PanelBenchmark {
     }
 }
 
+/// 测搜索时的一次按键：打一个字、输入法组字时改一次未确认的文字，或者删一个字。
+/// 都交给搜索框的字段编辑器，和用键盘打字时一样经过 `TextField` 的绑定。
+@MainActor
+private struct SearchKey {
+    enum Action {
+        case insert(String)
+        case mark(String)
+        case deleteBackward
+    }
+
+    let action: Action
+    /// 这次按键的读数算在哪一组。
+    let phase: String
+
+    /// 打常见的词（每个字都有命中，列表跟着换）、打几乎没有命中的词（要扫全表）、用拼音组字、删字，各一组读数。
+    static let phases = ["common", "rare", "compose", "delete"]
+
+    /// 每个词打完再逐字删掉，下一个词从空的搜索框开始。
+    static let script: [SearchKey] = {
+        func type(_ word: String, as phase: String) -> [SearchKey] {
+            word.map { SearchKey(action: .insert(String($0)), phase: phase) }
+        }
+        func delete(_ count: Int) -> [SearchKey] {
+            Array(repeating: SearchKey(action: .deleteBackward, phase: "delete"), count: count)
+        }
+        var keys = type("github", as: "common") + delete(6)
+        keys += type("zqxj", as: "rare") + delete(4)
+        keys += ["c", "ce", "ces", "cesh", "ceshi"].map { SearchKey(action: .mark($0), phase: "compose") }
+        keys.append(SearchKey(action: .insert("测试"), phase: "common"))
+        keys += delete(2)
+        return keys
+    }()
+
+    /// 每行读数前面的标签：组别加上这次按的键。
+    var label: String {
+        switch action {
+        case .insert(let text), .mark(let text): "\(phase)[\(text)]"
+        case .deleteBackward: phase
+        }
+    }
+
+    static func phase(of label: String) -> String {
+        phases.first { label.hasPrefix($0) } ?? label
+    }
+
+    /// 搜索框不是第一响应者、按键送不到时返回 false。
+    func send(to window: NSWindow) -> Bool {
+        guard let editor = window.firstResponder as? NSTextView else { return false }
+        switch action {
+        case .insert(let text):
+            editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+        case .mark(let text):
+            editor.setMarkedText(
+                text, selectedRange: NSRange(location: text.utf16.count, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+        case .deleteBackward:
+            editor.deleteBackward(nil)
+        }
+        return true
+    }
+}
+
 /// 测删除时每帧调用一次 `PanelBenchmark.frameTick`。
 @MainActor
 private final class BenchTicker: NSObject {
@@ -273,7 +456,13 @@ private final class PresentProbe {
     private let layer = CAMetalLayer()
     private let queue: MTLCommandQueue
     private var flip = false
-    private(set) var presented: [CFTimeInterval] = []
+    /// 一帧探针画面：在哪一帧 display link 时提交，什么时候上屏。
+    struct Frame {
+        var submitted: CFTimeInterval
+        var presented: CFTimeInterval
+    }
+    private(set) var frames: [Frame] = []
+    var presented: [CFTimeInterval] { frames.map(\.presented) }
 
     init?(window: NSWindow) {
         guard let device = MTLCreateSystemDefaultDevice(),
@@ -291,7 +480,7 @@ private final class PresentProbe {
     }
 
     func reset() {
-        presented = []
+        frames = []
     }
 
     func tick() {
@@ -303,12 +492,13 @@ private final class PresentProbe {
         flip.toggle()
         pass.colorAttachments[0].clearColor = MTLClearColor(red: flip ? 1 : 0, green: 0, blue: 0, alpha: 1)
         buffer.makeRenderCommandEncoder(descriptor: pass)?.endEncoding()
+        let submitted = CACurrentMediaTime()
         drawable.addPresentedHandler { [weak self] drawable in
             let time = drawable.presentedTime
             // presentedTime 为 0 表示这一帧没有上屏，例如面板已经离开屏幕。
             guard time > 0 else { return }
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.presented.append(time) }
+                MainActor.assumeIsolated { self?.frames.append(Frame(submitted: submitted, presented: time)) }
             }
         }
         buffer.present(drawable)
