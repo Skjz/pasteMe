@@ -120,7 +120,13 @@ public final class ClipStore {
             }
         }
         if try db.userVersion < 9 {
-            try moveLargeColumnsLast()
+            // 重建只是为了让搜索快，表里的列（按名字读写）不变。失败时（多半是磁盘放不下第二份历史）整个回滚，
+            // 停在第 8 版接着用，下次打开再试；不能让应用因此打不开。
+            do {
+                try moveLargeColumnsLast()
+            } catch {
+                NSLog("PasteMe: 重建历史表失败，下次打开再试：\(error)")
+            }
         }
     }
 
@@ -178,13 +184,16 @@ public final class ClipStore {
                 [.int(lastID)]
             )
             try db.run("UPDATE sqlite_sequence SET seq = max(seq, ?) WHERE name = 'clips'", [.int(lastID)])
-            let broken = try db.prepare("PRAGMA foreign_key_check")
-            if try broken.step() { throw SQLiteError(code: -1, message: "重建 clips 表后外键对不上") }
+            let broken: Bool = try {
+                let check = try db.prepare("PRAGMA foreign_key_check")
+                return try check.step()
+            }()
+            if broken { throw SQLiteError(code: -1, message: "重建 clips 表后外键对不上") }
             try db.execute("PRAGMA user_version = 9")
         }
         // 旧表的页留在空闲列表里，文件变成原来的两倍大，整理一遍再还给磁盘（两百多 MB 约 1 秒）。
         // 重建和整理时整张表都写进了 WAL，写回数据库后把 WAL 文件截短，不留一个和历史一样大的文件。
-        // 这两步失败（例如磁盘不够）不影响使用，下次升级时也不会重做。
+        // 这两步失败（例如磁盘不够、有别的连接正在读）不影响使用，但下次打开不会重做：空闲页留在文件里，以后写入时再用上。
         try? db.execute("VACUUM")
         try? db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     }

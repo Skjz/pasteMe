@@ -40,7 +40,8 @@ enum PanelBenchmark {
         ProcessInfo.processInfo.environment["PASTEME_BENCH_SEARCH"] == "1"
     }
 
-    /// 打字的间隔，也是每次按键统计多久。连续打字时一个字大约 80 ms。
+    /// 打字的间隔。连续打字时一个字大约 80 ms。按键按固定的节奏发出，不等上一次按键处理完：
+    /// 慢的版本不会因此打得更慢。
     private static let keyInterval = 0.08
 
     /// 按住方向键时一次连发移动几格、间隔多久（系统最快的按键重复约 30 ms 一次）。
@@ -116,16 +117,13 @@ enum PanelBenchmark {
                 return
             }
             if measuresSearch {
-                func press(_ keys: ArraySlice<SearchKey>) {
-                    guard let key = keys.first else {
-                        after(0.3) { cycle(index + 1) }
-                        return
+                typeRound(in: panel.window) { keys in
+                    for (key, sample) in keys {
+                        print("\(key.label) \(sample.line)")
+                        results[key.phase, default: []].append(sample)
                     }
-                    measure(key.label, for: keyInterval, { key.send(to: panel.window) }) {
-                        press(keys.dropFirst())
-                    }
+                    after(0.3) { cycle(index + 1) }
                 }
-                press(SearchKey.script[...])
                 return
             }
             if measuresMove {
@@ -156,6 +154,9 @@ enum PanelBenchmark {
                 after(1.0) { cycle(0) }
             }
         } else if measuresSearch {
+            if let count = try? store.count(), count < 1_000 {
+                print("search: 历史只有 \(count) 条，看不出查询和换卡片的开销，用 PASTEME_BENCH_HISTORY 指向几千条的历史")
+            }
             // 焦点放到搜索框上，按键交给它的字段编辑器，和真的打字一样经过 `TextField` 的绑定。
             after(1.0) {
                 panel.show()
@@ -166,6 +167,50 @@ enum PanelBenchmark {
         } else {
             after(1.0) { cycle(0) }
         }
+    }
+
+    /// 按 `SearchKey.script` 打一轮字，每 `keyInterval` 发一次按键。整轮连续记录主线程的帧和上屏的帧，
+    /// 打完再按按键的时间切开：每次按键的读数从它发出算到下一次按键发出，跨过两次按键的空档算在后一次上。
+    private static func typeRound(in window: NSWindow, done: @escaping @MainActor ([(SearchKey, Sample)]) -> Void) {
+        let keys = SearchKey.script
+        var starts: [CFTimeInterval] = []
+        var calls: [Double] = []
+        ticks = []
+        probe?.reset()
+        recording = true
+        ticker?.start()
+        let origin = CACurrentMediaTime()
+
+        func press(_ index: Int) {
+            guard index < keys.count else {
+                // 等最后一次按键的结果上屏，上屏的回调也送回来。
+                after(keyInterval + 0.15) {
+                    recording = false
+                    ticker?.stop()
+                    let end = CACurrentMediaTime()
+                    let frames = (probe?.frames ?? []).sorted { $0.presented < $1.presented }
+                    done(keys.indices.map { i in
+                        let sample = Sample(
+                            call: calls[i], start: starts[i], end: i + 1 < starts.count ? starts[i + 1] : end,
+                            ticks: ticks, frames: frames
+                        )
+                        return (keys[i], sample)
+                    })
+                }
+                return
+            }
+            let start = CACurrentMediaTime()
+            guard keys[index].send(to: window) else {
+                print("search: 搜索框不是第一响应者，按键没有送到，停止")
+                fflush(stdout)
+                exit(1)
+            }
+            calls.append(CACurrentMediaTime() - start)
+            starts.append(start)
+            let next = origin + Double(index + 1) * keyInterval
+            after(max(0, next - CACurrentMediaTime())) { press(index + 1) }
+        }
+        press(0)
     }
 
     /// 第一格立刻移动（计入 `call_ms`），其余的按连发的间隔接着移动。
@@ -190,12 +235,34 @@ enum PanelBenchmark {
         var presented: Int
         var presentMissed: Int
         var presentLongestMS: Double
+        /// 测搜索时：从按键发出到它的结果上屏。没有上屏的帧（例如远程桌面的虚拟显示器）时为 nil。
+        var keyToPresentMS: Double?
 
         init(call: Double, ticks: [CFTimeInterval], presented: [CFTimeInterval]) {
             callMS = call * 1000
             (mainMissed, mainLongestMS) = Self.gaps(ticks)
             self.presented = presented.count
             (presentMissed, presentLongestMS) = Self.gaps(presented.sorted())
+        }
+
+        /// 一次按键在连续记录里的那一段：从 `start` 到 `end`（下一次按键发出）。前一段最后的那一帧也带上，
+        /// 跨过两次按键的空档算在这一次上。
+        ///
+        /// 按键到上屏：按键的同步部分做完以后的第二帧 display link 时，这次按键的排版和图层提交一定已经做完
+        /// （第一帧时可能还在提交），这一帧探针画面的上屏时间就是结果最晚的上屏时间，最多比实际晚一帧。
+        init(call: Double, start: CFTimeInterval, end: CFTimeInterval, ticks: [CFTimeInterval], frames: [PresentProbe.Frame]) {
+            let window = ticks.filter { $0 >= start && $0 < end }
+            self.init(
+                call: call,
+                ticks: [start] + window,
+                presented: (frames.last { $0.presented < start }.map { [$0.presented] } ?? [])
+                    + frames.map(\.presented).filter { $0 >= start && $0 < end }
+            )
+            presented = frames.filter { $0.presented >= start && $0.presented < end }.count
+            let second = ticks.filter { $0 > start + call }.dropFirst().first
+            keyToPresentMS = second.flatMap { tick in
+                frames.first { $0.submitted >= tick }.map { ($0.presented - start) * 1000 }
+            }
         }
 
         /// 相邻时间点之间缺了几帧（累计），以及最长的间隔。
@@ -209,7 +276,7 @@ enum PanelBenchmark {
             String(
                 format: "present_missed=%d presented=%d present_longest_ms=%.1f main_missed=%d main_longest_ms=%.1f call_ms=%.1f",
                 presentMissed, presented, presentLongestMS, mainMissed, mainLongestMS, callMS
-            )
+            ) + (keyToPresentMS.map { String(format: " key_to_present_ms=%.1f", $0) } ?? "")
         }
 
         static func medianLine(_ samples: [Sample]) -> String {
@@ -220,7 +287,9 @@ enum PanelBenchmark {
                   let mainMissed = median(samples.map(\.mainMissed)),
                   let call = median(samples.map(\.callMS))
             else { return "no samples" }
-            return String(format: "present_missed=%d main_missed=%d call_ms=%.1f (n=%d)", presentMissed, mainMissed, call, samples.count)
+            let keyToPresent = median(samples.compactMap(\.keyToPresentMS)).map { String(format: " key_to_present_ms=%.1f", $0) } ?? ""
+            return String(format: "present_missed=%d main_missed=%d call_ms=%.1f", presentMissed, mainMissed, call)
+                + keyToPresent + " (n=\(samples.count))"
         }
 
         /// 最差的那次：缺帧最多、主线程卡得最久、调用最慢的各是多少。
@@ -230,7 +299,7 @@ enum PanelBenchmark {
                 format: "present_missed=%d present_longest_ms=%.1f main_longest_ms=%.1f call_ms=%.1f",
                 samples.map(\.presentMissed).max()!, samples.map(\.presentLongestMS).max()!,
                 samples.map(\.mainLongestMS).max()!, samples.map(\.callMS).max()!
-            )
+            ) + (samples.compactMap(\.keyToPresentMS).max().map { String(format: " key_to_present_ms=%.1f", $0) } ?? "")
         }
     }
 
@@ -332,11 +401,9 @@ private struct SearchKey {
         phases.first { label.hasPrefix($0) } ?? label
     }
 
-    func send(to window: NSWindow) {
-        guard let editor = window.firstResponder as? NSTextView else {
-            print("search: 搜索框不是第一响应者")
-            return
-        }
+    /// 搜索框不是第一响应者、按键送不到时返回 false。
+    func send(to window: NSWindow) -> Bool {
+        guard let editor = window.firstResponder as? NSTextView else { return false }
         switch action {
         case .insert(let text):
             editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -348,6 +415,7 @@ private struct SearchKey {
         case .deleteBackward:
             editor.deleteBackward(nil)
         }
+        return true
     }
 }
 
@@ -379,7 +447,13 @@ private final class PresentProbe {
     private let layer = CAMetalLayer()
     private let queue: MTLCommandQueue
     private var flip = false
-    private(set) var presented: [CFTimeInterval] = []
+    /// 一帧探针画面：在哪一帧 display link 时提交，什么时候上屏。
+    struct Frame {
+        var submitted: CFTimeInterval
+        var presented: CFTimeInterval
+    }
+    private(set) var frames: [Frame] = []
+    var presented: [CFTimeInterval] { frames.map(\.presented) }
 
     init?(window: NSWindow) {
         guard let device = MTLCreateSystemDefaultDevice(),
@@ -397,7 +471,7 @@ private final class PresentProbe {
     }
 
     func reset() {
-        presented = []
+        frames = []
     }
 
     func tick() {
@@ -409,12 +483,13 @@ private final class PresentProbe {
         flip.toggle()
         pass.colorAttachments[0].clearColor = MTLClearColor(red: flip ? 1 : 0, green: 0, blue: 0, alpha: 1)
         buffer.makeRenderCommandEncoder(descriptor: pass)?.endEncoding()
+        let submitted = CACurrentMediaTime()
         drawable.addPresentedHandler { [weak self] drawable in
             let time = drawable.presentedTime
             // presentedTime 为 0 表示这一帧没有上屏，例如面板已经离开屏幕。
             guard time > 0 else { return }
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.presented.append(time) }
+                MainActor.assumeIsolated { self?.frames.append(Frame(submitted: submitted, presented: time)) }
             }
         }
         buffer.present(drawable)
