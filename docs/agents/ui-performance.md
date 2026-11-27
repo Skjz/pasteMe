@@ -29,6 +29,7 @@
 - 传给应用的参数放在次数后面，例如 `scripts/bench-panel.sh 9 -cursorStyle flow`。
 - 基准按开发版运行（ADR 0009），读的是开发版偏好域 `io.github.skjz.PasteMe.dev` 里的设置，一般是默认值，不是用户自己的设置。和 ADR 0009 之前的提交比较时，旧提交读的是用户的设置；两边设置不同（比如光标样式）时，用上面的参数把它们设成一样。
 - 用户在自己的历史上觉得卡、基准却测不出来时，用用户的数据和 release 版本测：`PASTEME_BENCH_HISTORY=<history.sqlite>` 用这份历史的副本（`sqlite3 .backup` 拷贝，原文件不动），`PASTEME_BENCH_RELEASE=1` 用 release 优化编译。对比 main 时先用 `sqlite3 .backup` 固定一份副本，两边用同一份。
+- 不想占用户的屏幕时，在另一台 Mac 上跑：本机编译 release 基准（`swift build -c release -Xswiftc -DDEBUG --build-path .build/bench-release`），把 `PasteMe` 拷过去，在临时 home 里运行。那台机器的屏幕如果是远程桌面的虚拟显示器，`presented` 一直是 0，上屏读数用不了，只看主线程的读数。想知道时间花在哪，用系统自带的 `sample <pid> 20 1` 采样，不需要 Xcode，也不会像 Instruments 那样在 `$TMPDIR` 留下大文件。
 - 中位数会藏住偶尔的大卡顿：循环次数加到 25 次左右，把每一行都存下来，再算平均值和最差的 10%。
 
 ## 已经确认过的渲染端开销
@@ -37,7 +38,7 @@
 
 ## 已经确认过的主线程开销
 
-- 搜索（#89）：每改一个字，`HistoryModel.query` 在主线程上同步查询一次。用 5333 条、238 MB 的真实历史（release，60 Hz 的屏幕，60 Hz 下每 80 ms 本来就要记 4 帧）测 `--search 5`，修复前每次按键的 `call_ms` 中位数约 54 ms，其中 `items(matching:)` 的 SQL 约 51 ms，置顶计数、候选列表、拼查询条件加起来不到 2 ms；`present_missed` 中位数 9～11，每次按键主线程最长被占的时间中位数约 60 ms。慢在列的顺序（见 `docs/architecture.md` 的「列的顺序」），第 9 版改过以后 `call_ms` 约 4～5 ms，SQL 约 3 ms，`present_missed` 中位数 4～5，主线程最长被占的时间中位数约 25 ms、最差的 10% 约 40 ms。还剩的主要是结果列表换了以后新出现的约 8 张卡片的创建和绘制。输入法组字时（还没确认的拼音）不改 `query`，不查询，读数和什么都不做一样。
+- 搜索（#89）：每改一个字，`HistoryModel.query` 在主线程上同步查询一次。用 5333 条、238 MB 的真实历史（release，60 Hz 的屏幕，60 Hz 下每 80 ms 本来就要记 4 帧）测 `--search 5`，修复前每次按键的 `call_ms` 中位数约 54 ms，其中 `items(matching:)` 的 SQL 约 51 ms，置顶计数、候选列表、拼查询条件加起来不到 2 ms；`present_missed` 中位数 9～11，每次按键主线程最长被占的时间中位数约 60 ms。慢在列的顺序（见 `docs/architecture.md` 的「列的顺序」），第 9 版改过以后 `call_ms` 约 4～5 ms，SQL 约 3 ms，`present_missed` 中位数 4～5，主线程最长被占的时间中位数约 25 ms、最差的 10% 约 40 ms。还剩的是结果列表换了以后新出现的卡片：每次约 11 张（屏幕上 8 张，加上 `LazyHStack` 预先准备的几张），结果没变的按键也会重算这 11 张的 body，但很快。这部分没有单独的热点：在屏幕上把标题栏、内容、底部、外框阴影各关掉一项，每项只省 3～5 ms，不解码缩略图也没有差别，整张卡片换成空方块才回到底线。在屏幕上用 `/usr/bin/sample` 采样主线程（20 秒，忙碌约 3300 ms）：查询约占 18%；真正画图层（`CA::Layer::display`）约 4%，画文字几乎为 0；大头在 SwiftUI 的视图图更新，主要是排版（`sizeThatFits`，一层层 stack、padding、frame 和 `.overlay(alignment:)` 的对齐往下量尺寸）、把结果转成图层（`DisplayList.ViewUpdater`）和 `LazyHStack` 摆放，分在每个视图上，项目自己的 `body` 只占一百多个采样。量文字和生成富文本合起来约 10%～15%，但把预览截到 1000 字（屏幕上最多显示 11 行）读数没有变化。离屏计时（不显示的 `NSHostingView` 加 `cacheDisplay`）一张卡片约 5 ms，大部分在 `cacheDisplay` 用 CPU 画图，和屏幕上不一样，只能用来比较排版的部分（不到 1 ms）。输入法组字时（还没确认的拼音）不改 `query`，不查询，读数和什么都不做一样。
 
 - 代码卡片（#28）：识别在记录时做，着色只做卡片显示的前 11 行，结果按条目和深浅外观缓存（`CodeHighlightCache`），所以带着色的 `AttributedString` 不会每次画卡片都重算。单张代码卡片和普通文本卡片从创建到画出来一样快。用 36 条代码的历史（`PASTEME_BENCH_HISTORY`，release）和 main 背靠背各测三轮，呼出、收起、移动光标的 `present_missed` 都不比 main 多。
 
