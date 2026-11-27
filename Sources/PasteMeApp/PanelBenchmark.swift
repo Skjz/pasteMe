@@ -235,6 +235,8 @@ enum PanelBenchmark {
         var presented: Int
         var presentMissed: Int
         var presentLongestMS: Double
+        /// 测搜索时：从按键发出到这次按键的排版和图层提交做完。只看主线程，没有上屏的帧时也有。
+        var keyToCommitMS: Double?
         /// 测搜索时：从按键发出到它的结果上屏。没有上屏的帧（例如远程桌面的虚拟显示器）时为 nil。
         var keyToPresentMS: Double?
 
@@ -248,8 +250,8 @@ enum PanelBenchmark {
         /// 一次按键在连续记录里的那一段：从 `start` 到 `end`（下一次按键发出）。前一段最后的那一帧也带上，
         /// 跨过两次按键的空档算在这一次上。
         ///
-        /// 按键到上屏：按键的同步部分做完以后的第二帧 display link 时，这次按键的排版和图层提交一定已经做完
-        /// （第一帧时可能还在提交），这一帧探针画面的上屏时间就是结果最晚的上屏时间，最多比实际晚一帧。
+        /// 按键的同步部分做完以后的第二帧 display link 时，这次按键的排版和图层提交一定已经做完（第一帧时可能还在提交）：
+        /// 到这一帧为止是 `keyToCommitMS`，最多比实际晚一帧；这一帧探针画面的上屏时间是 `keyToPresentMS`。
         init(call: Double, start: CFTimeInterval, end: CFTimeInterval, ticks: [CFTimeInterval], frames: [PresentProbe.Frame]) {
             let window = ticks.filter { $0 >= start && $0 < end }
             self.init(
@@ -260,6 +262,7 @@ enum PanelBenchmark {
             )
             presented = frames.filter { $0.presented >= start && $0.presented < end }.count
             let second = ticks.filter { $0 > start + call }.dropFirst().first
+            keyToCommitMS = second.map { ($0 - start) * 1000 }
             keyToPresentMS = second.flatMap { tick in
                 frames.first { $0.submitted >= tick }.map { ($0.presented - start) * 1000 }
             }
@@ -276,7 +279,13 @@ enum PanelBenchmark {
             String(
                 format: "present_missed=%d presented=%d present_longest_ms=%.1f main_missed=%d main_longest_ms=%.1f call_ms=%.1f",
                 presentMissed, presented, presentLongestMS, mainMissed, mainLongestMS, callMS
-            ) + (keyToPresentMS.map { String(format: " key_to_present_ms=%.1f", $0) } ?? "")
+            ) + Self.latencies(commit: keyToCommitMS, present: keyToPresentMS)
+        }
+
+        /// 测搜索时的两个延迟，有哪个打印哪个。
+        static func latencies(commit: Double?, present: Double?) -> String {
+            (commit.map { String(format: " key_to_commit_ms=%.1f", $0) } ?? "")
+                + (present.map { String(format: " key_to_present_ms=%.1f", $0) } ?? "")
         }
 
         static func medianLine(_ samples: [Sample]) -> String {
@@ -287,9 +296,9 @@ enum PanelBenchmark {
                   let mainMissed = median(samples.map(\.mainMissed)),
                   let call = median(samples.map(\.callMS))
             else { return "no samples" }
-            let keyToPresent = median(samples.compactMap(\.keyToPresentMS)).map { String(format: " key_to_present_ms=%.1f", $0) } ?? ""
             return String(format: "present_missed=%d main_missed=%d call_ms=%.1f", presentMissed, mainMissed, call)
-                + keyToPresent + " (n=\(samples.count))"
+                + latencies(commit: median(samples.compactMap(\.keyToCommitMS)), present: median(samples.compactMap(\.keyToPresentMS)))
+                + " (n=\(samples.count))"
         }
 
         /// 最差的那次：缺帧最多、主线程卡得最久、调用最慢的各是多少。
@@ -299,7 +308,7 @@ enum PanelBenchmark {
                 format: "present_missed=%d present_longest_ms=%.1f main_longest_ms=%.1f call_ms=%.1f",
                 samples.map(\.presentMissed).max()!, samples.map(\.presentLongestMS).max()!,
                 samples.map(\.mainLongestMS).max()!, samples.map(\.callMS).max()!
-            ) + (samples.compactMap(\.keyToPresentMS).max().map { String(format: " key_to_present_ms=%.1f", $0) } ?? "")
+            ) + latencies(commit: samples.compactMap(\.keyToCommitMS).max(), present: samples.compactMap(\.keyToPresentMS).max())
         }
     }
 
