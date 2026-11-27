@@ -9,7 +9,8 @@ import QuartzCore
 /// `PASTEME_BENCH=<次数>` 启动时运行：历史为空时先填入测试条目，然后反复呼出、收起面板，
 /// 每次记录两组数据后打印，最后打印中位数并退出。
 /// 再加上 `PASTEME_BENCH_DELETE=1` 时改为呼出面板后反复删除选中的卡片、再撤销，测颗粒动画和补位动画；
-/// `PASTEME_BENCH_MOVE=1` 时改为呼出面板后像按住方向键一样连续向右、再向左移动光标，测选中项变化时的重画。
+/// `PASTEME_BENCH_MOVE=1` 时改为呼出面板后像按住方向键一样连续向右、再向左移动光标，测选中项变化时的重画；
+/// `PASTEME_BENCH_SEARCH=1` 时改为呼出面板后在搜索框里逐字打字、用输入法组字、再逐字删掉，测每次按键的耗时。
 /// - 主线程：display link 回调之间的间隔，以及 `show()` / `hide()` 本身的耗时。
 /// - 实际上屏：面板里一个 2×2 的 Metal 图层每帧提交一次，`presentedTime` 之间的空档就是用户看到的掉帧。
 @MainActor
@@ -35,6 +36,13 @@ enum PanelBenchmark {
         ProcessInfo.processInfo.environment["PASTEME_BENCH_MOVE"] == "1"
     }
 
+    private static var measuresSearch: Bool {
+        ProcessInfo.processInfo.environment["PASTEME_BENCH_SEARCH"] == "1"
+    }
+
+    /// 打字的间隔，也是每次按键统计多久。连续打字时一个字大约 80 ms。
+    private static let keyInterval = 0.08
+
     /// 按住方向键时一次连发移动几格、间隔多久（系统最快的按键重复约 30 ms 一次）。
     private static let moveSteps = 8
     private static let moveInterval = 0.05
@@ -59,7 +67,8 @@ enum PanelBenchmark {
     static func run(panel: PanelController, model: HistoryModel, store: ClipStore, cycles: Int) {
         seedIfEmpty(store)
         var results: [String: [Sample]] = [:]
-        let phases = measuresDelete ? ["delete", "undo"] : measuresMove ? ["right", "left"] : ["show", "hide"]
+        let phases = measuresDelete ? ["delete", "undo"] : measuresMove ? ["right", "left"]
+            : measuresSearch ? SearchKey.phases : ["show", "hide"]
 
         func measure(
             _ phase: String, for duration: Double = window, _ action: () -> Void,
@@ -78,17 +87,19 @@ enum PanelBenchmark {
                 ticker?.stop()
                 let sample = Sample(call: call, ticks: ticks, presented: probe?.presented ?? [])
                 print("\(phase) \(sample.line)")
-                results[phase, default: []].append(sample)
+                results[SearchKey.phase(of: phase), default: []].append(sample)
                 next()
             }
         }
 
         func cycle(_ index: Int) {
             guard index < cycles else {
-                // 第一次是冷启动，不计入中位数。
+                // 第一次是冷启动，不计入中位数。测搜索时去掉第一轮的所有按键。
                 for phase in phases {
-                    let samples = Array((results[phase] ?? []).dropFirst())
+                    let firstRound = measuresSearch ? SearchKey.script.filter { $0.phase == phase }.count : 1
+                    let samples = Array((results[phase] ?? []).dropFirst(firstRound))
                     print("median \(phase) \(Sample.medianLine(samples))")
+                    if measuresSearch { print("worst \(phase) \(Sample.worstLine(samples))") }
                 }
                 fflush(stdout)
                 NSApp.terminate(nil)
@@ -102,6 +113,19 @@ enum PanelBenchmark {
                         }
                     }
                 }
+                return
+            }
+            if measuresSearch {
+                func press(_ keys: ArraySlice<SearchKey>) {
+                    guard let key = keys.first else {
+                        after(0.3) { cycle(index + 1) }
+                        return
+                    }
+                    measure(key.label, for: keyInterval, { key.send(to: panel.window) }) {
+                        press(keys.dropFirst())
+                    }
+                }
+                press(SearchKey.script[...])
                 return
             }
             if measuresMove {
@@ -128,6 +152,14 @@ enum PanelBenchmark {
             after(1.0) {
                 panel.show()
                 model.focus = .cards
+                ticker = BenchTicker(window: panel.window)
+                after(1.0) { cycle(0) }
+            }
+        } else if measuresSearch {
+            // 焦点放到搜索框上，按键交给它的字段编辑器，和真的打字一样经过 `TextField` 的绑定。
+            after(1.0) {
+                panel.show()
+                model.focus = .search
                 ticker = BenchTicker(window: panel.window)
                 after(1.0) { cycle(0) }
             }
@@ -190,6 +222,16 @@ enum PanelBenchmark {
             else { return "no samples" }
             return String(format: "present_missed=%d main_missed=%d call_ms=%.1f (n=%d)", presentMissed, mainMissed, call, samples.count)
         }
+
+        /// 最差的那次：缺帧最多、主线程卡得最久、调用最慢的各是多少。
+        static func worstLine(_ samples: [Sample]) -> String {
+            guard !samples.isEmpty else { return "no samples" }
+            return String(
+                format: "present_missed=%d present_longest_ms=%.1f main_longest_ms=%.1f call_ms=%.1f",
+                samples.map(\.presentMissed).max()!, samples.map(\.presentLongestMS).max()!,
+                samples.map(\.mainLongestMS).max()!, samples.map(\.callMS).max()!
+            )
+        }
     }
 
     /// 历史为空时填入约 30 条测试条目：来自本机已安装的几个系统应用，有文本、链接和图片，
@@ -242,6 +284,70 @@ enum PanelBenchmark {
         }
         guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
         return rep.representation(using: .png, properties: [:])
+    }
+}
+
+/// 测搜索时的一次按键：打一个字、输入法组字时改一次未确认的文字，或者删一个字。
+/// 都交给搜索框的字段编辑器，和用键盘打字时一样经过 `TextField` 的绑定。
+@MainActor
+private struct SearchKey {
+    enum Action {
+        case insert(String)
+        case mark(String)
+        case deleteBackward
+    }
+
+    let action: Action
+    /// 这次按键的读数算在哪一组。
+    let phase: String
+
+    /// 打常见的词（每个字都有命中，列表跟着换）、打几乎没有命中的词（要扫全表）、用拼音组字、删字，各一组读数。
+    static let phases = ["common", "rare", "compose", "delete"]
+
+    /// 每个词打完再逐字删掉，下一个词从空的搜索框开始。
+    static let script: [SearchKey] = {
+        func type(_ word: String, as phase: String) -> [SearchKey] {
+            word.map { SearchKey(action: .insert(String($0)), phase: phase) }
+        }
+        func delete(_ count: Int) -> [SearchKey] {
+            Array(repeating: SearchKey(action: .deleteBackward, phase: "delete"), count: count)
+        }
+        var keys = type("github", as: "common") + delete(6)
+        keys += type("zqxj", as: "rare") + delete(4)
+        keys += ["c", "ce", "ces", "cesh", "ceshi"].map { SearchKey(action: .mark($0), phase: "compose") }
+        keys.append(SearchKey(action: .insert("测试"), phase: "common"))
+        keys += delete(2)
+        return keys
+    }()
+
+    /// 每行读数前面的标签：组别加上这次按的键。
+    var label: String {
+        switch action {
+        case .insert(let text), .mark(let text): "\(phase)[\(text)]"
+        case .deleteBackward: phase
+        }
+    }
+
+    static func phase(of label: String) -> String {
+        phases.first { label.hasPrefix($0) } ?? label
+    }
+
+    func send(to window: NSWindow) {
+        guard let editor = window.firstResponder as? NSTextView else {
+            print("search: 搜索框不是第一响应者")
+            return
+        }
+        switch action {
+        case .insert(let text):
+            editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+        case .mark(let text):
+            editor.setMarkedText(
+                text, selectedRange: NSRange(location: text.utf16.count, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+        case .deleteBackward:
+            editor.deleteBackward(nil)
+        }
     }
 }
 
