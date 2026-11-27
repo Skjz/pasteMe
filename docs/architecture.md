@@ -227,6 +227,7 @@ HistoryModel.paste(as:) / paste(at:as:) # 回车、双击、右键菜单 / ⌘1�
 ## 扩展查询和设置
 
 - **查询条件**：新的筛选字段加在 `ClipQuery` 上，转成 SQL 的代码也写在 `ClipQuery.swift` 的 `filter` 里，`ClipStore.items(matching:)` 不需要改。每个条件生成一段带括号的子句，多个条件用 AND 连接。搜索继续用 LIKE（ADR 0004），10,000 条条目时查询要在 50ms 以内（ADR 0003），`ClipFilterTests` 里有对应的测试。
+- **列的顺序**（#89）：`clips` 表里图片、RTF、缩略图、网站图标这些大块数据放在每一行的最后。SQLite 读一列要先走过前面的列，大块数据存在一串溢出页里，排在搜索的列前面时，扫全表的搜索每条图片都要把整张图片读一遍（5000 条、两百多 MB 的历史里要 50 ms，挪到后面以后 3～4 ms）。`ALTER TABLE ADD COLUMN` 加的列会排在大块数据后面，`largeColumnsComeLastInEveryRow` 会失败：照 `ClipStore.moveLargeColumnsLast`（第 9 版）重建表，把新列放到大块数据前面。
 - **筛选的来源**：面板上的按钮和菜单改 `HistoryModel.filters`（`PanelFilters`）；搜索框里的 `type:`、`app:` 由 `ClipQuery.parse` 解析，不回写到按钮上。搜索框末尾的 `@词`（`FilterMention`）弹出候选列表（`HistoryModel.suggestions`：`ClipKind.matching`、名字包含这段文字的 Pinboard，再加上 `AppNames.apps(matching:)`），选中后从搜索框里去掉这个词、写进 `filters`，所以显示在按钮上。有候选项时这个词不参与搜索；没有候选项或按 esc 关掉列表后，它按普通文字搜索。`HistoryModel.currentQuery` 把两者合起来，类型取交集（`ClipQuery.kinds` 为空集合时什么都不返回）。`query` 和 `filters` 改动后立即重新查询；`didShow` 一次清空两者，只查询一次，因为它在呼出动画的第一帧之前运行。
 - **来源应用菜单**：用 AppKit 的 `NSMenu`，点开时才调用 `ClipStore.sourceApps()`，不在呼出面板时查询。
 - **按应用的其他名字搜索**：条目只记了复制时的应用名（中文系统下是「访达」）。`HistoryModel.currentQuery` 最后调用 `ClipQuery.resolvingAppNames`，由 `AppNames` 找出名字、其他语言的名字（`AppBundleNames`，只读用户语言和英文）或应用别名（`Settings.appAliases`）包含搜索文字的应用，SQL 里加 `OR source_bundle_id IN (…)`。从应用包读名字一个应用要一两毫秒，所以启动 3 秒后 `AppNames.prefetch()` 在后台读完历史里的应用；应用列表在每次呼出面板时（`historyChanged()`）作废，第一次搜索时重新查。别名在设置窗口的「应用别名」页（`AppAliasesModel`）里编辑，输入时就保存，不需要通知 `AppNames`。
